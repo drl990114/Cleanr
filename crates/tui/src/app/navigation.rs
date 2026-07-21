@@ -242,39 +242,77 @@ impl Workbench {
         if self.plan.is_none() && !self.entries.is_empty() {
             self.build_plan();
         }
-        let target = {
+        let (target, eligible_count, review_count, updates) = {
             let Some(plan) = &mut self.plan else {
                 self.status = self.i18n.t("status_no_scan_results");
                 return;
             };
-            let target = !plan.items.iter().all(|item| item.selected);
-            plan.summary.selected_count = 0;
+            let eligible_count = plan
+                .items
+                .iter()
+                .filter(|item| {
+                    item.evidence.as_ref().is_none_or(|evidence| {
+                        matches!(
+                            evidence.recommendation_state,
+                            RecommendationState::Preselected | RecommendationState::Available
+                        )
+                    })
+                })
+                .count();
+            if eligible_count == 0 {
+                self.status = self.i18n.t("status_bulk_no_eligible");
+                return;
+            }
+            let target = plan.items.iter().any(|item| {
+                !item.selected
+                    && item.evidence.as_ref().is_none_or(|evidence| {
+                        matches!(
+                            evidence.recommendation_state,
+                            RecommendationState::Preselected | RecommendationState::Available
+                        )
+                    })
+            });
+            let mut updates = Vec::with_capacity(eligible_count);
+            let mut review_count = 0;
             plan.summary.selected_size_bytes = 0;
             for item in &mut plan.items {
-                item.selected = target;
-                if target {
-                    plan.summary.selected_count += 1;
+                let eligible = item.evidence.as_ref().is_none_or(|evidence| {
+                    matches!(
+                        evidence.recommendation_state,
+                        RecommendationState::Preselected | RecommendationState::Available
+                    )
+                });
+                if eligible {
+                    item.selected = target;
+                    updates.push((item.path.clone(), target));
+                } else {
+                    review_count += 1;
+                }
+                if item.selected {
                     plan.summary.selected_size_bytes += item.size_bytes;
                 }
             }
-            target
+            plan.summary.selected_count = plan.items.iter().filter(|item| item.selected).count();
+            (target, eligible_count, review_count, updates)
         };
 
-        let candidate_ids = self
-            .plan
-            .as_ref()
-            .into_iter()
-            .flat_map(|plan| &plan.items)
-            .filter_map(|item| self.candidate_ids_by_path.get(&item.path).cloned())
-            .collect::<Vec<_>>();
-        for candidate_id in candidate_ids {
-            if target {
-                self.selection.select(candidate_id);
-            } else {
-                self.selection.deselect(&candidate_id);
-            }
+        for (path, selected) in updates {
+            self.set_analysis_selection_for_path(&path, selected);
         }
-        self.status = if target {
+        self.status = if review_count > 0 {
+            let key = if target {
+                "status_bulk_selected_review_unchanged"
+            } else {
+                "status_bulk_deselected_review_unchanged"
+            };
+            self.i18n.format(
+                key,
+                &[
+                    ("eligible", eligible_count.to_string()),
+                    ("review", review_count.to_string()),
+                ],
+            )
+        } else if target {
             self.i18n.t("status_all_toggled_selected")
         } else {
             self.i18n.t("status_all_toggled_deselected")

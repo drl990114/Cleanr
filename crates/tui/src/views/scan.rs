@@ -504,21 +504,67 @@ pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
                 app.theme.cyan,
                 app.theme,
             ));
-            lines.push(preview_field(
-                app.i18n.t("detail_rule"),
-                item.rule_id.clone(),
-                app.theme.fg,
-                app.theme,
-            ));
+            if let Some(evidence) = &item.evidence {
+                let matched_rules = evidence
+                    .matched_rules
+                    .iter()
+                    .map(|rule| {
+                        let key = format!("{}:{}", rule.key.rule_pack_id, rule.key.rule_id);
+                        if evidence.shadowed_rules.contains(&rule.key) {
+                            format!("{key} (fallback, shadowed)")
+                        } else {
+                            format!("{key} ({})", rule.match_role)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let decision_codes = evidence
+                    .decision_codes
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(preview_field(
+                    app.i18n.t("detail_matched_rules"),
+                    matched_rules,
+                    app.theme.fg,
+                    app.theme,
+                ));
+                lines.push(preview_field(
+                    app.i18n.t("detail_recommendation"),
+                    evidence.recommendation_state.to_string(),
+                    app.theme.fg,
+                    app.theme,
+                ));
+                lines.push(preview_field(
+                    app.i18n.t("detail_rule_resolution"),
+                    evidence.rule_resolution_state.to_string(),
+                    app.theme.fg,
+                    app.theme,
+                ));
+                lines.push(preview_field(
+                    app.i18n.t("detail_decision_codes"),
+                    decision_codes,
+                    app.theme.fg_dim,
+                    app.theme,
+                ));
+            } else {
+                lines.push(preview_field(
+                    app.i18n.t("detail_rule"),
+                    item.rule_id.clone(),
+                    app.theme.fg,
+                    app.theme,
+                ));
+            }
             lines.push(preview_field(
                 app.i18n.t("detail_reason"),
-                item.reason.clone(),
+                preview_rule_text(item, |rule| &rule.reason, &item.reason),
                 app.theme.fg,
                 app.theme,
             ));
             lines.push(preview_field(
                 app.i18n.t("detail_risk"),
-                item.risk_note.clone(),
+                preview_rule_text(item, |rule| &rule.risk_note, &item.risk_note),
                 app.theme.warn,
                 app.theme,
             ));
@@ -554,6 +600,28 @@ pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
             ),
     );
     frame.render_widget(paragraph, area);
+}
+
+fn preview_rule_text(
+    item: &CleanupItem,
+    field: impl for<'a> Fn(&'a cleanr_core::RuleEvidence) -> &'a str,
+    fallback: &str,
+) -> String {
+    let Some(evidence) = &item.evidence else {
+        return fallback.to_string();
+    };
+    let mut values = Vec::new();
+    for rule in &evidence.matched_rules {
+        let value = field(rule);
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    }
+    if values.is_empty() {
+        fallback.to_string()
+    } else {
+        values.join(" | ")
+    }
 }
 
 fn preview_field(label: String, value: String, value_color: Color, theme: Theme) -> Line<'static> {

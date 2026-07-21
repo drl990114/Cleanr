@@ -116,6 +116,7 @@ fn test_rule_hit(rule_id: &str) -> RuleHit {
         risk_note: "rebuild".into(),
         default_selected: true,
         trust: RuleTrust::Builtin,
+        match_role: cleanr_core::RuleMatchRole::Primary,
     }
 }
 
@@ -252,7 +253,72 @@ fn scan_layout_keeps_selection_and_details_distinct() {
     assert!(screen.contains("Preview"));
     assert!(screen.contains("space select"));
     assert!(screen.contains("Current item"));
+    assert!(screen.contains("Matched rules"));
+    assert!(screen.contains("Rule resolution"));
     assert!(!screen.contains("i inspect"));
+}
+
+#[test]
+fn bulk_selection_leaves_review_items_unchanged() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut review_hit = test_rule_hit("review");
+    review_hit.confidence = Confidence::Medium;
+    review_hit.default_selected = false;
+    let as_of = chrono::Utc::now();
+    let mut app = app(temp.path().to_path_buf());
+    app.scan_as_of = as_of;
+    app.entries = vec![
+        ScanEntry {
+            path: temp.path().join("eligible-cache"),
+            kind: EntryKind::Directory,
+            size_bytes: 10,
+            modified_at: Some(as_of - chrono::Duration::days(100)),
+            rule_hits: vec![test_rule_hit("eligible")],
+        },
+        ScanEntry {
+            path: temp.path().join("review-cache"),
+            kind: EntryKind::Directory,
+            size_bytes: 20,
+            modified_at: Some(as_of - chrono::Duration::days(100)),
+            rule_hits: vec![review_hit],
+        },
+    ];
+    app.build_plan();
+
+    let review_index = app
+        .plan()
+        .expect("plan")
+        .items
+        .iter()
+        .position(|item| item.path.ends_with("review-cache"))
+        .expect("review item");
+    app.list_state.select(Some(review_index));
+    app.toggle_scan_selection();
+    let eligible_index = app
+        .plan()
+        .expect("plan")
+        .items
+        .iter()
+        .position(|item| item.path.ends_with("eligible-cache"))
+        .expect("eligible item");
+    app.list_state.select(Some(eligible_index));
+    app.toggle_scan_selection();
+
+    app.toggle_all_scan_selection();
+    assert!(
+        app.plan()
+            .expect("plan")
+            .items
+            .iter()
+            .all(|item| item.selected)
+    );
+    assert!(app.status().contains("review item(s) unchanged"));
+
+    app.toggle_all_scan_selection();
+    let plan = app.plan().expect("plan");
+    assert!(!plan.items[eligible_index].selected);
+    assert!(plan.items[review_index].selected);
+    assert_eq!(plan.summary.selected_count, 1);
 }
 
 #[test]
@@ -454,6 +520,7 @@ fn restore_view_requests_confirmation_for_selected_run() {
             run_id: "restore-test".to_string(),
             created_at: chrono::Utc::now(),
             plan_schema_version: "plan".to_string(),
+            authorization: None,
             summary: ExecutionSummary {
                 attempted: 1,
                 succeeded: 1,
@@ -599,6 +666,7 @@ fn restore_view_can_render_selection_beyond_old_history_cap() {
             run_id: format!("run-{index:02}"),
             created_at: chrono::Utc::now(),
             plan_schema_version: "plan".to_string(),
+            authorization: None,
             summary: ExecutionSummary {
                 attempted: 1,
                 succeeded: 1,
@@ -637,6 +705,43 @@ fn cleanup_success_starts_background_refresh_scan() {
     app.clean_with_executor(CleanupIntent::ExplicitUserConfirmation, &executor);
 
     assert!(app.is_scan_running());
+    assert!(app.status_after_scan.is_some());
+}
+
+#[test]
+fn cleanup_failure_surfaces_item_error_without_starting_refresh_scan() {
+    struct FailingTrashExecutor;
+
+    impl cleanr_tasks::CleanupExecutor for FailingTrashExecutor {
+        fn trash(&self, _path: &std::path::Path) -> anyhow::Result<RollbackReceipt> {
+            anyhow::bail!("simulated trash failure");
+        }
+    }
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let state_dir = temp.path().join("state");
+    let target = temp.path().join("node_modules");
+    fs::create_dir(&target).expect("mkdir");
+    fs::write(target.join("index.js"), vec![0; 2 * 1024 * 1024]).expect("write");
+    let mut app = app(temp.path().to_path_buf());
+    app.state_dir = state_dir;
+    let report = scan_paths(&app.roots, &ScanOptions::default()).expect("scan");
+    app.entries = report.entries;
+    app.registry.annotate_entries(&mut app.entries);
+    app.build_plan();
+    app.toggle_all_scan_selection();
+
+    app.clean_with_executor(
+        CleanupIntent::ExplicitUserConfirmation,
+        &FailingTrashExecutor,
+    );
+
+    assert!(!app.is_scan_running());
+    assert!(target.exists());
+    assert!(app.status().contains("simulated trash failure"));
+    assert!(app.status().contains("Nothing was moved to trash"));
+    assert_eq!(app.execution_manifests[0].summary.succeeded, 0);
+    assert_eq!(app.execution_manifests[0].summary.failed, 1);
 }
 
 #[test]

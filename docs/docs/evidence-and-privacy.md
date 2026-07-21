@@ -4,9 +4,10 @@ description: Use Cleanr's versioned local analysis report safely with external l
 
 # Evidence and privacy
 
-Cleanr is AI-friendly by exposing deterministic local facts, not by embedding a
-model or letting a model delete files. The integration boundary is the
-read-only `cleanr analyze` command.
+Cleanr is AI-friendly by exposing deterministic local facts without embedding
+a model. `cleanr analyze` is the read-only evidence boundary. A separate,
+bounded `cleanr clean` command can move an exact reviewed plan to system trash
+only after explicit user authorization.
 
 ## Local analysis contract
 
@@ -37,8 +38,9 @@ files.
 ## Install the agent skill
 
 The repository includes the cross-agent `cleanr-review-disk-cleanup` skill for
-this local, read-only workflow. Install that skill directly from GitHub with
-the open [Skills CLI](https://github.com/vercel-labs/skills):
+local evidence review and explicitly authorized, recoverable cleanup. Install
+that skill directly from GitHub with the open
+[Skills CLI](https://github.com/vercel-labs/skills):
 
 ```bash
 npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
@@ -53,8 +55,10 @@ Start a new task or session in the selected agent afterward. Invoke
 `$cleanr-review-disk-cleanup` where explicit skill invocation is supported, or
 ask the agent to review Cleanr disk-cleanup evidence. The skill is not tied to
 Codex: it uses the portable `SKILL.md` format and can be installed into any
-agent supported by Skills CLI. It only guides local read-only analysis; it has
-no cleanup authority and does not confirm, execute, or authorize cleanup.
+agent supported by Skills CLI. The skill keeps analysis read-only by default.
+It permits execution only after the current user reviews a plan summary and
+explicitly authorizes that exact plan and SHA-256. Execution uses system trash
+and a local manifest, never permanent deletion.
 
 ## What the report means
 
@@ -79,18 +83,27 @@ incomplete evidence blocks automatic preselection.
 1. A local agent invokes `cleanr analyze` for a user-approved scope.
 2. It reads the report and proposes questions, explanations, or a review
    order.
-3. The user reviews candidates in Cleanr and makes the selection.
-4. Cleanr's local confirmation and execution checks authorize any cleanup.
+3. If cleanup is requested, it writes a local plan with `cleanr plan --output`,
+   inspects the selected trash actions, and summarizes the exact roots, count,
+   size, risks, path, and printed SHA-256.
+4. The current user explicitly authorizes that exact plan after seeing the
+   summary.
+5. The agent runs `cleanr clean` with the plan path, reviewed SHA-256, and
+   `--authorized-by-user`.
+6. Cleanr verifies the digest, re-scans and compares the plan, validates every
+   target, moves successful items to system trash, and records the manifest.
 
-The analysis command has no cleanup operation. An external agent's suggestion
-is never an execution token or permission.
+The analysis command has no cleanup operation. A suggestion, recommendation,
+initial cleanup request, or broad standing permission is never an execution
+token. If the plan changes, the agent must generate, summarize, and obtain
+authorization for a new plan.
 
 ## Data boundary
 
-`AnalysisReport` is intentionally a **local** contract. It contains raw local
-paths, scan roots, rule reasons and risk notes, and issue paths. Cleanr has no
-embedded AI provider, API-key setting, prompt transport, or telemetry that
-sends this report elsewhere.
+`AnalysisReport` and cleanup plan files are intentionally **local** contracts.
+They contain raw local paths, scan roots, rule reasons and risk notes, and issue
+paths. Cleanr has no embedded AI provider, API-key setting, prompt transport,
+or telemetry that sends them elsewhere.
 
 Do not forward the JSON to a remote service as-is. If you choose to share any
 of it, you are responsible for minimizing the scope and removing sensitive

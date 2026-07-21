@@ -125,9 +125,10 @@ ignore_patterns = ["**/.git/**", "**/vendor/**", "**/.venv/**"]
 ## 外部本地 AI 工具
 
 Cleanr 不内置模型、Provider、endpoint 或 API Key 配置。同一台机器上的外部
-Agent 可以读取只读的 `cleanr analyze` JSON 契约，但不会因此获得清理能力。报告
-包含配置中的推荐策略快照和真实本地路径，不能作为安全的远程分享格式；交给其他工具前
-请先阅读[证据与隐私](./evidence-and-privacy)。
+Agent 可以读取只读的 `cleanr analyze` JSON 契约，但分析本身不会授予清理能力。
+委托清理还需要单独审阅的计划、其 SHA-256，以及当前用户的明确授权。报告包含配置中
+的推荐策略快照和真实本地路径，不能作为安全的远程分享格式；交给其他工具前请先阅读
+[证据与隐私](./evidence-and-privacy)。
 
 ### `[plugins]`
 

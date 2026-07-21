@@ -52,6 +52,8 @@ machine-readable failure reports. Any execution surface must remain tied to an
 explicit, locally reviewed user action.
 
 AI is an external consumer of local evidence and a possible rule-authoring
-assistant. Cleanr will not embed a model or provider, grant an AI cleanup
-permission, or turn a suggestion into unattended destructive action. Remote
-sharing, if ever considered, requires a separately designed redacted contract.
+assistant. Cleanr will not embed a model or provider, treat a suggestion as
+permission, or allow unattended destructive action. Delegated execution must
+remain bound to an exact reviewed plan and explicit current-user authorization.
+Remote sharing, if ever considered, requires a separately designed redacted
+contract.

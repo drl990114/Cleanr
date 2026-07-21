@@ -38,6 +38,7 @@ impl Workbench {
         if disconnected {
             self.scan_cancel = None;
             self.status = self.i18n.t("status_scan_disconnected");
+            self.status_after_scan = None;
             self.scan_progress = None;
             self.review_after_scan = false;
             self.usage_after_scan = false;
@@ -76,27 +77,10 @@ impl Workbench {
     fn finish_operation(&mut self, event: OperationEvent) {
         match event {
             OperationEvent::CleanupFinished(Ok(manifest)) => {
-                self.status = self.i18n.format(
-                    "status_cleaned",
-                    &[
-                        ("succeeded", manifest.summary.succeeded.to_string()),
-                        ("failed", manifest.summary.failed.to_string()),
-                        ("run_id", manifest.run_id.clone()),
-                    ],
-                );
-                self.task_log
-                    .push(format!("clean {}", manifest.summary.succeeded));
-                if !self
-                    .execution_manifests
-                    .iter()
-                    .any(|existing| existing.run_id == manifest.run_id)
-                {
-                    self.execution_manifests.insert(0, manifest);
-                }
-                self.refresh_roots_after_mutation();
+                self.finish_cleanup_manifest(manifest);
             }
             OperationEvent::RestoreFinished(Ok(restored)) => {
-                self.status = self.i18n.format(
+                let status = self.i18n.format(
                     "status_restored",
                     &[
                         ("succeeded", restored.summary.succeeded.to_string()),
@@ -106,6 +90,7 @@ impl Workbench {
                 );
                 self.task_log
                     .push(format!("restore {}", restored.summary.succeeded));
+                let succeeded = restored.summary.succeeded;
                 if !self
                     .restore_manifests
                     .iter()
@@ -113,7 +98,11 @@ impl Workbench {
                 {
                     self.restore_manifests.insert(0, restored);
                 }
-                self.refresh_roots_after_mutation();
+                if succeeded > 0 {
+                    self.refresh_roots_after_mutation(status);
+                } else {
+                    self.status = status;
+                }
             }
             OperationEvent::CleanupFinished(Err(error))
             | OperationEvent::RestoreFinished(Err(error)) => self.status = error,
@@ -138,6 +127,7 @@ impl Workbench {
                 } else {
                     error
                 };
+                self.status_after_scan = None;
                 self.scan_progress = None;
                 self.review_after_scan = false;
                 self.usage_after_scan = false;
@@ -190,6 +180,9 @@ impl Workbench {
         } else if self.view == View::Scan {
             self.select_first();
         }
+        if let Some(status) = self.status_after_scan.take() {
+            self.status = status;
+        }
     }
 
     pub(crate) fn start_scan(&mut self, request: ScanRequest) {
@@ -205,6 +198,7 @@ impl Workbench {
             self.status = self.i18n.t("status_scan_already_running");
             return;
         }
+        self.status_after_scan = None;
         if request.paths.is_empty() && !request.include_global {
             request.paths = self.roots.clone();
         }

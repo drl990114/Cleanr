@@ -101,6 +101,7 @@ cleanr scan --json /path/to/project
 cleanr analyze /path/to/project
 cleanr plan --output cleanr-plan.json /path/to/project
 cleanr dry-run --json /path/to/project
+cleanr clean --plan cleanr-plan.json --plan-sha256 <reviewed-sha256> --authorized-by-user
 cleanr restore list
 cleanr restore run <run-id> --confirm
 ```
@@ -108,7 +109,12 @@ cleanr restore run <run-id> --confirm
 `analyze` 始终输出带版本、仅限本地的 `AnalysisReport` JSON；不会创建清理计划或
 移动文件。输出包含真实本地路径，除非自行完成脱敏，否则只应交给本地 Agent。它与
 TUI、`plan` 和 `dry-run` 共用 `[recommendations].preselect_after_days`。`dry-run`
-和 `plan` 只生成清理计划。恢复仍然要求显式传入 `--confirm`。
+和 `plan` 只生成清理计划。
+
+`plan` 写入文件时会打印该文件的 SHA-256。`clean` 只用于当前用户已经审阅并明确
+授权的确切计划。它会校验传入的摘要，重新扫描计划根目录，重新生成确定性计划，并在
+计划发生变化时拒绝执行。它只会把通过校验的条目移动到系统回收站并记录执行清单，
+不会永久删除。恢复仍然要求显式传入 `--confirm`。
 
 ## 斜杠命令
 

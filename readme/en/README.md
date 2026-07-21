@@ -39,8 +39,10 @@ and moves selected items to the operating system trash.
 Cleanr gives local coding agents deterministic, versioned JSON evidence through
 `cleanr analyze` while keeping cleanup authority with the user. Agents can
 inspect recommendation states, decision codes, risk notes, and scan integrity
-without parsing terminal output or deleting files. Raw paths and reports stay
-local unless you explicitly choose to share them.
+without parsing terminal output. After the user reviews and explicitly
+authorizes an exact plan, an agent can move its validated items to system trash
+with a digest-bound command and local restore manifest. Raw paths and reports
+stay local unless you explicitly choose to share them.
 
 Install the cross-agent `cleanr-review-disk-cleanup` skill directly from GitHub:
 
@@ -49,7 +51,8 @@ npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
 ```
 
 The skill checks whether the Cleanr CLI is available, installs `cleanr-cli`
-globally when needed, and guides a local, read-only analysis workflow. See
+globally when needed, and guides local analysis plus explicitly authorized,
+recoverable cleanup. See
 [Evidence and privacy](../../docs/docs/evidence-and-privacy.md) for supported
 agents, the report contract, and privacy guidance.
 
@@ -61,8 +64,8 @@ agents, the report contract, and privacy guidance.
   temporary files.
 - Reviewable cleanup plans with size, confidence, reason, and risk notes for
   every candidate.
-- A local-only `cleanr analyze` JSON contract so a user's local coding agent
-  can inspect deterministic evidence without receiving cleanup authority.
+- A local-only `cleanr analyze` JSON contract and a digest-bound
+  `cleanr clean` command for exact plans explicitly authorized by the user.
 - Conservative default selection: only high-confidence items from built-in or
   trusted rules can be preselected.
 - Safer execution through trash-based cleanup, final pre-clean validation,
@@ -112,16 +115,27 @@ when the platform supports it.
 
 Press `?` in the TUI for keyboard help.
 
-For a local coding agent, use the read-only analysis command and keep its JSON
-on the machine unless you deliberately redact it first:
+For a local coding agent, start with read-only analysis and keep its JSON on the
+machine unless you deliberately redact it first:
 
 ```bash
 cleanr analyze ~/projects > cleanr-analysis.json
 ```
 
-The report is evidence for review, not a cleanup instruction. Cleanr does not
-offer an agent execution command; a person still reviews and confirms cleanup
-inside the TUI.
+The report is evidence for review, not a cleanup instruction. If the user wants
+to delegate execution, first write and review an exact plan:
+
+```bash
+cleanr plan --output cleanr-plan.json ~/projects
+cleanr clean --plan cleanr-plan.json \
+  --plan-sha256 <reviewed-sha256> \
+  --authorized-by-user
+```
+
+`plan` prints the file's SHA-256. `clean` requires explicit authorization,
+verifies that digest, re-scans and rejects plan drift, then moves validated
+items to system trash and records a restore manifest. It never permanently
+deletes them.
 
 The TUI, `analyze`, `plan`, and `dry-run` share
 `[recommendations].preselect_after_days` from `cleanr.toml` (90 days by
@@ -130,9 +144,10 @@ default; `0` disables the age gate).
 ## Safety Model
 
 Cleanr does not clean anything just because it was found. The plan remains
-editable before execution, selected paths are validated again immediately
+editable before authorization. Selected paths are validated again immediately
 before cleanup, and items are moved to the operating system trash rather than
-permanently deleted.
+permanently deleted. Changing an authorized plan requires a new review and
+authorization.
 
 Restore is best-effort and depends on the system trash. Do not empty the trash
 until you are confident the cleanup was correct.

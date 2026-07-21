@@ -116,7 +116,8 @@ cleanr analyze ~/projects > cleanr-analysis.json
 npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
 ```
 
-它只指导仅限本地的只读工作流，没有清理权限。Agent 选择和调用方式请见
+它默认保持只读。只有当前用户审阅计划摘要并明确授权其 SHA-256 后，Skill 才能执行
+该确切计划；成功条目进入系统回收站，并保留恢复清单。Agent 选择和调用方式请见
 [证据与隐私](./evidence-and-privacy)。
 
 ## 使用简体中文

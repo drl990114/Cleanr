@@ -23,6 +23,7 @@ impl Workbench {
             palette_open: false,
             help_open: false,
             status,
+            status_after_scan: None,
             entries: Vec::new(),
             scan_summary: ScanSummary::default(),
             scan_as_of: Utc::now(),

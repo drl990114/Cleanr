@@ -88,6 +88,7 @@ category = "application-cache"
 match = { kind = "directory", path_glob = "**/Library/Caches/*", min_size = 10485760 }
 confidence = "medium"
 default_selected = false
+match_role = "fallback"
 action = "trash"
 reason = "Application cache directories often contain rebuildable data, but ownership varies by app."
 risk_note = "Review before cleaning; some apps may keep useful offline data or local working state in cache folders."
@@ -99,6 +100,7 @@ category = "application-cache"
 match = { kind = "directory", path_glob = "**/.cache/*", min_size = 10485760 }
 confidence = "medium"
 default_selected = false
+match_role = "fallback"
 action = "trash"
 reason = "Application cache directories often contain rebuildable data, but ownership varies by app."
 risk_note = "Review before cleaning; some apps may keep useful offline data or local working state in cache folders."
@@ -111,8 +113,8 @@ match = { kind = "file", extension = "tmp", min_size = 10485760 }
 confidence = "medium"
 default_selected = false
 action = "trash"
-reason = "Large temporary files are often leftovers from installers, editors, or application work."
-risk_note = "Review the path first; an active application may still rely on a temporary file."
+reason = "Temporary files are often safe to remove after review."
+risk_note = "Review the path before deleting; some applications keep active temp files."
 
 [[rules]]
 id = "large-log-file"
@@ -122,8 +124,8 @@ match = { kind = "file", extension = "log", min_size = 52428800 }
 confidence = "medium"
 default_selected = false
 action = "trash"
-reason = "Large log files can usually be removed when they are no longer needed for debugging."
-risk_note = "Logs may be needed for troubleshooting, auditing, or support requests."
+reason = "Large log files are common cleanup candidates."
+risk_note = "Logs may be needed for debugging or audit history."
 
 [[rules]]
 id = "large-download-file"
@@ -133,5 +135,5 @@ match = { kind = "file", path_glob = "**/Downloads/**", min_size = 104857600 }
 confidence = "low"
 default_selected = false
 action = "trash"
-reason = "Large files in Downloads may be installers, archives, or exports that are no longer needed."
-risk_note = "Downloads are user data; inspect each file before cleaning."
+reason = "Large files in Downloads are often removable after review."
+risk_note = "This may be user data; review carefully before cleaning."

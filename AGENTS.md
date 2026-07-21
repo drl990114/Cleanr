@@ -13,7 +13,10 @@ final cleanup decision under human control.
 - Never weaken protected-path checks, overlap handling, trust checks, final
   validation, trash-based cleanup, or restore records for convenience.
 - `cleanr analyze` is read-only and AI-friendly. It provides structured local
-  evidence; it does not grant an agent cleanup authority.
+  evidence; it does not grant an agent cleanup authority by itself.
+- An agent may execute only an exact, reviewed plan after the current user
+  explicitly delegates that plan. Bind authorization to the plan digest,
+  re-scan before execution, and use only system trash plus restore manifests.
 - Treat filesystem paths and analysis reports as potentially sensitive local
   data. Do not send them to external services without explicit user approval.
 

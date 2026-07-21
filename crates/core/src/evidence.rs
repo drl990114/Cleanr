@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{Confidence, EntryKind, RuleHit, RuleTrust, SafetyPolicy, ScanEntry};
+use crate::{Confidence, EntryKind, RuleHit, RuleMatchRole, RuleTrust, SafetyPolicy, ScanEntry};
 
 /// The schema identifier for the read-only local analysis contract.
 pub const ANALYSIS_REPORT_SCHEMA_VERSION: &str = "cleanr.analysis.v1";
@@ -220,6 +220,7 @@ pub struct RuleEvidence {
     pub confidence: Confidence,
     pub default_selected: bool,
     pub trust: RuleTrust,
+    pub match_role: RuleMatchRole,
     pub reason: String,
     pub risk_note: String,
 }
@@ -233,10 +234,23 @@ pub enum RuleResolutionState {
     UnresolvedConflict,
 }
 
+impl fmt::Display for RuleResolutionState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Single => "single",
+            Self::Equivalent => "equivalent",
+            Self::UnresolvedConflict => "unresolved-conflict",
+        })
+    }
+}
+
 /// All rule matches, plus an explicit decision about whether they can safely decide selection.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuleResolution {
     pub matched: Vec<RuleEvidence>,
+    /// Broad fallback rules retained as evidence but excluded from the effective rule decision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadowed: Vec<RuleKey>,
     pub primary: Option<RuleKey>,
     pub state: RuleResolutionState,
 }
@@ -261,6 +275,18 @@ pub enum RecommendationState {
     Excluded,
 }
 
+impl fmt::Display for RecommendationState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Preselected => "preselected",
+            Self::Available => "available",
+            Self::Review => "review",
+            Self::Suppressed => "suppressed",
+            Self::Excluded => "excluded",
+        })
+    }
+}
+
 /// Machine-readable reasons for a recommendation or non-selection.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "kebab-case")]
@@ -281,6 +307,29 @@ pub enum DecisionCode {
     OverlapSuppressed,
     ScanRoot,
     SafetyPolicyExcluded,
+}
+
+impl fmt::Display for DecisionCode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::AgeThresholdMet => "age-threshold-met",
+            Self::AgeGateDisabled => "age-gate-disabled",
+            Self::RecentObservedContent => "recent-observed-content",
+            Self::RuleNotDefaultSelected => "rule-not-default-selected",
+            Self::ConfidenceBelowHigh => "confidence-below-high",
+            Self::UntrustedRule => "untrusted-rule",
+            Self::TimestampMissing => "timestamp-missing",
+            Self::TimestampAfterAsOf => "timestamp-after-as-of",
+            Self::ScanReportPartial => "scan-report-partial",
+            Self::CandidateCoveragePartial => "candidate-coverage-partial",
+            Self::CandidateCoverageUnknown => "candidate-coverage-unknown",
+            Self::UnresolvedRuleConflict => "unresolved-rule-conflict",
+            Self::CoveredDescendantHasBlocker => "covered-descendant-has-blocker",
+            Self::OverlapSuppressed => "overlap-suppressed",
+            Self::ScanRoot => "scan-root",
+            Self::SafetyPolicyExcluded => "safety-policy-excluded",
+        })
+    }
 }
 
 /// A deterministic decision whose codes explain both selection and non-selection.
@@ -620,14 +669,31 @@ fn issue_with_unknown_scope(issues: &[ScanIssue]) -> bool {
     issues.iter().any(|issue| issue.path.is_none())
 }
 
-fn resolve_rules(hits: &[RuleHit]) -> RuleResolution {
+pub(crate) fn resolve_rules(hits: &[RuleHit]) -> RuleResolution {
     let mut matched = hits.iter().map(rule_evidence).collect::<Vec<_>>();
     matched.sort_by(|left, right| left.key.cmp(&right.key));
-    let state = if matched.len() == 1 {
+    let has_trusted_primary = matched.iter().any(|rule| {
+        rule.match_role == RuleMatchRole::Primary && rule.trust != RuleTrust::Untrusted
+    });
+    let shadowed = if has_trusted_primary {
+        matched
+            .iter()
+            .filter(|rule| rule.match_role == RuleMatchRole::Fallback)
+            .map(|rule| rule.key.clone())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let effective = matched
+        .iter()
+        .filter(|rule| !(has_trusted_primary && rule.match_role == RuleMatchRole::Fallback))
+        .collect::<Vec<_>>();
+    let state = if effective.len() == 1 {
         RuleResolutionState::Single
-    } else if matched
-        .windows(2)
-        .all(|pair| same_safety_semantics(&pair[0], &pair[1]))
+    } else if !effective.is_empty()
+        && effective
+            .windows(2)
+            .all(|pair| same_safety_semantics(pair[0], pair[1]))
     {
         RuleResolutionState::Equivalent
     } else {
@@ -635,12 +701,13 @@ fn resolve_rules(hits: &[RuleHit]) -> RuleResolution {
     };
     let primary = match state {
         RuleResolutionState::Single | RuleResolutionState::Equivalent => {
-            matched.first().map(|rule| rule.key.clone())
+            effective.first().map(|rule| rule.key.clone())
         }
         RuleResolutionState::UnresolvedConflict => None,
     };
     RuleResolution {
         matched,
+        shadowed,
         primary,
         state,
     }
@@ -657,6 +724,7 @@ fn rule_evidence(hit: &RuleHit) -> RuleEvidence {
         confidence: hit.confidence,
         default_selected: hit.default_selected,
         trust: hit.trust,
+        match_role: hit.match_role,
         reason: hit.reason.clone(),
         risk_note: hit.risk_note.clone(),
     }
@@ -667,6 +735,7 @@ fn same_safety_semantics(left: &RuleEvidence, right: &RuleEvidence) -> bool {
         && left.confidence == right.confidence
         && left.default_selected == right.default_selected
         && left.trust == right.trust
+        && left.match_role == right.match_role
         && left.reason == right.reason
         && left.risk_note == right.risk_note
 }
@@ -954,6 +1023,7 @@ mod tests {
             risk_note: "rebuild".to_string(),
             default_selected,
             trust,
+            match_role: RuleMatchRole::Primary,
         }
     }
 
@@ -1172,6 +1242,43 @@ mod tests {
 
         assert_eq!(resolution.state, RuleResolutionState::UnresolvedConflict);
         assert!(resolution.primary.is_none());
+    }
+
+    #[test]
+    fn trusted_primary_shadows_broad_fallback_but_keeps_its_evidence() {
+        let mut primary = hit(Confidence::High, true, RuleTrust::Builtin);
+        primary.rule_id = "specific-cache".to_string();
+        let mut fallback = hit(Confidence::Medium, false, RuleTrust::Builtin);
+        fallback.rule_id = "broad-cache".to_string();
+        fallback.match_role = RuleMatchRole::Fallback;
+
+        let resolution = resolve_rules(&[fallback, primary.clone()]);
+
+        assert_eq!(resolution.state, RuleResolutionState::Single);
+        assert_eq!(
+            resolution.primary,
+            Some(RuleKey {
+                rule_pack_id: primary.rule_pack_id,
+                rule_id: primary.rule_id,
+            })
+        );
+        assert_eq!(resolution.matched.len(), 2);
+        assert_eq!(resolution.shadowed.len(), 1);
+    }
+
+    #[test]
+    fn untrusted_primary_cannot_shadow_a_builtin_fallback() {
+        let mut untrusted = hit(Confidence::High, true, RuleTrust::Untrusted);
+        untrusted.rule_id = "untrusted-specific".to_string();
+        let mut fallback = hit(Confidence::Medium, false, RuleTrust::Builtin);
+        fallback.rule_id = "broad-cache".to_string();
+        fallback.match_role = RuleMatchRole::Fallback;
+
+        let resolution = resolve_rules(&[fallback, untrusted]);
+
+        assert_eq!(resolution.state, RuleResolutionState::UnresolvedConflict);
+        assert!(resolution.primary.is_none());
+        assert!(resolution.shadowed.is_empty());
     }
 
     #[test]

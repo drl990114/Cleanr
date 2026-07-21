@@ -109,6 +109,7 @@ cleanr scan --json /path/to/project
 cleanr analyze /path/to/project
 cleanr plan --output cleanr-plan.json /path/to/project
 cleanr dry-run --json /path/to/project
+cleanr clean --plan cleanr-plan.json --plan-sha256 <reviewed-sha256> --authorized-by-user
 cleanr restore list
 cleanr restore run <run-id> --confirm
 ```
@@ -117,8 +118,14 @@ cleanr restore run <run-id> --confirm
 does not create a cleanup plan or move files. Its output contains real local
 paths, so use it only with a local agent unless you independently redact the
 data. It shares `[recommendations].preselect_after_days` with the TUI, `plan`,
-and `dry-run`. `dry-run` and `plan` only generate a cleanup plan. Restore still
-requires `--confirm`.
+and `dry-run`. `dry-run` and `plan` only generate a cleanup plan.
+
+When `plan` writes a file, it prints that file's SHA-256. `clean` is intended
+for an exact plan that the current user has already reviewed and explicitly
+authorized. It verifies the supplied digest, re-scans the plan roots, rebuilds
+the deterministic plan, and refuses execution if the plan changed. It only
+moves validated items to the system trash and records an execution manifest;
+it never permanently deletes them. Restore still requires `--confirm`.
 
 ## Slash commands
 

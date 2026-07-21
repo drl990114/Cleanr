@@ -150,6 +150,25 @@ pub enum RuleTrust {
     Builtin,
 }
 
+/// Whether a matching rule is authoritative or only a broad fallback when no trusted primary
+/// rule matches the same candidate.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuleMatchRole {
+    #[default]
+    Primary,
+    Fallback,
+}
+
+impl fmt::Display for RuleMatchRole {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Primary => "primary",
+            Self::Fallback => "fallback",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuleHit {
     pub rule_pack_id: String,
@@ -162,6 +181,8 @@ pub struct RuleHit {
     pub default_selected: bool,
     #[serde(default)]
     pub trust: RuleTrust,
+    #[serde(default)]
+    pub match_role: RuleMatchRole,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -253,9 +274,22 @@ pub struct CleanupItem {
     pub confidence: Confidence,
     pub reason: String,
     pub risk_note: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<CleanupItemEvidence>,
     pub selected: bool,
     pub planned_action: PlannedAction,
     pub rollback_method: String,
+}
+
+/// Recommendation and rule evidence retained in a cleanup plan for human review.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CleanupItemEvidence {
+    pub recommendation_state: RecommendationState,
+    pub decision_codes: Vec<DecisionCode>,
+    pub rule_resolution_state: RuleResolutionState,
+    pub matched_rules: Vec<RuleEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadowed_rules: Vec<RuleKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -272,8 +306,22 @@ pub struct ExecutionManifest {
     pub run_id: String,
     pub created_at: DateTime<Utc>,
     pub plan_schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<ExecutionAuthorization>,
     pub summary: ExecutionSummary,
     pub items: Vec<ExecutionItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecutionAuthorization {
+    pub source: CleanupAuthorizationSource,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CleanupAuthorizationSource {
+    LocalUserConfirmation,
+    ExplicitUserDelegation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -443,6 +491,7 @@ pub fn build_cleanup_plan_with_policy(
                 confidence: hit.confidence,
                 reason: hit.reason.clone(),
                 risk_note: hit.risk_note.clone(),
+                evidence: None,
                 selected,
                 planned_action: PlannedAction::Trash,
                 rollback_method: "system-trash+manifest".to_string(),
@@ -523,6 +572,13 @@ pub fn build_cleanup_plan_from_analysis(
                 confidence: rule.confidence,
                 reason: rule.reason.clone(),
                 risk_note: rule.risk_note.clone(),
+                evidence: Some(CleanupItemEvidence {
+                    recommendation_state: candidate.recommendation.state,
+                    decision_codes: candidate.recommendation.codes.clone(),
+                    rule_resolution_state: candidate.rules.state,
+                    matched_rules: candidate.rules.matched.clone(),
+                    shadowed_rules: candidate.rules.shadowed.clone(),
+                }),
                 selected: selection.candidate_ids.contains(&candidate.id),
                 planned_action: PlannedAction::Trash,
                 rollback_method: candidate.rollback_method.clone(),
@@ -682,16 +738,12 @@ fn max_datetime(
 }
 
 fn best_hit(entry: &ScanEntry) -> Option<&RuleHit> {
-    entry.rule_hits.iter().max_by(|a, b| {
-        a.trust
-            .cmp(&b.trust)
-            .then_with(|| a.default_selected.cmp(&b.default_selected))
-            .then_with(|| a.confidence.cmp(&b.confidence))
-            // `max_by` would otherwise retain an input-order tie. Reverse the
-            // final comparisons so the lexicographically smallest stable key wins.
-            .then_with(|| b.rule_pack_id.cmp(&a.rule_pack_id))
-            .then_with(|| b.rule_id.cmp(&a.rule_id))
-    })
+    let resolution = evidence::resolve_rules(&entry.rule_hits);
+    let primary = resolution.primary?;
+    entry
+        .rule_hits
+        .iter()
+        .find(|hit| hit.rule_pack_id == primary.rule_pack_id && hit.rule_id == primary.rule_id)
 }
 
 fn normalize_protected_paths(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -731,6 +783,7 @@ mod tests {
                     risk_note: "can be restored by package manager".into(),
                     default_selected: true,
                     trust: RuleTrust::Builtin,
+                    match_role: RuleMatchRole::Primary,
                 }],
             },
             ScanEntry {
@@ -748,6 +801,7 @@ mod tests {
                     risk_note: "user data review required".into(),
                     default_selected: false,
                     trust: RuleTrust::Builtin,
+                    match_role: RuleMatchRole::Primary,
                 }],
             },
         ];
@@ -771,6 +825,7 @@ mod tests {
             risk_note: "rebuild".into(),
             default_selected: true,
             trust: RuleTrust::Builtin,
+            match_role: RuleMatchRole::Primary,
         };
         let entries = [89_i64, 90, 91, 1]
             .into_iter()
@@ -814,6 +869,13 @@ mod tests {
         assert!(is_selected("/repo/cache-90"));
         assert!(is_selected("/repo/cache-91"));
         assert!(!is_selected("/repo/cache-1"));
+        let evidence = plan.items[0]
+            .evidence
+            .as_ref()
+            .expect("analysis plan keeps recommendation evidence");
+        assert_eq!(evidence.matched_rules.len(), 1);
+        assert_eq!(evidence.rule_resolution_state, RuleResolutionState::Single);
+        assert!(!evidence.decision_codes.is_empty());
     }
 
     #[test]
@@ -829,6 +891,7 @@ mod tests {
             risk_note: "rebuild".into(),
             default_selected: true,
             trust: RuleTrust::Builtin,
+            match_role: RuleMatchRole::Primary,
         };
         let entries = vec![
             ScanEntry {
@@ -892,10 +955,11 @@ mod tests {
             label: rule_id.to_string(),
             category: "developer-cache".to_string(),
             confidence: Confidence::High,
-            reason: rule_id.to_string(),
+            reason: "equivalent generated cache".to_string(),
             risk_note: "rebuild".to_string(),
             default_selected: true,
             trust: RuleTrust::Builtin,
+            match_role: RuleMatchRole::Primary,
         };
         let make_entry = |rule_hits| ScanEntry {
             path: PathBuf::from("/repo/cache"),
@@ -940,6 +1004,7 @@ mod tests {
             risk_note: "rebuild".into(),
             default_selected: true,
             trust: RuleTrust::Builtin,
+            match_role: RuleMatchRole::Primary,
         };
         let entries = vec![
             ScanEntry {
@@ -976,6 +1041,7 @@ mod tests {
             risk_note: "rebuild".into(),
             default_selected: true,
             trust: RuleTrust::Builtin,
+            match_role: RuleMatchRole::Primary,
         };
         let modified_at = Utc::now();
         let newer_modified_at = modified_at + chrono::Duration::seconds(1);
@@ -1040,6 +1106,7 @@ mod tests {
                     risk_note: "review".into(),
                     default_selected: false,
                     trust: RuleTrust::Trusted,
+                    match_role: RuleMatchRole::Primary,
                 }],
             },
             ScanEntry {
@@ -1057,6 +1124,7 @@ mod tests {
                     risk_note: "rebuild".into(),
                     default_selected: true,
                     trust: RuleTrust::Trusted,
+                    match_role: RuleMatchRole::Primary,
                 }],
             },
         ];
@@ -1094,6 +1162,7 @@ mod tests {
                 risk_note: "dangerous".into(),
                 default_selected: true,
                 trust: RuleTrust::Trusted,
+                match_role: RuleMatchRole::Primary,
             }],
         };
 
@@ -1103,7 +1172,7 @@ mod tests {
     }
 
     #[test]
-    fn best_rule_hit_prefers_trust_before_default_selection_and_confidence() {
+    fn legacy_plan_omits_unresolved_rule_conflicts() {
         let hit = |rule_id: &str,
                    trust: RuleTrust,
                    confidence: Confidence,
@@ -1117,6 +1186,7 @@ mod tests {
             risk_note: "review".into(),
             default_selected,
             trust,
+            match_role: RuleMatchRole::Primary,
         };
         let entry = ScanEntry {
             path: PathBuf::from("/repo/cache"),
@@ -1132,8 +1202,7 @@ mod tests {
 
         let plan = build_cleanup_plan(vec![PathBuf::from("/repo")], vec![], &[entry]);
 
-        assert_eq!(plan.items[0].rule_id, "pack:builtin");
-        assert!(!plan.items[0].selected);
+        assert!(plan.items.is_empty());
     }
 
     #[test]

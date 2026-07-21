@@ -75,14 +75,26 @@ Cleanr 会保存：
 
 ## 确认与外部本地自动化
 
-清理仍是 Cleanr 内部的本地审阅和确认流程。唯一面向外部 Agent 的集成契约是
-`cleanr analyze`；Cleanr 不会通过这个契约暴露外部 Agent 清理端点或 CLI。
-
 `cleanr analyze` 是只读操作：它扫描并输出证据，但不会创建清理计划或移动文件。
-外部 Agent 的建议不会改变 Cleanr 的清理流程。
+Agent 的建议或预选条目都不等于清理权限。
+
+只有当前用户审阅并明确授权某个确切计划后，本地 Agent 才能执行清理。受限命令为：
+
+```bash
+cleanr clean \
+  --plan cleanr-plan.json \
+  --plan-sha256 <reviewed-sha256> \
+  --authorized-by-user
+```
+
+`cleanr plan --output` 会打印计划摘要。执行前，`clean` 会校验该摘要、重新扫描记录的
+根目录、重新生成计划，并与已授权文件比较。范围、规则、推荐、选择、安全策略或
+文件系统证据的任何变化都会中止清理，并要求重新审阅和授权。成功条目仍然只进入系统
+回收站，同时写入含恢复定位信息的执行清单。清单还会记录授权来自本地 TUI 确认还是
+用户的显式委托。
 
 设置 `cleanup.require_confirm = false` 只会取消本地 `/clean` 的交互确认框，
-不会把 `analyze` 变成执行接口。
+不会把 `analyze` 变成执行接口，也不会取消委托命令对摘要和授权的要求。
 
 ## 实用安全清单
 

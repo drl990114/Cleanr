@@ -11,8 +11,9 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use cleanr_core::{
-    CleanupItem, CleanupItemFingerprint, CleanupPlan, EXECUTION_SCHEMA_VERSION, EntryKind,
-    ExecutionItem, ExecutionManifest, ExecutionStatus, ExecutionSummary, RESTORE_SCHEMA_VERSION,
+    CLEANUP_PLAN_SCHEMA_VERSION, CleanupAuthorizationSource, CleanupItem, CleanupItemFingerprint,
+    CleanupPlan, EXECUTION_SCHEMA_VERSION, EntryKind, ExecutionAuthorization, ExecutionItem,
+    ExecutionManifest, ExecutionStatus, ExecutionSummary, PlannedAction, RESTORE_SCHEMA_VERSION,
     RestoreItem, RestoreManifest, RestoreStatus, RestoreSummary, RollbackReceipt,
 };
 use serde::de::DeserializeOwned;
@@ -24,13 +25,22 @@ pub trait CleanupExecutor {
 
 #[derive(Debug)]
 pub struct CleanupAuthorization {
-    _private: (),
+    source: CleanupAuthorizationSource,
 }
 
 impl CleanupAuthorization {
     #[must_use]
     pub fn explicit_user_confirmation() -> Self {
-        Self { _private: () }
+        Self {
+            source: CleanupAuthorizationSource::LocalUserConfirmation,
+        }
+    }
+
+    #[must_use]
+    pub fn explicit_user_delegation() -> Self {
+        Self {
+            source: CleanupAuthorizationSource::ExplicitUserDelegation,
+        }
     }
 }
 
@@ -110,9 +120,9 @@ pub fn execute_cleanup_plan(
     state_dir: impl AsRef<Path>,
     authorization: Option<&CleanupAuthorization>,
 ) -> Result<ExecutionManifest> {
-    if authorization.is_none() {
-        anyhow::bail!("cleanup requires local user authorization");
-    }
+    let authorization =
+        authorization.context("cleanup requires explicit local user authorization")?;
+    validate_recoverable_plan(plan)?;
     let repository = ManifestRepository::new(state_dir);
     let selected_items = plan
         .items
@@ -136,6 +146,9 @@ pub fn execute_cleanup_plan(
         run_id: Uuid::new_v4().to_string(),
         created_at: Utc::now(),
         plan_schema_version: plan.schema_version.clone(),
+        authorization: Some(ExecutionAuthorization {
+            source: authorization.source,
+        }),
         summary: execution_summary(&items),
         items,
     };
@@ -727,6 +740,37 @@ fn validate_cleanup_target(item: &CleanupItem, plan: &CleanupPlan) -> Result<()>
     Ok(())
 }
 
+fn validate_recoverable_plan(plan: &CleanupPlan) -> Result<()> {
+    if plan.schema_version != CLEANUP_PLAN_SCHEMA_VERSION {
+        anyhow::bail!("unsupported cleanup plan schema: {}", plan.schema_version);
+    }
+    if plan.safety.default_action != PlannedAction::Trash
+        || plan.safety.rollback_method != "system-trash+manifest"
+    {
+        anyhow::bail!("cleanup plan is not recoverable through system trash and a manifest");
+    }
+    if plan.items.iter().filter(|item| item.selected).any(|item| {
+        item.planned_action != PlannedAction::Trash
+            || item.rollback_method != "system-trash+manifest"
+    }) {
+        anyhow::bail!("selected cleanup items must use system trash and a manifest");
+    }
+    let selected_count = plan.items.iter().filter(|item| item.selected).count();
+    let selected_size_bytes = plan
+        .items
+        .iter()
+        .filter(|item| item.selected)
+        .map(|item| item.size_bytes)
+        .sum::<u64>();
+    if plan.summary.selected_count != selected_count
+        || plan.summary.selected_size_bytes != selected_size_bytes
+        || plan.summary.candidate_count != plan.items.len()
+    {
+        anyhow::bail!("cleanup plan summary does not match its items");
+    }
+    Ok(())
+}
+
 fn directory_fingerprint_matches(
     expected: &CleanupItemFingerprint,
     actual: &CleanupItemFingerprint,
@@ -845,7 +889,7 @@ fn encode_os_string(value: &std::ffi::OsStr) -> String {
 mod tests {
     use super::*;
     use cleanr_core::{
-        Confidence, EntryKind, PlannedAction, RuleTrust, SafetyPolicy, build_cleanup_plan,
+        Confidence, EntryKind, RuleTrust, SafetyPolicy, build_cleanup_plan,
         build_cleanup_plan_with_policy,
     };
     use cleanr_core::{RuleHit, ScanEntry};
@@ -866,6 +910,7 @@ mod tests {
                 risk_note: "rebuild".into(),
                 default_selected: true,
                 trust: RuleTrust::Builtin,
+                match_role: cleanr_core::RuleMatchRole::Primary,
             }],
         }
     }
@@ -876,6 +921,7 @@ mod tests {
             run_id: run_id.to_string(),
             created_at: Utc::now(),
             plan_schema_version: "plan".to_string(),
+            authorization: None,
             summary: ExecutionSummary {
                 attempted: 1,
                 succeeded: 1,
@@ -915,16 +961,23 @@ mod tests {
                 risk_note: "rebuild".into(),
                 default_selected: true,
                 trust: cleanr_core::RuleTrust::Builtin,
+                match_role: cleanr_core::RuleMatchRole::Primary,
             }],
         };
         let plan = build_cleanup_plan(vec![temp.path().to_path_buf()], vec![], &[entry]);
         let fake = FakeTrashExecutor::default();
-        let authorization = CleanupAuthorization::explicit_user_confirmation();
+        let authorization = CleanupAuthorization::explicit_user_delegation();
         let manifest =
             execute_cleanup_plan(&plan, &fake, temp.path(), Some(&authorization)).expect("execute");
 
         assert_eq!(manifest.summary.succeeded, 1);
         assert_eq!(manifest.items[0].planned_action, PlannedAction::Trash);
+        assert_eq!(
+            manifest.authorization,
+            Some(ExecutionAuthorization {
+                source: CleanupAuthorizationSource::ExplicitUserDelegation,
+            })
+        );
         assert_eq!(fake.trashed_paths().len(), 1);
         assert_eq!(
             list_execution_manifests(temp.path()).expect("list").len(),
@@ -1074,6 +1127,7 @@ mod tests {
                 risk_note: "rebuild".into(),
                 default_selected: true,
                 trust: cleanr_core::RuleTrust::Builtin,
+                match_role: cleanr_core::RuleMatchRole::Primary,
             }],
         };
         let policy = cleanr_core::SafetyPolicy::new(vec![], false);

@@ -9,12 +9,14 @@ use std::{
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
 use cleanr_config::Config;
-use cleanr_core::{Confidence, EntryKind, RuleHit, RuleTrust, RulesetVersion, ScanEntry};
+use cleanr_core::{
+    Confidence, EntryKind, RuleHit, RuleMatchRole, RuleTrust, RulesetVersion, ScanEntry,
+};
 use cleanr_plugin_api::{
     PluginCapability, PluginDiagnostic, PluginDiscovery, PluginManifest, PluginSource, TrustLevel,
     discover_bundles, sorted_dir_entries,
 };
-use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use schemars::{JsonSchema, schema_for};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -40,6 +42,8 @@ pub struct RuleDefinition {
     pub matcher: RuleMatcher,
     pub confidence: Confidence,
     pub default_selected: bool,
+    #[serde(default)]
+    pub match_role: RuleMatchRole,
     pub action: RuleAction,
     pub reason: String,
     pub risk_note: String,
@@ -157,6 +161,13 @@ impl RulePack {
                     rule.id
                 );
             }
+            if rule.match_role == RuleMatchRole::Fallback && rule.default_selected {
+                bail!(
+                    "rule {}:{} cannot be both fallback and default_selected",
+                    self.id,
+                    rule.id
+                );
+            }
             if !rule_ids.insert(rule.id.as_str()) {
                 bail!(
                     "rule pack {} contains duplicate rule id {}",
@@ -191,7 +202,7 @@ impl RulePack {
                 bail!("rule {}:{} has no matcher", self.id, rule.id);
             }
             if let Some(path_glob) = &rule.matcher.path_glob {
-                Glob::new(path_glob).with_context(|| {
+                compile_path_glob(path_glob).with_context(|| {
                     format!("rule {}:{} has an invalid path_glob", self.id, rule.id)
                 })?;
             }
@@ -571,6 +582,7 @@ impl RuleRegistry {
                     reason: rule.reason.clone(),
                     risk_note: rule.risk_note.clone(),
                     default_selected: rule.default_selected,
+                    match_role: rule.match_role,
                     trust: match pack.trust {
                         TrustLevel::Builtin => RuleTrust::Builtin,
                         TrustLevel::Trusted => RuleTrust::Trusted,
@@ -646,7 +658,7 @@ impl RuleRegistry {
                     .matcher
                     .path_glob
                     .as_deref()
-                    .map(Glob::new)
+                    .map(compile_path_glob)
                     .transpose()?
                     .map(|glob| glob.compile_matcher());
                 let project = rule
@@ -835,6 +847,14 @@ impl RuleRegistry {
     }
 }
 
+fn compile_path_glob(pattern: &str) -> Result<Glob> {
+    GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .backslash_escape(false)
+        .build()
+        .context("invalid segment-aware path glob")
+}
+
 fn matches_rule(
     entry: &ScanEntry,
     rule: &RuleDefinition,
@@ -980,8 +1000,25 @@ const BUILTIN_SYSTEM_RULES: &str =
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cleanr_core::{RuleTrust, ScanEntry, build_cleanup_plan};
+    use cleanr_core::{
+        RecommendationPolicy, RuleResolutionState, RuleTrust, ScanEntry, build_analysis_report,
+        build_cleanup_plan,
+    };
     use std::path::PathBuf;
+
+    #[test]
+    fn path_globs_treat_single_star_as_one_path_segment() {
+        let direct_child = compile_path_glob("**/Library/Caches/*")
+            .expect("valid path glob")
+            .compile_matcher();
+        assert!(direct_child.is_match("/Users/me/Library/Caches/Yarn"));
+        assert!(!direct_child.is_match("/Users/me/Library/Caches/App/node_modules"));
+
+        let recursive = compile_path_glob("**/Library/Caches/**")
+            .expect("valid recursive path glob")
+            .compile_matcher();
+        assert!(recursive.is_match("/Users/me/Library/Caches/App/node_modules"));
+    }
 
     #[test]
     fn builtin_rules_match_developer_caches() {
@@ -998,6 +1035,73 @@ mod tests {
         assert_eq!(hits[0].rule_id, "node-modules");
         assert!(hits[0].default_selected);
         assert_eq!(hits[0].confidence, Confidence::High);
+    }
+
+    #[test]
+    fn specific_builtin_cache_rule_shadows_application_cache_fallback() {
+        let registry = RuleRegistry::builtin().expect("builtin rules load");
+        let as_of = Utc::now();
+        let mut entry = ScanEntry {
+            path: PathBuf::from("/Users/me/Library/Caches/Yarn"),
+            kind: EntryKind::Directory,
+            size_bytes: 20 * 1024 * 1024,
+            modified_at: Some(as_of - Duration::days(100)),
+            rule_hits: vec![],
+        };
+        entry.rule_hits = registry.hits_for_at(&entry, as_of);
+
+        let report = build_analysis_report(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/Users/me")],
+            &[entry],
+            &[],
+            RecommendationPolicy::default(),
+        )
+        .expect("valid analysis");
+        let resolution = &report.candidates[0].rules;
+
+        assert_eq!(resolution.state, RuleResolutionState::Single);
+        assert_eq!(resolution.matched.len(), 2);
+        assert_eq!(resolution.shadowed.len(), 1);
+        assert_eq!(
+            resolution
+                .primary
+                .as_ref()
+                .expect("specific primary rule")
+                .rule_id,
+            "macos-tool-download-cache"
+        );
+    }
+
+    #[test]
+    fn duplicate_general_and_system_rules_have_equivalent_safety_semantics() {
+        let registry = RuleRegistry::builtin().expect("builtin rules load");
+        let as_of = Utc::now();
+        let mut entry = ScanEntry {
+            path: PathBuf::from("/Users/me/Downloads/archive.zip"),
+            kind: EntryKind::File,
+            size_bytes: 200 * 1024 * 1024,
+            modified_at: Some(as_of - Duration::days(100)),
+            rule_hits: vec![],
+        };
+        entry.rule_hits = registry.hits_for_at(&entry, as_of);
+
+        let report = build_analysis_report(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/Users/me")],
+            &[entry],
+            &[],
+            RecommendationPolicy::default(),
+        )
+        .expect("valid analysis");
+
+        assert_eq!(
+            report.candidates[0].rules.state,
+            RuleResolutionState::Equivalent
+        );
+        assert!(report.candidates[0].rules.shadowed.is_empty());
     }
 
     #[test]
@@ -1641,6 +1745,31 @@ mod tests {
         match = { dir_name = "x" }
         confidence = "low"
         default_selected = true
+        action = "trash"
+        reason = "x"
+        risk_note = "x"
+        "#;
+
+        assert!(RulePack::from_toml(raw).is_err());
+    }
+
+    #[test]
+    fn plugin_rejects_default_selected_fallback_rule() {
+        let raw = r#"
+        id = "bad"
+        name = "Bad"
+        version = "0.1.0"
+        description = "Bad"
+        categories = ["x"]
+
+        [[rules]]
+        id = "bad-rule"
+        label = "Bad"
+        category = "x"
+        match = { dir_name = "x" }
+        confidence = "high"
+        default_selected = true
+        match_role = "fallback"
         action = "trash"
         reason = "x"
         risk_note = "x"

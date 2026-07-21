@@ -117,6 +117,21 @@ enum Command {
         output: Option<PathBuf>,
     },
 
+    /// Execute an unchanged cleanup plan through the system trash.
+    Clean {
+        /// Local cleanup plan previously written by `cleanr plan --output`.
+        #[arg(long)]
+        plan: PathBuf,
+
+        /// SHA-256 printed when the reviewed plan was written.
+        #[arg(long)]
+        plan_sha256: String,
+
+        /// Attest that the current user explicitly authorized this exact cleanup plan.
+        #[arg(long)]
+        authorized_by_user: bool,
+    },
+
     /// List or restore cleanup manifests without opening the TUI.
     Restore {
         #[command(subcommand)]
@@ -401,6 +416,16 @@ fn main() -> Result<()> {
                 request: scan_request(paths, global, global_kinds),
                 json,
                 output,
+            }),
+            Command::Clean {
+                plan,
+                plan_sha256,
+                authorized_by_user,
+            } => workflow::clean(workflow::CleanCommand {
+                config_path: args.config,
+                plan_path: plan,
+                plan_sha256,
+                authorized_by_user,
             }),
             Command::Restore { action } => match action {
                 RestoreAction::List => workflow::restore_list(),
@@ -717,6 +742,26 @@ mod tests {
                 action: RestoreAction::Run { run_id, confirm: true }
             }) if run_id == "run-1"
         ));
+
+        let clean = Args::try_parse_from([
+            "cleanr",
+            "clean",
+            "--plan",
+            "/tmp/cleanr-plan.json",
+            "--plan-sha256",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--authorized-by-user",
+        ])
+        .expect("parse clean");
+        assert!(matches!(
+            clean.command,
+            Some(Command::Clean {
+                plan,
+                plan_sha256,
+                authorized_by_user: true,
+            }) if plan == std::path::Path::new("/tmp/cleanr-plan.json")
+                && plan_sha256 == "a".repeat(64)
+        ));
     }
 
     #[test]
@@ -725,6 +770,19 @@ mod tests {
             .expect_err("restore must require explicit confirmation");
 
         assert!(error.to_string().contains("--confirm"));
+    }
+
+    #[test]
+    fn clean_requires_authorization_before_plan_lookup() {
+        let error = workflow::clean(workflow::CleanCommand {
+            config_path: None,
+            plan_path: PathBuf::from("/missing/cleanr-plan.json"),
+            plan_sha256: "a".repeat(64),
+            authorized_by_user: false,
+        })
+        .expect_err("clean must require explicit user authorization");
+
+        assert!(error.to_string().contains("--authorized-by-user"));
     }
 
     #[test]

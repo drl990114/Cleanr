@@ -10,10 +10,11 @@ use cleanr_core::{
 use cleanr_fs::{ScanOptions, ScanReport, resolve_scan_roots, scan_paths};
 use cleanr_rules::RuleRegistry;
 use cleanr_tasks::{
-    ManifestRepository, SystemRestoreExecutor, restore_execution_manifest, restored_run_ids,
-    write_cleanup_plan,
+    CleanupAuthorization, ManifestRepository, SystemRestoreExecutor, TrashExecutor,
+    execute_cleanup_plan, restore_execution_manifest, restored_run_ids, write_cleanup_plan,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 pub struct ScanCommand {
     pub config_path: Option<PathBuf>,
@@ -38,6 +39,13 @@ pub struct DryRunCommand {
     pub request: ScanRequest,
     pub json: bool,
     pub output: Option<PathBuf>,
+}
+
+pub struct CleanCommand {
+    pub config_path: Option<PathBuf>,
+    pub plan_path: PathBuf,
+    pub plan_sha256: String,
+    pub authorized_by_user: bool,
 }
 
 struct WorkflowScan {
@@ -104,6 +112,57 @@ pub fn dry_run(command: DryRunCommand) -> Result<()> {
             format_bytes(plan.summary.selected_size_bytes)
         );
     }
+    Ok(())
+}
+
+pub fn clean(command: CleanCommand) -> Result<()> {
+    if !command.authorized_by_user {
+        bail!("cleanup requires --authorized-by-user for the exact reviewed plan");
+    }
+    validate_sha256(&command.plan_sha256)?;
+    let plan_bytes = std::fs::read(&command.plan_path).with_context(|| {
+        format!(
+            "failed to read cleanup plan {}",
+            command.plan_path.display()
+        )
+    })?;
+    let actual_sha256 = format!("{:x}", Sha256::digest(&plan_bytes));
+    if !actual_sha256.eq_ignore_ascii_case(&command.plan_sha256) {
+        bail!(
+            "cleanup plan SHA-256 changed after authorization: expected {}, found {}",
+            command.plan_sha256,
+            actual_sha256
+        );
+    }
+    let expected_plan: CleanupPlan = serde_json::from_slice(&plan_bytes).with_context(|| {
+        format!(
+            "failed to parse cleanup plan {}",
+            command.plan_path.display()
+        )
+    })?;
+    if expected_plan.summary.selected_count == 0 {
+        bail!("cleanup plan has no selected items");
+    }
+
+    let scan = run_scan(
+        command.config_path,
+        ScanRequest::paths(expected_plan.scan_roots.clone()),
+    )?;
+    let current_plan = build_plan(&scan)?;
+    ensure_plan_unchanged(&expected_plan, &current_plan)?;
+
+    let authorization = CleanupAuthorization::explicit_user_delegation();
+    let state_dir = default_state_dir();
+    let manifest = execute_cleanup_plan(
+        &current_plan,
+        &TrashExecutor,
+        &state_dir,
+        Some(&authorization),
+    )?;
+    println!(
+        "Cleanup run {} moved {} item(s) to trash; {} failed. Restore with `cleanr restore run {} --confirm`.",
+        manifest.run_id, manifest.summary.succeeded, manifest.summary.failed, manifest.run_id
+    );
     Ok(())
 }
 
@@ -202,6 +261,21 @@ fn build_plan(scan: &WorkflowScan) -> Result<CleanupPlan> {
     ))
 }
 
+fn ensure_plan_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> Result<()> {
+    let unchanged = expected.schema_version == current.schema_version
+        && expected.scan_roots == current.scan_roots
+        && expected.ruleset_versions == current.ruleset_versions
+        && expected.summary == current.summary
+        && expected.items == current.items
+        && expected.safety == current.safety;
+    if !unchanged {
+        bail!(
+            "cleanup plan changed after authorization; generate, review, and authorize a new plan"
+        );
+    }
+    Ok(())
+}
+
 fn recommendation_policy(config: &Config) -> Result<RecommendationPolicy> {
     Ok(RecommendationPolicy::new(
         config.recommendations.preselect_after_days,
@@ -211,9 +285,22 @@ fn recommendation_policy(config: &Config) -> Result<RecommendationPolicy> {
 fn write_or_print_plan(plan: &CleanupPlan, output: Option<PathBuf>) -> Result<()> {
     if let Some(path) = output {
         write_cleanup_plan(plan, &path)?;
-        println!("Wrote {}", path.display());
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("failed to read cleanup plan {}", path.display()))?;
+        println!(
+            "Wrote {} sha256={:x}",
+            path.display(),
+            Sha256::digest(bytes)
+        );
     } else {
         println!("{}", serde_json::to_string_pretty(plan)?);
+    }
+    Ok(())
+}
+
+fn validate_sha256(value: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("--plan-sha256 must be exactly 64 hexadecimal characters");
     }
     Ok(())
 }
@@ -333,5 +420,26 @@ mod tests {
         let pathless_issue = &pathless_value["issues"][0];
         assert_eq!(pathless_issue["code"], "unknown");
         assert!(pathless_issue.get("path").is_none());
+    }
+
+    #[test]
+    fn authorized_plan_must_match_the_fresh_plan_except_for_creation_time() {
+        let expected = cleanr_core::build_cleanup_plan(vec![PathBuf::from("/repo")], vec![], &[]);
+        let mut current = expected.clone();
+        current.created_at += chrono::Duration::seconds(1);
+
+        ensure_plan_unchanged(&expected, &current).expect("creation time is not plan content");
+
+        current.summary.selected_count = 1;
+        let error =
+            ensure_plan_unchanged(&expected, &current).expect_err("changed plan must be rejected");
+        assert!(error.to_string().contains("changed after authorization"));
+    }
+
+    #[test]
+    fn plan_hash_must_be_a_sha256_hex_digest() {
+        validate_sha256(&"a".repeat(64)).expect("valid SHA-256");
+        assert!(validate_sha256("abc").is_err());
+        assert!(validate_sha256(&"z".repeat(64)).is_err());
     }
 }

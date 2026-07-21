@@ -109,23 +109,62 @@ impl Workbench {
         }
 
         match execute_cleanup(plan, executor, &self.state_dir, true) {
-            Ok(manifest) => {
-                self.clean_waiting_for_confirmation = false;
-                self.status = self.i18n.format(
-                    "status_cleaned",
-                    &[
-                        ("succeeded", manifest.summary.succeeded.to_string()),
-                        ("failed", manifest.summary.failed.to_string()),
-                        ("run_id", manifest.run_id.clone()),
-                    ],
-                );
-                self.task_log
-                    .push(format!("clean {}", manifest.summary.succeeded));
-                self.refresh_history();
-                self.refresh_roots_after_mutation();
-            }
+            Ok(manifest) => self.finish_cleanup_manifest(manifest),
             Err(err) => self.status = err.to_string(),
         }
+    }
+
+    pub(crate) fn finish_cleanup_manifest(&mut self, manifest: ExecutionManifest) {
+        self.clean_waiting_for_confirmation = false;
+        let status = self.cleanup_manifest_status(&manifest);
+        let succeeded = manifest.summary.succeeded;
+        self.task_log.push(status.clone());
+        if !self
+            .execution_manifests
+            .iter()
+            .any(|existing| existing.run_id == manifest.run_id)
+        {
+            self.execution_manifests.insert(0, manifest);
+        }
+        if succeeded > 0 {
+            self.refresh_roots_after_mutation(status);
+        } else {
+            self.status = status;
+        }
+    }
+
+    fn cleanup_manifest_status(&self, manifest: &ExecutionManifest) -> String {
+        if manifest.summary.failed == 0 {
+            return self.i18n.format(
+                "status_cleaned",
+                &[
+                    ("succeeded", manifest.summary.succeeded.to_string()),
+                    ("failed", manifest.summary.failed.to_string()),
+                    ("run_id", manifest.run_id.clone()),
+                ],
+            );
+        }
+
+        let error = manifest
+            .items
+            .iter()
+            .find_map(|item| item.error.as_deref())
+            .map(|error| error.split_whitespace().collect::<Vec<_>>().join(" "))
+            .unwrap_or_else(|| self.i18n.t("status_cleanup_unknown_error"));
+        let key = if manifest.summary.succeeded == 0 {
+            "status_cleanup_failed"
+        } else {
+            "status_cleanup_partial"
+        };
+        self.i18n.format(
+            key,
+            &[
+                ("succeeded", manifest.summary.succeeded.to_string()),
+                ("failed", manifest.summary.failed.to_string()),
+                ("error", error),
+                ("run_id", manifest.run_id.clone()),
+            ],
+        )
     }
 
     pub(crate) fn submit_confirmation(&mut self) {
@@ -448,11 +487,15 @@ impl Workbench {
         self.status = self.i18n.t("status_help");
     }
 
-    pub(crate) fn refresh_roots_after_mutation(&mut self) {
+    pub(crate) fn refresh_roots_after_mutation(&mut self, completed_status: String) {
         if self.scan_rx.is_some() || self.roots.is_empty() {
+            self.status = completed_status;
             return;
         }
         let view = self.view;
         self.start_scan_for_view(ScanRequest::default(), view);
+        if self.scan_rx.is_some() {
+            self.status_after_scan = Some(completed_status);
+        }
     }
 }

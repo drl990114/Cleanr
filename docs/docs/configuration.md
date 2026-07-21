@@ -128,9 +128,11 @@ blocks automatic preselection.
 
 Cleanr has no embedded model, provider, endpoint, or API-key configuration.
 An external agent running on the same machine can consume the read-only
-`cleanr analyze` JSON contract, but it receives no cleanup capability. The
-report includes the configured recommendation-policy snapshot and real local
-paths, so it is not a safe remote-sharing format.
+`cleanr analyze` JSON contract, but analysis grants no cleanup capability by
+itself. Delegated cleanup requires a separately reviewed plan, its SHA-256, and
+explicit current-user authorization. The report includes the configured
+recommendation-policy snapshot and real local paths, so it is not a safe
+remote-sharing format.
 See [Evidence and privacy](./evidence-and-privacy) before giving it to another
 tool.
 

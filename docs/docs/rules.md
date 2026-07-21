@@ -21,10 +21,16 @@ Each rule match includes:
 | Reason | Why the path is considered a cleanup candidate |
 | Risk note | What may break, slow down, or require a download afterward |
 | Default selection | Whether the rule asks to preselect the item |
+| Match role | `primary` for a specific rule, or `fallback` for broad evidence |
 
-When multiple rules match one entry, Cleanr chooses the best hit using trust,
-default selection, and confidence. The final plan removes overlapping parent
-and child candidates so space is not counted twice.
+When multiple rules match one entry, Cleanr retains every match as evidence.
+Rules with equivalent safety semantics resolve deterministically. A trusted
+specific `primary` rule may shadow a broad `fallback` rule for the selection
+decision, while the fallback remains visible in the report and plan. An
+untrusted rule cannot shadow a built-in fallback. Other semantic disagreements
+remain an unresolved conflict and require review instead of being ranked away.
+The final plan removes overlapping parent and child candidates so space is not
+counted twice.
 
 ## Confidence is not a guarantee
 
@@ -36,6 +42,9 @@ and child candidates so space is not counted twice.
 
 Only a `High` confidence rule with `default_selected = true` from a built-in or
 trusted source can preselect an item.
+
+Bulk selection changes only `Preselected` and `Available` items. `Review`
+items, including unresolved rule conflicts, must be selected individually.
 
 ## Built-in rule packs
 
@@ -134,3 +143,16 @@ safety boundary. When publishing a bundle that uses this matcher, set its
 
 Legacy loose TOML rule-pack files are still discovered in plugin directories,
 but bundles provide version and compatibility metadata and are preferred.
+
+### Path glob and fallback semantics
+
+Path globs are segment-aware on every platform: `*` matches within one path
+segment and never crosses `/`, while `**` may match recursively across
+segments. For example, `**/Library/Caches/*` matches a direct child of
+`Caches`, but not its nested descendants. Use `**/Library/Caches/**` only when
+recursive matching is intentional.
+
+Set `match_role = "fallback"` only on a deliberately broad rule that should
+apply when no trusted primary rule matches the same candidate. Fallback rules
+cannot use `default_selected = true`. Prefer a specific matcher or a project
+matcher whenever one can express the ownership boundary.

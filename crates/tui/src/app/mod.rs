@@ -11,9 +11,10 @@ use std::{
 use chrono::{DateTime, Utc};
 use cleanr_config::{Config, default_config_path, default_state_dir};
 use cleanr_core::{
-    AnalysisReport, CandidateId, CleanupPlan, EntryKind, RecommendationPolicy,
-    RecommendationPolicyError, SafetyPolicy, ScanEntry, ScanIssue, ScanRequest, ScanSummary,
-    UserSelection, build_analysis_report_with_safety_policy, build_cleanup_plan_from_analysis,
+    AnalysisReport, CandidateId, CleanupPlan, EntryKind, ExecutionManifest, RecommendationPolicy,
+    RecommendationPolicyError, RecommendationState, SafetyPolicy, ScanEntry, ScanIssue,
+    ScanRequest, ScanSummary, UserSelection, build_analysis_report_with_safety_policy,
+    build_cleanup_plan_from_analysis,
 };
 use cleanr_fs::{
     NO_GLOBAL_SCAN_ROOTS, SCAN_CANCELLED, ScanOptions, ScanPhase, ScanProgress, resolve_scan_roots,
@@ -85,6 +86,8 @@ pub struct Workbench {
     pub(crate) palette_open: bool,
     pub(crate) help_open: bool,
     pub(crate) status: String,
+    /// Operation result restored after an automatic post-mutation refresh scan finishes.
+    pub(crate) status_after_scan: Option<String>,
     pub(crate) entries: Vec<ScanEntry>,
     pub(crate) scan_summary: ScanSummary,
     pub(crate) scan_as_of: DateTime<Utc>,

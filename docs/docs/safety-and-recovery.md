@@ -82,17 +82,32 @@ before taking further action.
 
 ## Confirmation and external local automation
 
-Cleanup remains a local Cleanr review and confirmation workflow. The only
-external-agent integration contract is `cleanr analyze`; Cleanr exposes no
-external-agent cleanup endpoint or CLI through that contract.
-
 `cleanr analyze` is read-only: it scans and prints evidence, but it does not
-create a cleanup plan or move files. A recommendation from an external agent
-does not change Cleanr's cleanup flow.
+create a cleanup plan or move files. An agent recommendation or a preselected
+item is not cleanup permission.
+
+A local agent may execute cleanup only after the current user reviews and
+explicitly authorizes an exact plan. The bounded command is:
+
+```bash
+cleanr clean \
+  --plan cleanr-plan.json \
+  --plan-sha256 <reviewed-sha256> \
+  --authorized-by-user
+```
+
+`cleanr plan --output` prints the plan digest. Before execution, `clean`
+verifies that digest, re-scans the recorded roots, rebuilds the plan, and
+compares its content with the authorized file. Any scope, rule, recommendation,
+selection, safety, or filesystem-evidence drift aborts cleanup and requires a
+new review and authorization. Successful items still go only to system trash,
+with an execution manifest and restore locator. The manifest records whether
+authorization came from local TUI confirmation or explicit user delegation.
 
 Setting `cleanup.require_confirm = false` removes the interactive confirmation
-dialog for a direct local `/clean` request; it does not turn `analyze` into an
-execution interface.
+dialog for a direct local `/clean` request. It does not turn `analyze` into an
+execution interface or remove the delegated command's digest and authorization
+requirements.
 
 ## Practical safety checklist
 

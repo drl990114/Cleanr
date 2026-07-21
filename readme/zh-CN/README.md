@@ -34,9 +34,10 @@ Cleanr 帮助开发者发现可重建的生成文件和缓存，避免把磁盘�
 ## 为 AI 而设计
 
 Cleanr 通过 `cleanr analyze` 向本地编码 Agent 提供确定、带版本的 JSON 证据，同时把
-清理权限留给用户。Agent 无需解析终端输出，也无需获得文件删除权限，就能检查推荐
-状态、决策代码、风险提示和扫描完整性。除非你主动选择分享，否则原始路径和报告始终
-留在本机。
+清理权限留给用户。Agent 无需解析终端输出，就能检查推荐状态、决策代码、风险提示和
+扫描完整性。用户审阅并明确授权某个确切计划后，Agent 可以通过绑定摘要的命令，把
+校验通过的条目移动到系统回收站，并保留本地恢复清单。除非你主动选择分享，否则原始
+路径和报告始终留在本机。
 
 直接从 GitHub 安装跨 Agent Skill `cleanr-review-disk-cleanup`：
 
@@ -45,7 +46,7 @@ npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
 ```
 
 Skill 会检查 Cleanr CLI 是否可用，在缺失时全局安装 `cleanr-cli`，并指导 Agent 完成
-本地只读分析。支持的 Agent、报告契约和隐私说明请见
+本地分析和经过明确授权的可恢复清理。支持的 Agent、报告契约和隐私说明请见
 [证据与隐私](../../docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/evidence-and-privacy.md)。
 
 ## 特性
@@ -53,7 +54,7 @@ Skill 会检查 Cleanr CLI 是否可用，在缺失时全局安装 `cleanr-cli`�
 - 键盘驱动的扫描、审阅、清理和恢复流程。
 - 内置规则覆盖常见开发者缓存、构建产物、包管理器缓存、大文件下载、日志和临时文件。
 - 每个候选项都会展示大小、置信度、匹配原因和风险提示。
-- 提供仅限本机的 `cleanr analyze` JSON 契约，供用户自己的本地编码 Agent 读取确定性证据，但不授予清理权限。
+- 提供仅限本机的 `cleanr analyze` JSON 契约，以及用于用户明确授权确切计划、绑定摘要的 `cleanr clean` 命令。
 - 保守的默认选择策略：只有来自内置规则或可信规则的高置信度项目才可能被预选。
 - 通过系统废纸篓清理、执行前再次校验、父子候选项去重和本地清理清单降低风险。
 - 支持 macOS 废纸篓、Windows 回收站和兼容 Freedesktop 的 Linux 废纸篓恢复历史。
@@ -95,22 +96,33 @@ cleanr ~/projects ~/Downloads
 
 在 TUI 中按 `?` 可查看快捷键帮助。
 
-让本地编码 Agent 协助分析时，使用只读命令；除非先主动脱敏，否则不要将 JSON
-发送到设备外：
+让本地编码 Agent 协助时，先使用只读分析；除非先主动脱敏，否则不要将 JSON 发送到
+设备外：
 
 ```bash
 cleanr analyze ~/projects > cleanr-analysis.json
 ```
 
-报告只提供审阅证据，不是清理指令。Cleanr 不提供 Agent 执行命令；清理仍需由人在
-TUI 中审阅并确认。
+报告只提供审阅证据，不是清理指令。如果用户希望委托执行，应先写入并审阅确切计划：
+
+```bash
+cleanr plan --output cleanr-plan.json ~/projects
+cleanr clean --plan cleanr-plan.json \
+  --plan-sha256 <reviewed-sha256> \
+  --authorized-by-user
+```
+
+`plan` 会打印文件的 SHA-256。`clean` 要求明确授权，会校验摘要、重新扫描并拒绝计划
+漂移，然后把通过校验的条目移动到系统回收站并记录恢复清单，不会永久删除。
 
 TUI、`analyze`、`plan` 和 `dry-run` 共用 `cleanr.toml` 中的
 `[recommendations].preselect_after_days`（默认 90 天；设为 `0` 会关闭年龄门槛）。
 
 ## 安全模型
 
-Cleanr 不会因为找到某个路径就直接清理。执行前你仍然可以编辑计划；选中路径会在清理前再次校验；清理动作会移动到系统废纸篓，而不是永久删除。
+Cleanr 不会因为找到某个路径就直接清理。授权前你仍然可以编辑计划；选中路径会在
+清理前再次校验；清理动作会移动到系统废纸篓，而不是永久删除。已授权计划发生变化
+后，需要重新审阅并授权。
 
 恢复能力依赖系统废纸篓，是尽力而为的机制。确认清理结果无误前，请不要清空系统废纸篓。
 

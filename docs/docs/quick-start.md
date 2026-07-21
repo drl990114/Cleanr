@@ -124,9 +124,10 @@ Install the repository's cross-agent skill directly from GitHub:
 npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
 ```
 
-It guides this local-only, read-only workflow and has no cleanup authority.
-Agent selection and invocation are covered in
-[Evidence and privacy](./evidence-and-privacy).
+It keeps review read-only by default. It can execute an exact plan only after
+the current user reviews its summary and explicitly authorizes its SHA-256;
+successful items go to system trash with a restore manifest. Agent selection
+and invocation are covered in [Evidence and privacy](./evidence-and-privacy).
 
 ## Use Simplified Chinese
 
