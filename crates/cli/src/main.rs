@@ -89,6 +89,14 @@ enum Command {
         #[arg(long = "global-kind")]
         global_kinds: Vec<GlobalScanKind>,
 
+        /// Select one exact discovered candidate path. May be repeated.
+        #[arg(long = "select", value_name = "PATH")]
+        select_paths: Vec<PathBuf>,
+
+        /// Deselect one exact discovered candidate path. May be repeated.
+        #[arg(long = "deselect", value_name = "PATH")]
+        deselect_paths: Vec<PathBuf>,
+
         /// Write the JSON plan to this path instead of stdout.
         #[arg(long)]
         output: Option<PathBuf>,
@@ -107,6 +115,14 @@ enum Command {
         /// Include one global system cleanup category. May be repeated.
         #[arg(long = "global-kind")]
         global_kinds: Vec<GlobalScanKind>,
+
+        /// Select one exact discovered candidate path. May be repeated.
+        #[arg(long = "select", value_name = "PATH")]
+        select_paths: Vec<PathBuf>,
+
+        /// Deselect one exact discovered candidate path. May be repeated.
+        #[arg(long = "deselect", value_name = "PATH")]
+        deselect_paths: Vec<PathBuf>,
 
         /// Print the JSON cleanup plan.
         #[arg(long)]
@@ -399,21 +415,33 @@ fn main() -> Result<()> {
                 paths,
                 global,
                 global_kinds,
+                select_paths,
+                deselect_paths,
                 output,
             } => workflow::plan(workflow::PlanCommand {
                 config_path: args.config,
                 request: scan_request(paths, global, global_kinds),
+                selection: workflow::SelectionOverrides {
+                    select_paths,
+                    deselect_paths,
+                },
                 output,
             }),
             Command::DryRun {
                 paths,
                 global,
                 global_kinds,
+                select_paths,
+                deselect_paths,
                 json,
                 output,
             } => workflow::dry_run(workflow::DryRunCommand {
                 config_path: args.config,
                 request: scan_request(paths, global, global_kinds),
+                selection: workflow::SelectionOverrides {
+                    select_paths,
+                    deselect_paths,
+                },
                 json,
                 output,
             }),
@@ -723,14 +751,33 @@ mod tests {
             Args::try_parse_from(["cleanr", "analyze", "--preselect-after-days", "120",]).is_err()
         );
 
-        let dry_run =
-            Args::try_parse_from(["cleanr", "dry-run", "--output", "/tmp/plan.json", "/repo"])
-                .expect("parse dry-run");
+        let dry_run = Args::try_parse_from([
+            "cleanr",
+            "dry-run",
+            "--output",
+            "/tmp/plan.json",
+            "--select",
+            "/repo/cache",
+            "--deselect",
+            "/repo/keep",
+            "/repo",
+        ])
+        .expect("parse dry-run");
         assert!(matches!(
             dry_run.command,
-            Some(Command::DryRun { paths, global: false, global_kinds, json: false, output: Some(path) })
+            Some(Command::DryRun {
+                paths,
+                global: false,
+                global_kinds,
+                select_paths,
+                deselect_paths,
+                json: false,
+                output: Some(path),
+            })
                 if paths == vec![PathBuf::from("/repo")]
                     && global_kinds.is_empty()
+                    && select_paths == vec![PathBuf::from("/repo/cache")]
+                    && deselect_paths == vec![PathBuf::from("/repo/keep")]
                     && path.as_path() == std::path::Path::new("/tmp/plan.json")
         ));
 

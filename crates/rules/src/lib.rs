@@ -1289,6 +1289,47 @@ mod tests {
     }
 
     #[test]
+    fn builtin_dev_covers_macos_global_caches_with_conservative_defaults() {
+        let registry = RuleRegistry::builtin().expect("builtin rules load");
+        let cases = [
+            (
+                "/Users/me/Library/Caches/Homebrew",
+                "macos-package-manager-cache",
+                Confidence::High,
+                true,
+            ),
+            (
+                "/Users/me/Library/Developer/CoreSimulator/Caches",
+                "xcode-coresimulator-cache",
+                Confidence::High,
+                true,
+            ),
+            (
+                "/Users/me/Library/Developer/Xcode/iOS DeviceSupport/18.5",
+                "xcode-device-support",
+                Confidence::Medium,
+                false,
+            ),
+            (
+                "/Users/me/Library/Developer/Xcode/Archives/2026-07-25/App.xcarchive",
+                "xcode-archives",
+                Confidence::Low,
+                false,
+            ),
+        ];
+
+        for (path, expected_rule, confidence, default_selected) in cases {
+            let hit = registry
+                .hits_for(&test_entry(path, EntryKind::Directory))
+                .into_iter()
+                .find(|hit| hit.rule_id == expected_rule)
+                .expect("macOS developer cache rule");
+            assert_eq!(hit.confidence, confidence, "{path}");
+            assert_eq!(hit.default_selected, default_selected, "{path}");
+        }
+    }
+
+    #[test]
     fn project_markers_disambiguate_target_directories() {
         let registry = RuleRegistry::builtin().expect("builtin rules load");
         let mut entries = vec![
@@ -1396,6 +1437,157 @@ mod tests {
             .expect("temporary hit");
         assert_eq!(temporary_hit.confidence, Confidence::Medium);
         assert!(!temporary_hit.default_selected);
+    }
+
+    #[test]
+    fn builtin_system_covers_macos_routine_cleanup_without_preselecting_user_data() {
+        let registry = RuleRegistry::builtin().expect("builtin rules load");
+        let safe_cases = [
+            (
+                "/Users/me/Library/Caches/com.apple.QuickLook.thumbnailcache",
+                "macos-quicklook-thumbnail-cache",
+            ),
+            (
+                "/Users/me/Library/Application Support/Slack/Cache",
+                "macos-electron-app-cache",
+            ),
+            (
+                "/Users/me/Library/Containers/com.microsoft.teams2/Data/Library/Caches",
+                "macos-teams-cache",
+            ),
+        ];
+        for (path, expected_rule) in safe_cases {
+            let hit = registry
+                .hits_for(&test_entry(path, EntryKind::Directory))
+                .into_iter()
+                .find(|hit| hit.rule_id == expected_rule)
+                .expect("safe macOS cleanup rule");
+            assert_eq!(hit.confidence, Confidence::High, "{path}");
+            assert!(hit.default_selected, "{path}");
+        }
+
+        let mut spotify = test_entry(
+            "/Users/me/Library/Application Support/Spotify/PersistentCache",
+            EntryKind::Directory,
+        );
+        spotify.size_bytes = 20 * 1024 * 1024;
+        let spotify_hit = registry
+            .hits_for(&spotify)
+            .into_iter()
+            .find(|hit| hit.rule_id == "macos-spotify-persistent-cache")
+            .expect("Spotify review rule");
+        assert_eq!(spotify_hit.confidence, Confidence::Medium);
+        assert!(!spotify_hit.default_selected);
+
+        for (path, expected_rule) in [
+            (
+                "/Users/me/Library/Logs/DiagnosticReports/App-2026.ips",
+                "macos-diagnostic-reports",
+            ),
+            (
+                "/Users/me/Downloads/old-installer.dmg",
+                "downloaded-macos-disk-image",
+            ),
+        ] {
+            let hit = registry
+                .hits_for(&test_entry(path, EntryKind::File))
+                .into_iter()
+                .find(|hit| hit.rule_id == expected_rule)
+                .expect("review-only macOS cleanup rule");
+            assert_eq!(hit.confidence, Confidence::Low, "{path}");
+            assert!(!hit.default_selected, "{path}");
+        }
+    }
+
+    #[test]
+    fn builtin_system_covers_only_narrow_stale_windows_system_files() {
+        let registry = RuleRegistry::builtin().expect("builtin rules load");
+        let as_of = Utc::now();
+        let mut temporary = test_entry(
+            "/Users/me/AppData/Local/Temp/cleanr-old.tmp",
+            EntryKind::File,
+        );
+        temporary.size_bytes = 20 * 1024 * 1024;
+        temporary.modified_at = Some(as_of - Duration::days(31));
+        temporary.rule_hits = registry.hits_for_at(&temporary, as_of);
+
+        let temporary_hit = temporary
+            .rule_hits
+            .iter()
+            .find(|hit| hit.rule_id == "windows-stale-user-temporary-file")
+            .expect("stale Windows user temp file");
+        assert_eq!(temporary_hit.confidence, Confidence::High);
+        assert!(temporary_hit.default_selected);
+
+        let report = build_analysis_report(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/Users/me/AppData/Local/Temp")],
+            std::slice::from_ref(&temporary),
+            &[],
+            RecommendationPolicy::new(30).expect("valid policy"),
+        )
+        .expect("valid analysis");
+        let resolution = &report.candidates[0].rules;
+        assert_eq!(resolution.state, RuleResolutionState::Single);
+        assert_eq!(
+            resolution
+                .primary
+                .as_ref()
+                .expect("specific Windows temp rule")
+                .rule_id,
+            "windows-stale-user-temporary-file"
+        );
+        assert_eq!(resolution.shadowed.len(), 2);
+
+        let mut shader = test_entry(
+            "/Users/me/AppData/Local/D3DSCache/8f4d.cache",
+            EntryKind::File,
+        );
+        shader.modified_at = Some(as_of - Duration::days(31));
+        let shader_hit = registry
+            .hits_for_at(&shader, as_of)
+            .into_iter()
+            .find(|hit| hit.rule_id == "windows-stale-directx-shader-cache-file")
+            .expect("stale DirectX shader cache file");
+        assert_eq!(shader_hit.confidence, Confidence::High);
+        assert!(shader_hit.default_selected);
+
+        let mut fresh_temporary = test_entry(
+            "/Users/me/AppData/Local/Temp/cleanr-fresh.dat",
+            EntryKind::File,
+        );
+        fresh_temporary.modified_at = Some(as_of - Duration::days(29));
+        assert!(
+            registry
+                .hits_for_at(&fresh_temporary, as_of)
+                .into_iter()
+                .all(|hit| hit.rule_id != "windows-stale-user-temporary-file")
+        );
+
+        let mut shader_directory =
+            test_entry("/Users/me/AppData/Local/D3DSCache", EntryKind::Directory);
+        shader_directory.modified_at = Some(as_of - Duration::days(31));
+        assert!(
+            registry
+                .hits_for_at(&shader_directory, as_of)
+                .into_iter()
+                .all(|hit| hit.rule_id != "windows-stale-directx-shader-cache-file")
+        );
+
+        for excluded in [
+            "/Users/me/AppData/Local/CrashDumps/app.dmp",
+            "/Users/me/AppData/Local/Microsoft/Windows/Explorer/thumbcache_256.db",
+            "/Windows/SoftwareDistribution/Download/update.cab",
+            "/Windows/Prefetch/APP.EXE-12345678.pf",
+        ] {
+            assert!(
+                registry
+                    .hits_for_at(&test_entry(excluded, EntryKind::File), as_of)
+                    .is_empty(),
+                "{excluded} must not be a Windows cleanup candidate"
+            );
+        }
     }
 
     #[test]

@@ -30,10 +30,11 @@
   </p>
 </div>
 
-Cleanr helps developers find rebuildable generated files and caches without
-turning cleanup into a blind delete. It scans paths you choose, explains why
-each item matched, lets you review the plan in a keyboard-driven terminal UI,
-and moves selected items to the operating system trash.
+Cleanr helps developers and macOS and Windows users find rebuildable generated
+files and caches without turning cleanup into a blind delete. It scans paths
+you choose, explains why each item matched, lets you review the plan in a
+keyboard-driven terminal UI, and moves selected items to the operating system
+trash.
 
 ## AI-Friendly by Design
 
@@ -62,7 +63,11 @@ for supported agents, the report contract, and privacy guidance.
 
 - Built-in rules for common developer caches, browser caches, application
   caches, build output, package-manager caches, large downloads, logs, and
-  temporary files.
+  temporary files. macOS coverage includes Brave and Arc, named cache-only
+  locations for popular desktop apps, Homebrew, Xcode, CocoaPods, SwiftPM,
+  diagnostic reports, and downloaded installers. Conservative Windows coverage
+  adds only stale regular files from the current user's Temp and DirectX
+  shader-cache directories.
 
 - Reviewable cleanup plans with size, confidence, reason, and risk notes for
   every candidate.
@@ -124,6 +129,38 @@ when the platform supports it.
 
 Press `?` in the TUI for keyboard help.
 
+On macOS, inspect the routine user-level locations without changing anything:
+
+```bash
+cleanr analyze --global \
+  --global-kind browser-caches \
+  --global-kind app-caches \
+  --global-kind logs \
+  --global-kind temp-files \
+  --global-kind downloads
+```
+
+Add `--global-kind developer-caches` when package-manager and Xcode caches are
+also in scope. Trash contents, Mail data, iOS backups, Time Machine snapshots,
+browser service workers, and system-owned roots are deliberately excluded.
+
+On Windows, the conservative routine scope is intentionally smaller:
+
+```bash
+cleanr analyze --global \
+  --global-kind app-caches \
+  --global-kind temp-files
+```
+
+It matches only individual regular files that have not been modified for at
+least 30 days in the current user's Temp or DirectX `D3DSCache` directory.
+DirectX shader files are generated graphics caches that Windows can recreate.
+The Temp and cache directories themselves are never selected. Explorer
+thumbnail databases, crash dumps, Windows Update and Delivery Optimization
+data, Prefetch, the Recycle Bin, registry data, Downloads, and system-owned
+roots are deliberately excluded. Add browser or developer caches only when the
+user explicitly includes that separate scope.
+
 For a local coding agent, start with read-only analysis and keep its JSON on the
 machine unless you deliberately redact it first:
 
@@ -140,6 +177,11 @@ cleanr clean --plan cleanr-plan.json \
   --plan-sha256 <reviewed-sha256> \
   --authorized-by-user
 ```
+
+`plan` and `dry-run` also accept repeatable `--select <exact-candidate-path>`
+and `--deselect <exact-candidate-path>` options. This lets an agent encode the
+user's explicit choices for review-only candidates without editing the plan;
+unknown, suppressed, and safety-excluded paths are rejected.
 
 `plan` prints the file's SHA-256. `clean` requires explicit authorization,
 verifies that digest, re-scans and rejects plan drift, then moves validated

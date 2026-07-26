@@ -20,7 +20,8 @@ The project already includes:
   modification, and protected-path checks;
 - a local authorization boundary that external tools cannot bypass;
 - a versioned, read-only local analysis report for external local agents,
-  alongside scan JSON, plan export, dry-run, and restore commands;
+  alongside scan JSON, exact candidate-path selection, digest-bound delegated
+  cleanup, dry-run, and restore commands;
 - versioned, declarative plugin bundles with compatibility and trust metadata.
 
 ## Near-term: clearer control and recovery

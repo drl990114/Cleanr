@@ -39,6 +39,18 @@ enables global scanning:
 /scan --global-kind browser-caches
 ```
 
+For a routine Windows review, prefer the narrower file-only scope:
+
+```text
+/scan --global-kind app-caches --global-kind temp-files
+```
+
+On Windows, that scope discovers only the current user's DirectX `D3DSCache`
+and user Temp directory. Its high-confidence Windows rules match regular files,
+never either directory, after at least 30 days without modification. Add
+`browser-caches` or `developer-caches` only when the user wants those separate
+scopes.
+
 Paths typed inside the TUI are not expanded by a shell, so `~` and environment
 variables remain literal text. Use absolute paths. For paths containing spaces,
 pass the quoted path when launching Cleanr instead.
@@ -108,6 +120,7 @@ Use these commands from scripts or terminals when you do not need the TUI:
 cleanr scan --json /path/to/project
 cleanr analyze /path/to/project
 cleanr plan --output cleanr-plan.json /path/to/project
+cleanr plan --output cleanr-plan.json --select /exact/candidate /path/to/project
 cleanr dry-run --json /path/to/project
 cleanr clean --plan cleanr-plan.json --plan-sha256 <reviewed-sha256> --authorized-by-user
 cleanr restore list
@@ -120,12 +133,20 @@ paths, so use it only with a local agent unless you independently redact the
 data. It shares `[recommendations].preselect_after_days` with the TUI, `plan`,
 and `dry-run`. `dry-run` and `plan` only generate a cleanup plan.
 
+`plan` and `dry-run` start from deterministic recommendations. Repeat
+`--select <path>` or `--deselect <path>` to encode exact choices made during
+evidence review. A selected path must exist, match a candidate from that scan,
+and not be overlap-suppressed or safety-excluded. Review-only candidates can be
+selected this way, but an agent must not choose them without an explicit
+candidate-path decision from the current user. Do not edit the generated plan.
+
 When `plan` writes a file, it prints that file's SHA-256. `clean` is intended
 for an exact plan that the current user has already reviewed and explicitly
 authorized. It verifies the supplied digest, re-scans the plan roots, rebuilds
-the deterministic plan, and refuses execution if the plan changed. It only
-moves validated items to the system trash and records an execution manifest;
-it never permanently deletes them. Restore still requires `--confirm`.
+the plan with the exact reviewed selection, and refuses execution if the plan
+changed. It only moves validated items to the system trash and records an
+execution manifest; it never permanently deletes them. Restore still requires
+`--confirm`.
 
 ## Slash commands
 

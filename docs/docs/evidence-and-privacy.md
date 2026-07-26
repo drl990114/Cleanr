@@ -26,6 +26,38 @@ shared configuration:
 preselect_after_days = 90
 ```
 
+For a routine macOS review, keep developer caches separate unless the user
+includes them:
+
+```bash
+cleanr analyze --global \
+  --global-kind browser-caches \
+  --global-kind app-caches \
+  --global-kind logs \
+  --global-kind temp-files \
+  --global-kind downloads
+```
+
+Use the same global-kind arguments with `cleanr plan --output` only after the
+user approves that scope. Add `developer-caches` explicitly for Homebrew,
+package-manager, and Xcode targets.
+
+For a routine Windows review, keep the default scope to the two conservative
+file-only categories:
+
+```bash
+cleanr analyze --global \
+  --global-kind app-caches \
+  --global-kind temp-files
+```
+
+This discovers the current user's Temp and DirectX `D3DSCache` locations. The
+Windows-specific rules match only regular files that have not been modified for
+at least 30 days; they do not select either directory. Ask separately before
+adding browser or developer caches. Crash dumps, Explorer thumbnail databases,
+Windows Update data, Prefetch, Downloads, registry data, the Recycle Bin, and
+system-owned roots are outside this routine scope.
+
 Set `preselect_after_days` to `0` to disable the age gate, or to an integer
 from `1` through `3650`. The TUI, `cleanr analyze`, `cleanr plan`, and
 `cleanr dry-run` use this same policy.
@@ -83,20 +115,25 @@ incomplete evidence blocks automatic preselection.
 1. A local agent invokes `cleanr analyze` for a user-approved scope.
 2. It reads the report and proposes questions, explanations, or a review
    order.
-3. If cleanup is requested, it writes a local plan with `cleanr plan --output`,
-   inspects the selected trash actions, and summarizes the exact roots, count,
-   size, risks, path, and printed SHA-256.
-4. The current user explicitly authorizes that exact plan after seeing the
+3. If cleanup is requested, it writes a local plan with `cleanr plan --output`.
+   It may use repeatable `--select` and `--deselect` only to encode exact
+   candidate-path choices the current user made after reviewing the evidence;
+   the plan file itself is not edited.
+4. It inspects the selected trash actions and summarizes the exact roots,
+   count, size, risks, plan path, and printed SHA-256.
+5. The current user explicitly authorizes that exact plan after seeing the
    summary.
-5. The agent runs `cleanr clean` with the plan path, reviewed SHA-256, and
+6. The agent runs `cleanr clean` with the plan path, reviewed SHA-256, and
    `--authorized-by-user`.
-6. Cleanr verifies the digest, re-scans and compares the plan, validates every
+7. Cleanr verifies the digest, re-scans and compares the plan, validates every
    target, moves successful items to system trash, and records the manifest.
 
 The analysis command has no cleanup operation. A suggestion, recommendation,
 initial cleanup request, or broad standing permission is never an execution
-token. If the plan changes, the agent must generate, summarize, and obtain
-authorization for a new plan.
+token. An agent must not select a review-only item on its own judgment. Unknown,
+overlap-suppressed, and safety-excluded paths cannot be selected. If the plan
+changes, the agent must generate, summarize, and obtain authorization for a new
+plan.
 
 ## Data boundary
 

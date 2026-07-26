@@ -1,6 +1,6 @@
 id = "builtin-dev"
 name = "Built-in developer caches"
-version = "0.10.0"
+version = "0.10.1"
 description = "Generated dependencies, build artifacts, and review-required data for developer projects."
 categories = ["developer-cache", "build-cache", "package-cache"]
 
@@ -9,6 +9,12 @@ categories = ["developer-cache", "build-cache", "package-cache"]
 # 1d351ca80b3d3adfad9bbe7db872c27359190210. Confidence, selection, and risk
 # semantics below are Cleanr-specific; intentionally created `.venv` directories
 # are excluded.
+#
+# User-level macOS developer cache paths were also audited against the
+# MIT-licensed https://github.com/yagcioglutoprak/dusty source at commit
+# acaa3f6a5e9b535892ce2301b0a57772a0ee430a and corroborated with the
+# MIT-licensed https://github.com/momenbasel/PureMac source at commit
+# 376b2380b0bffe7d614258731a58732ed65d563b.
 
 [[rules]]
 id = "node-modules"
@@ -669,3 +675,102 @@ default_selected = true
 action = "trash"
 reason = "Xcode DerivedData contains generated indexes and build products."
 risk_note = "Xcode will rebuild indexes and products, which may take time."
+
+[[rules]]
+id = "macos-package-manager-cache"
+label = "macOS developer tool cache"
+category = "package-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/{Homebrew,CocoaPods,org.swift.swiftpm,deno,Cypress,composer}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+action = "trash"
+reason = "These package-manager and developer-tool caches contain downloads or generated metadata that their owning tools can recreate."
+risk_note = "Future installs or tool runs may require network access and take longer."
+
+[[rules]]
+id = "macos-home-directory-tool-cache"
+label = "macOS home-directory developer cache"
+category = "package-cache"
+match = { kind = "directory", path_glob = "**/{.bun/install/cache,.pub-cache,.yarn/cache}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+action = "trash"
+reason = "These developer-tool directories contain downloaded packages that their owning tools can recreate."
+risk_note = "Future installs or builds may require network access and take longer."
+
+[[rules]]
+id = "macos-go-build-cache"
+label = "Go build cache"
+category = "build-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/go-build", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+action = "trash"
+reason = "The Go build cache contains generated compiler artifacts."
+risk_note = "The next Go build may take longer while artifacts are rebuilt."
+
+[[rules]]
+id = "xcode-coresimulator-cache"
+label = "Xcode CoreSimulator cache"
+category = "build-cache"
+match = { kind = "directory", path_glob = "**/Library/Developer/CoreSimulator/Caches", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+action = "trash"
+reason = "CoreSimulator caches contain generated simulator support data."
+risk_note = "Quit Xcode and Simulator first; simulator startup may be slower while cache data is rebuilt."
+
+[[rules]]
+id = "xcode-application-cache"
+label = "Xcode application cache"
+category = "build-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/com.apple.dt.Xcode", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+action = "trash"
+reason = "Xcode's Library/Caches directory contains generated IDE cache data."
+risk_note = "Quit Xcode first; its next launch and indexing pass may take longer."
+
+[[rules]]
+id = "xcode-preview-cache"
+label = "Xcode preview cache"
+category = "build-cache"
+match = { kind = "directory", path_glob = "**/Library/Developer/Xcode/UserData/Previews", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+action = "trash"
+reason = "Xcode preview data contains generated SwiftUI preview build products."
+risk_note = "Quit Xcode first; previews will be rebuilt and may take longer to render initially."
+
+[[rules]]
+id = "xcode-device-support"
+label = "Xcode device support version"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Developer/Xcode/{iOS,watchOS,tvOS} DeviceSupport/*", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+action = "trash"
+reason = "Xcode downloads device support symbols for each connected operating-system version."
+risk_note = "Review before cleaning; symbols may be needed to inspect or symbolicate existing device crash reports and can require a large download to restore."
+
+[[rules]]
+id = "xcode-test-devices"
+label = "Xcode test devices"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Developer/XCTestDevices/*", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+action = "trash"
+reason = "XCTestDevices contains simulator clones and local state created by Xcode test runs."
+risk_note = "Review before cleaning and quit Xcode; test devices and their state will need to be recreated."
+
+[[rules]]
+id = "xcode-archives"
+label = "Xcode archive"
+category = "developer-cache"
+match = { kind = "directory", extension = "xcarchive", path_glob = "**/Library/Developer/Xcode/Archives/**", min_size = 1048576 }
+confidence = "low"
+default_selected = false
+action = "trash"
+reason = "An Xcode archive contains a retained application build and can consume substantial disk space."
+risk_note = "Archives may contain irreplaceable builds and dSYMs needed to redistribute or symbolicate released applications; inspect individual archives before cleaning."

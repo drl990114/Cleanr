@@ -1,11 +1,15 @@
-use std::path::PathBuf;
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use cleanr_config::{Config, default_config_path, default_state_dir};
 use cleanr_core::{
-    AnalysisReport, CleanupPlan, RecommendationPolicy, SafetyPolicy, ScanRequest, UserSelection,
-    build_analysis_report_with_safety_policy, build_cleanup_plan_from_analysis,
+    AnalysisReport, CleanupPlan, RecommendationPolicy, RecommendationState, SafetyPolicy,
+    ScanRequest, UserSelection, build_analysis_report_with_safety_policy,
+    build_cleanup_plan_from_analysis,
 };
 use cleanr_fs::{ScanOptions, ScanReport, resolve_scan_roots, scan_paths};
 use cleanr_rules::RuleRegistry;
@@ -31,14 +35,22 @@ pub struct AnalyzeCommand {
 pub struct PlanCommand {
     pub config_path: Option<PathBuf>,
     pub request: ScanRequest,
+    pub selection: SelectionOverrides,
     pub output: Option<PathBuf>,
 }
 
 pub struct DryRunCommand {
     pub config_path: Option<PathBuf>,
     pub request: ScanRequest,
+    pub selection: SelectionOverrides,
     pub json: bool,
     pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Default)]
+pub struct SelectionOverrides {
+    pub select_paths: Vec<PathBuf>,
+    pub deselect_paths: Vec<PathBuf>,
 }
 
 pub struct CleanCommand {
@@ -91,13 +103,13 @@ pub fn analyze(command: AnalyzeCommand) -> Result<()> {
 
 pub fn plan(command: PlanCommand) -> Result<()> {
     let scan = run_scan(command.config_path, command.request)?;
-    let plan = build_plan(&scan)?;
+    let plan = build_plan(&scan, PlanSelection::Recommendations(command.selection))?;
     write_or_print_plan(&plan, command.output)
 }
 
 pub fn dry_run(command: DryRunCommand) -> Result<()> {
     let scan = run_scan(command.config_path, command.request)?;
-    let plan = build_plan(&scan)?;
+    let plan = build_plan(&scan, PlanSelection::Recommendations(command.selection))?;
     if let Some(path) = command.output {
         write_cleanup_plan(&plan, &path)?;
         println!("Dry run wrote {}", path.display());
@@ -148,7 +160,13 @@ pub fn clean(command: CleanCommand) -> Result<()> {
         command.config_path,
         ScanRequest::paths(expected_plan.scan_roots.clone()),
     )?;
-    let current_plan = build_plan(&scan)?;
+    let selected_paths = expected_plan
+        .items
+        .iter()
+        .filter(|item| item.selected)
+        .map(|item| item.path.clone())
+        .collect();
+    let current_plan = build_plan(&scan, PlanSelection::ExactPaths(selected_paths))?;
     ensure_plan_unchanged(&expected_plan, &current_plan)?;
 
     let authorization = CleanupAuthorization::explicit_user_delegation();
@@ -247,10 +265,20 @@ fn build_analysis_report(
     )?)
 }
 
-fn build_plan(scan: &WorkflowScan) -> Result<CleanupPlan> {
+enum PlanSelection {
+    Recommendations(SelectionOverrides),
+    ExactPaths(Vec<PathBuf>),
+}
+
+fn build_plan(scan: &WorkflowScan, requested_selection: PlanSelection) -> Result<CleanupPlan> {
     let safety = safety_policy(&scan.config, scan.config_path.clone());
     let analysis = build_analysis_report(scan, recommendation_policy(&scan.config)?, &safety)?;
-    let selection = UserSelection::from_recommendations(&analysis);
+    let selection = match requested_selection {
+        PlanSelection::Recommendations(overrides) => {
+            selection_with_overrides(&analysis, overrides)?
+        }
+        PlanSelection::ExactPaths(paths) => exact_selection(&analysis, &paths)?,
+    };
     Ok(build_cleanup_plan_from_analysis(
         scan.roots.clone(),
         scan.registry.versions(),
@@ -259,6 +287,100 @@ fn build_plan(scan: &WorkflowScan) -> Result<CleanupPlan> {
         &selection,
         &safety,
     ))
+}
+
+fn selection_with_overrides(
+    analysis: &AnalysisReport,
+    overrides: SelectionOverrides,
+) -> Result<UserSelection> {
+    let select_paths = normalize_selection_paths(&overrides.select_paths)?;
+    let deselect_paths = normalize_selection_paths(&overrides.deselect_paths)?;
+    if let Some(path) = select_paths.intersection(&deselect_paths).next() {
+        bail!(
+            "candidate path cannot be both selected and deselected: {}",
+            path.display()
+        );
+    }
+
+    let mut selection = UserSelection::from_recommendations(analysis);
+    for path in deselect_paths {
+        let candidate = candidate_for_path(analysis, &path)?;
+        selection.deselect(&candidate.id);
+    }
+    for path in select_paths {
+        let candidate = selectable_candidate_for_path(analysis, &path)?;
+        selection.select(candidate.id.clone());
+    }
+    Ok(selection)
+}
+
+fn exact_selection(analysis: &AnalysisReport, paths: &[PathBuf]) -> Result<UserSelection> {
+    let mut selection = UserSelection::default();
+    for path in normalize_selection_paths(paths)? {
+        let candidate = selectable_candidate_for_path(analysis, &path)?;
+        selection.select(candidate.id.clone());
+    }
+    Ok(selection)
+}
+
+fn normalize_selection_paths(paths: &[PathBuf]) -> Result<BTreeSet<PathBuf>> {
+    paths
+        .iter()
+        .map(|path| normalize_selection_path(path))
+        .collect()
+}
+
+fn normalize_selection_path(path: &Path) -> Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("failed to resolve the current directory for candidate selection")?
+            .join(path)
+    };
+    absolute
+        .canonicalize()
+        .with_context(|| format!("selected candidate path does not exist: {}", path.display()))
+}
+
+fn candidate_for_path<'a>(
+    analysis: &'a AnalysisReport,
+    normalized_path: &Path,
+) -> Result<&'a cleanr_core::CandidateEvidence> {
+    analysis
+        .candidates
+        .iter()
+        .find(|candidate| {
+            candidate
+                .local_path
+                .canonicalize()
+                .unwrap_or_else(|_| candidate.local_path.clone())
+                == normalized_path
+        })
+        .with_context(|| {
+            format!(
+                "path is not a cleanup candidate in this scan: {}",
+                normalized_path.display()
+            )
+        })
+}
+
+fn selectable_candidate_for_path<'a>(
+    analysis: &'a AnalysisReport,
+    normalized_path: &Path,
+) -> Result<&'a cleanr_core::CandidateEvidence> {
+    let candidate = candidate_for_path(analysis, normalized_path)?;
+    if matches!(
+        candidate.recommendation.state,
+        RecommendationState::Suppressed | RecommendationState::Excluded
+    ) {
+        bail!(
+            "candidate cannot be selected because its recommendation state is {}: {}",
+            candidate.recommendation.state,
+            normalized_path.display()
+        );
+    }
+    Ok(candidate)
 }
 
 fn ensure_plan_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> Result<()> {
@@ -373,7 +495,10 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cleanr_core::{ScanIssue, ScanIssueCode};
+    use cleanr_core::{
+        Confidence, EntryKind, RuleHit, RuleMatchRole, RuleTrust, ScanEntry, ScanIssue,
+        ScanIssueCode,
+    };
     use cleanr_fs::ScanError;
 
     #[test]
@@ -441,5 +566,81 @@ mod tests {
         validate_sha256(&"a".repeat(64)).expect("valid SHA-256");
         assert!(validate_sha256("abc").is_err());
         assert!(validate_sha256(&"z".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn exact_path_overrides_can_select_review_items_and_deselect_recommendations() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let preselected_path = temp.path().join("preselected");
+        let review_path = temp.path().join("review");
+        std::fs::create_dir(&preselected_path).expect("preselected directory");
+        std::fs::create_dir(&review_path).expect("review directory");
+        let as_of = Utc::now();
+        let hit = |rule_id: &str, confidence, default_selected| RuleHit {
+            rule_pack_id: "builtin-test".to_string(),
+            rule_id: rule_id.to_string(),
+            label: rule_id.to_string(),
+            category: "cache".to_string(),
+            confidence,
+            reason: "candidate".to_string(),
+            risk_note: "review".to_string(),
+            default_selected,
+            trust: RuleTrust::Builtin,
+            match_role: RuleMatchRole::Primary,
+        };
+        let entries = vec![
+            ScanEntry {
+                path: preselected_path.clone(),
+                kind: EntryKind::Directory,
+                size_bytes: 10,
+                modified_at: Some(as_of - chrono::Duration::days(100)),
+                rule_hits: vec![hit("safe", Confidence::High, true)],
+            },
+            ScanEntry {
+                path: review_path.clone(),
+                kind: EntryKind::Directory,
+                size_bytes: 20,
+                modified_at: Some(as_of - chrono::Duration::days(100)),
+                rule_hits: vec![hit("review", Confidence::Medium, false)],
+            },
+        ];
+        let analysis = cleanr_core::build_analysis_report(
+            as_of,
+            as_of,
+            vec![temp.path().to_path_buf()],
+            &entries,
+            &[],
+            RecommendationPolicy::default(),
+        )
+        .expect("analysis");
+
+        let selection = selection_with_overrides(
+            &analysis,
+            SelectionOverrides {
+                select_paths: vec![review_path.clone()],
+                deselect_paths: vec![preselected_path.clone()],
+            },
+        )
+        .expect("selection overrides");
+        let selected_paths = analysis
+            .candidates
+            .iter()
+            .filter(|candidate| selection.candidate_ids.contains(&candidate.id))
+            .map(|candidate| candidate.local_path.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected_paths, vec![review_path.clone()]);
+        assert!(
+            selection_with_overrides(
+                &analysis,
+                SelectionOverrides {
+                    select_paths: vec![review_path.clone()],
+                    deselect_paths: vec![review_path],
+                },
+            )
+            .expect_err("conflicting override")
+            .to_string()
+            .contains("both selected and deselected")
+        );
     }
 }

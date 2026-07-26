@@ -1,6 +1,6 @@
 ---
 name: cleanr-review-disk-cleanup
-description: "Review local disk-cleanup evidence with Cleanr and, only after the current user explicitly authorizes an exact reviewed plan, execute recoverable cleanup through the system trash. Use for `cleanr analyze`, recommendation states, age policy, plan review, authorized cleanup, manifests, or restore review. Keep paths local; never permanently delete files or empty the trash."
+description: "Review local disk-cleanup evidence with Cleanr and, only after the current user explicitly authorizes an exact reviewed plan, execute recoverable cleanup through the system trash. Use for `cleanr analyze`, conservative macOS or Windows routine cleanup, recommendation states, exact path selection, age policy, plan review, authorized cleanup, manifests, or restore review. Keep paths local; never permanently delete files or empty the trash."
 ---
 
 # Review and Recoverably Clean with Cleanr
@@ -69,6 +69,41 @@ cleanr analyze /path/to/project
 Use `--config` only for a user-provided or approved config. Use `--global` only
 after explicit approval.
 
+For a user-approved routine macOS review, prefer:
+
+```bash
+cleanr analyze --global \
+  --global-kind browser-caches \
+  --global-kind app-caches \
+  --global-kind logs \
+  --global-kind temp-files \
+  --global-kind downloads
+```
+
+Add `--global-kind developer-caches` only when the user includes Homebrew,
+package-manager, and Xcode caches. Cleanr intentionally excludes Trash
+contents, Mail data, iOS backups, Time Machine snapshots, browser service
+workers, and system-owned roots. Ask the user to quit an app before selecting
+its cache.
+
+For a user-approved routine Windows review, prefer:
+
+```bash
+cleanr analyze --global \
+  --global-kind app-caches \
+  --global-kind temp-files
+```
+
+Treat only `windows-stale-directx-shader-cache-file` and
+`windows-stale-user-temporary-file` as part of this conservative routine.
+These rules match individual regular files after at least 30 days without
+modification; they never select the Temp or `D3DSCache` directory. Ask
+separately before adding browser or developer caches. Do not include Explorer
+thumbnail databases, crash dumps, Windows Update or Delivery Optimization
+data, Prefetch, Downloads, registry data, the Recycle Bin, or system-owned
+roots. Cleanr does not stop applications; a Windows-locked file must remain in
+place as a recorded failure.
+
 Before recommending cleanup:
 
 1. Require a supported `schema_version`.
@@ -100,14 +135,32 @@ Write the plan only to a user-approved local destination:
 cleanr plan --output /local/path/cleanr-plan.json /approved/scope
 ```
 
-Do not edit the plan. Record the `sha256=` value printed by Cleanr. Inspect the
-plan and require:
+Reuse the approved `--global-kind` arguments when the analysis used them. Do
+not edit the plan. Record the `sha256=` value printed by Cleanr.
 
+Start from Cleanr's deterministic recommendations. If the user explicitly
+chooses or rejects exact candidate paths after reviewing the evidence, express
+only those choices through repeatable path overrides:
+
+```bash
+cleanr plan --output /local/path/cleanr-plan.json \
+  --select "/exact/reviewed/candidate" \
+  --deselect "/exact/rejected/candidate" \
+  /approved/scope
+```
+
+Never use `--select` merely because the agent thinks a review item is safe.
+Cleanr rejects paths that are not current candidates or are suppressed or
+excluded. Inspect the resulting plan and require:
+
+- for a conservative Windows routine, every selected item matches one of the
+  two exact Windows rule IDs listed above, not a generic fallback rule;
 - the reviewed scan roots exactly match the approved scope;
 - every selected item uses `planned_action = "trash"`;
 - plan and item rollback methods are `system-trash+manifest`;
-- selected items are deterministic `preselected` recommendations;
-- no selected item is `review`, `suppressed`, or `excluded`.
+- every selected `available` or `review` item corresponds to an exact path the
+  current user explicitly chose after seeing its evidence and risk;
+- no selected item is `suppressed` or `excluded`.
 
 Summarize the exact roots, selected count, selected size, material risks, plan
 path, and SHA-256. Then ask the current user to explicitly authorize that exact

@@ -29,7 +29,7 @@
   </p>
 </div>
 
-Cleanr 帮助开发者发现可重建的生成文件和缓存，避免把磁盘清理变成盲删。它会扫描你选择的路径，说明每个候选项的匹配原因，让你在键盘驱动的终端界面里审阅清理计划，并把选中的项目移动到系统废纸篓。
+Cleanr 帮助开发者以及 macOS、Windows 用户发现可重建的生成文件与缓存，避免把磁盘清理变成盲删。它会扫描你选择的路径，说明每个候选项的匹配原因，让你在键盘驱动的终端界面里审阅清理计划，并把选中的项目移动到系统废纸篓。
 
 ## 为 AI 而设计
 
@@ -52,7 +52,7 @@ Skill 会检查 Cleanr CLI 是否可用，在缺失时全局安装 `cleanr-cli`�
 ## 特性
 
 - 键盘驱动的扫描、审阅、清理和恢复流程。
-- 内置规则覆盖常见开发者缓存、构建产物、包管理器缓存、大文件下载、日志和临时文件。
+- 内置规则覆盖常见开发者缓存、浏览器缓存、应用缓存、构建产物、包管理器缓存、大文件下载、日志和临时文件。macOS 还覆盖 Brave 和 Arc、常用桌面应用中明确命名的缓存目录、Homebrew、Xcode、CocoaPods、SwiftPM、诊断报告和下载的安装包。Windows 的保守覆盖只增加当前用户 Temp 和 DirectX 着色器缓存目录中长期未修改的普通文件。
 - 每个候选项都会展示大小、置信度、匹配原因和风险提示。
 - 提供仅限本机的 `cleanr analyze` JSON 契约，以及用于用户明确授权确切计划、绑定摘要的 `cleanr clean` 命令。
 - 保守的默认选择策略：只有来自内置规则或可信规则的高置信度项目才可能被预选。
@@ -96,6 +96,35 @@ cleanr ~/projects ~/Downloads
 
 在 TUI 中按 `?` 可查看快捷键帮助。
 
+在 macOS 上，可以先只读检查常规的用户级位置：
+
+```bash
+cleanr analyze --global \
+  --global-kind browser-caches \
+  --global-kind app-caches \
+  --global-kind logs \
+  --global-kind temp-files \
+  --global-kind downloads
+```
+
+需要同时检查包管理器和 Xcode 缓存时，再加入
+`--global-kind developer-caches`。废纸篓内容、Mail 数据、iOS 备份、
+Time Machine 快照、浏览器 Service Worker 和系统所有的根目录会被明确排除。
+
+在 Windows 上，常规审阅范围会刻意收窄：
+
+```bash
+cleanr analyze --global \
+  --global-kind app-caches \
+  --global-kind temp-files
+```
+
+它只匹配当前用户 Temp 或 DirectX `D3DSCache` 目录中至少 30 天未修改的普通文件。
+DirectX 着色器文件是 Windows 可以重新生成的图形缓存；Temp 与缓存目录本身永远
+不会被选中。Explorer 缩略图数据库、崩溃转储、Windows Update 与传递优化数据、
+Prefetch、回收站、注册表数据、Downloads 和系统所有的根目录会被明确排除。只有
+用户明确把浏览器或开发者缓存纳入范围时，才应额外加入对应分类。
+
 让本地编码 Agent 协助时，先使用只读分析；除非先主动脱敏，否则不要将 JSON 发送到
 设备外：
 
@@ -111,6 +140,11 @@ cleanr clean --plan cleanr-plan.json \
   --plan-sha256 <reviewed-sha256> \
   --authorized-by-user
 ```
+
+`plan` 和 `dry-run` 还支持可重复使用的
+`--select <确切候选路径>` 与 `--deselect <确切候选路径>`。Agent 可以用它们记录
+用户对需审阅候选项作出的明确选择，而无需编辑计划；未知、被重叠抑制或被安全策略
+排除的路径会被拒绝。
 
 `plan` 会打印文件的 SHA-256。`clean` 要求明确授权，会校验摘要、重新扫描并拒绝计划
 漂移，然后把通过校验的条目移动到系统回收站并记录恢复清单，不会永久删除。

@@ -58,10 +58,14 @@ marker 文件识别项目根，并可用项目根的直接子目录进一步约�
 - Turborepo、Terraform 和 CocoaPods。
 
 规则包仍然覆盖 Cargo registry 与 Git 依赖缓存、npm、pnpm、Yarn、pip、uv、Go
-module、Xcode `DerivedData`、Next.js 和 Python 工具缓存等内容。Python `.venv`
-目录被有意排除，因为其中可能包含重建成本很高、甚至无法精确重现的本地环境。其他
-风险较高或可能包含本地状态的目录只供审阅，绝不会被预选；加入清理计划前，请阅读
-对应的匹配原因和风险说明。
+module、Xcode `DerivedData`、Next.js 和 Python 工具缓存等内容。在 macOS 上，还会
+发现 Homebrew、CocoaPods、SwiftPM、Go build、Deno、Cypress、Composer、Bun、Pub、
+CoreSimulator 和其他明确命名的 Xcode 缓存。DeviceSupport 与 XCTest devices 需要
+人工审阅；Xcode archives 是低置信候选项，因为保留的构建和 dSYM 可能无法重建。
+
+Python `.venv` 目录被有意排除，因为其中可能包含重建成本很高、甚至无法精确重现的
+本地环境。其他风险较高或可能包含本地状态的目录只供审阅，绝不会被预选；加入清理
+计划前，请阅读对应的匹配原因和风险说明。
 
 ### `builtin-general`
 
@@ -77,12 +81,46 @@ module、Xcode `DerivedData`、Next.js 和 Python 工具缓存等内容。Python
 
 查找已知用户级系统清理候选项：
 
-- 常见浏览器缓存目录；
-- 应用缓存目录；
-- 大型临时文件、日志和 Downloads 文件。
+- Chrome、Chromium、Edge、Firefox、Safari、Brave 和 Arc 的浏览器缓存目录；
+- macOS 标准应用缓存根目录，以及位于 Application Support 或应用容器中、路径明确
+  的常用桌面应用缓存；
+- Quick Look 缩略图、Zoom 更新安装包、用户日志和诊断报告；
+- 当前 Windows 用户 Temp 和 DirectX `D3DSCache` 目录中长期未修改的普通文件；
+- 大型临时文件和 Downloads 文件，包括 `.dmg`、`.pkg`、`.mpkg` 和 `.iso`
+  安装文件。
 
-只有高置信浏览器缓存目录会被预选。应用缓存、临时文件、日志和 Downloads
-默认只展示，需人工审阅。
+只有已知可重建缓存才可能被预选，并且仍需通过统一的年龄和证据门槛。宽泛的应用
+缓存、Spotify 持久缓存、日志、诊断报告、通用临时文件匹配和 Downloads 都只供
+审阅。选择某个应用的缓存前，应先退出该应用。
+
+macOS 白名单参考了 [Dusty](https://github.com/yagcioglutoprak/dusty) 和
+[PureMac](https://github.com/momenbasel/PureMac)，并按 Cleanr 的“废纸篓加恢复清单”
+模型进一步收窄。Cleanr 明确排除废纸篓内容、Mail 数据、iOS 备份、Time Machine
+快照、浏览器 Service Worker、Docker prune 动作和系统所有的根目录。
+
+Windows 白名单刻意只包含普通文件。Windows 专属规则要求文件至少 30 天未修改才会
+匹配：
+
+- **用户临时文件**是当前用户 `AppData\Local\Temp` 下的普通文件；Temp 目录和
+  子目录本身都不是候选项；
+- **DirectX 着色器缓存文件**是 `AppData\Local\D3DSCache` 下由图形系统生成的
+  普通缓存文件；Windows 可以按需重建，但图形应用下次启动时可能需要重新编译。
+
+Cleanr 不会停止应用。如果 Windows 锁定了某个候选文件，移入回收站会失败，原文件
+保持不变。Explorer 缩略图数据库需要成熟清理器重启 Explorer 才能释放，因此不会
+纳入。崩溃转储、Windows Update 与传递优化数据、Prefetch、回收站、注册表数据、
+Downloads 和系统所有的根目录也不属于这个保守的 Windows 常规范围。
+
+Windows 路径参考了
+[BleachBit](https://github.com/bleachbit/bleachbit/tree/ab0e4b94e29b8233adbe7ab010656e61b162c63d)
+和
+[Winapp2](https://github.com/MoscaDotTo/Winapp2/tree/3c0156de665cc180edc76745e425412ccc4356ca)，
+再根据微软对
+[存储感知临时文件清理](https://learn.microsoft.com/windows/client-management/mdm/policy-csp-storage#allowstoragesensetemporaryfilescleanup)
+以及
+[可重建 DirectX 与缩略图缓存](https://techcommunity.microsoft.com/blog/filecab/creating-remediation-actions-for-system-insights/428234)
+的说明独立收窄。Cleanr 不会打包外部清理规则数据库或可执行文件。平台专属扫描根
+只会在对应操作系统构建中注册，共享的 `builtin-system` 插件负责提供声明式解释。
 
 ## 启用或禁用规则包
 

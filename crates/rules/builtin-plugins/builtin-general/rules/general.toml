@@ -1,6 +1,6 @@
 id = "builtin-general"
 name = "Built-in general cleanup candidates"
-version = "0.10.0"
+version = "0.10.1"
 description = "Lower-confidence general cleanup candidates that always require review."
 categories = ["downloads", "logs", "temporary-files"]
 
@@ -33,6 +33,7 @@ category = "temporary-files"
 match = { extension = "tmp", min_size = 1048576 }
 confidence = "medium"
 default_selected = false
+match_role = "fallback"
 action = "trash"
 reason = "Temporary files are often safe to remove after review."
 risk_note = "Review the path before deleting; some applications keep active temp files."

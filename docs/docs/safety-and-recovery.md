@@ -49,9 +49,12 @@ An item is preselected only when all of the following are true:
 - its scan evidence is complete and not future-dated.
 
 Everything can still be deselected before cleanup. General downloads, logs,
-temporary files, medium-confidence items, and untrusted plugin matches require
-manual selection. The TUI, `cleanr analyze`, `cleanr plan`, and `cleanr dry-run`
-apply the same recommendation policy.
+broad temporary-file matches, medium-confidence items, and untrusted plugin
+matches require manual selection. The narrow Windows rule for regular files
+inside the current user's Temp directory is the exception: it requires the
+file to be at least 30 days old and still passes the shared age policy. The
+TUI, `cleanr analyze`, `cleanr plan`, and `cleanr dry-run` apply the same
+recommendation policy.
 
 ## Manifests and history
 
@@ -96,9 +99,12 @@ cleanr clean \
   --authorized-by-user
 ```
 
-`cleanr plan --output` prints the plan digest. Before execution, `clean`
-verifies that digest, re-scans the recorded roots, rebuilds the plan, and
-compares its content with the authorized file. Any scope, rule, recommendation,
+`cleanr plan --output` prints the plan digest. Repeatable `--select` and
+`--deselect` options can encode exact candidate-path choices the current user
+made during evidence review; they cannot add unknown, overlap-suppressed, or
+safety-excluded paths. Before execution, `clean` verifies the digest, re-scans
+the recorded roots, rebuilds the plan with that exact selection, and compares
+its content with the authorized file. Any scope, rule, recommendation,
 selection, safety, or filesystem-evidence drift aborts cleanup and requires a
 new review and authorization. Successful items still go only to system trash,
 with an execution manifest and restore locator. The manifest records whether

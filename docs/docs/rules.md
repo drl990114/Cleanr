@@ -67,11 +67,17 @@ Project-aware coverage includes:
 
 The pack also retains rules for caches such as Cargo registries and Git
 dependencies, npm, pnpm, Yarn, pip, uv, Go modules, Xcode `DerivedData`, and
-Next.js and Python tool caches. Python `.venv` directories are intentionally not
-covered: they may contain local environments that are costly or impossible to
-reproduce exactly. Other higher-risk or potentially locally stateful
-directories are review-only and are never preselected; read their reason and
-risk note before including them in a cleanup plan.
+Next.js and Python tool caches. On macOS it also discovers Homebrew, CocoaPods,
+SwiftPM, Go build, Deno, Cypress, Composer, Bun, Pub, CoreSimulator, and other
+named Xcode caches. DeviceSupport and XCTest devices require review; Xcode
+archives are low-confidence because retained builds and dSYMs may be
+irreplaceable.
+
+Python `.venv` directories are intentionally not covered: they may contain
+local environments that are costly or impossible to reproduce exactly. Other
+higher-risk or potentially locally stateful directories are review-only and
+are never preselected; read their reason and risk note before including them
+in a cleanup plan.
 
 ### `builtin-general`
 
@@ -87,12 +93,58 @@ These rules are intentionally medium or low confidence and start unselected.
 
 Finds known user-level system cleanup candidates:
 
-- browser cache directories for common browsers;
-- application cache directories;
-- large temporary files, logs, and Downloads files.
+- browser cache directories for Chrome, Chromium, Edge, Firefox, Safari,
+  Brave, and Arc;
+- the standard macOS application-cache root plus narrowly named cache
+  directories for popular desktop apps when they live under Application
+  Support or an app container;
+- Quick Look thumbnails, Zoom update installers, user logs, and diagnostic
+  reports;
+- stale regular files in the current Windows user's Temp and DirectX
+  `D3DSCache` directories;
+- large temporary files and Downloads files, including `.dmg`, `.pkg`,
+  `.mpkg`, and `.iso` installers.
 
-Only high-confidence browser cache directories are preselected. Application
-caches, temporary files, logs, and Downloads are review-only by default.
+Only known rebuildable cache targets may be preselected, and they still pass
+the shared age and evidence gates. Broad application caches, Spotify's
+persistent cache, logs, diagnostics, generic temporary-file matches, and
+Downloads remain review-only. Quit an application before selecting its cache.
+
+The macOS allowlist was audited against
+[Dusty](https://github.com/yagcioglutoprak/dusty) and
+[PureMac](https://github.com/momenbasel/PureMac), then narrowed to preserve
+Cleanr's trash-and-restore model. Cleanr deliberately excludes Trash contents,
+Mail data, iOS backups, Time Machine snapshots, browser service workers, Docker
+prune actions, and system-owned roots.
+
+The Windows allowlist is intentionally file-only. A Windows-specific rule
+requires at least 30 days without modification before matching:
+
+- **user temporary file** means a regular file below the current user's
+  `AppData\Local\Temp`; the Temp directory and child directories are not
+  candidates;
+- **DirectX shader cache file** means a regular generated graphics-cache file
+  below `AppData\Local\D3DSCache`; Windows recreates it as needed, although the
+  next graphics launch may spend time recompiling shaders.
+
+Cleanr does not stop applications. If Windows keeps a candidate locked, moving
+that item to the Recycle Bin fails and the original stays in place. Explorer
+thumbnail databases are excluded because established cleaners restart
+Explorer to release them. Crash dumps, Windows Update and Delivery Optimization
+data, Prefetch, the Recycle Bin, registry data, Downloads, and system-owned
+roots are also excluded from this conservative Windows routine.
+
+The Windows paths were audited against
+[BleachBit](https://github.com/bleachbit/bleachbit/tree/ab0e4b94e29b8233adbe7ab010656e61b162c63d)
+and
+[Winapp2](https://github.com/MoscaDotTo/Winapp2/tree/3c0156de665cc180edc76745e425412ccc4356ca),
+then independently narrowed using Microsoft's descriptions of
+[Storage Sense temporary-file cleanup](https://learn.microsoft.com/windows/client-management/mdm/policy-csp-storage#allowstoragesensetemporaryfilescleanup)
+and
+[generated DirectX and thumbnail caches](https://techcommunity.microsoft.com/blog/filecab/creating-remediation-actions-for-system-insights/428234).
+No external cleaner database or executable is bundled. Platform-specific scan
+roots are registered only by the corresponding operating-system build; the
+shared `builtin-system` plugin supplies their declarative explanations.
 
 ## Enable or disable packs
 

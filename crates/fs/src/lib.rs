@@ -545,6 +545,17 @@ fn push_global_root(
     });
 }
 
+fn push_relative_global_roots(
+    roots: &mut Vec<GlobalScanRoot>,
+    base: &Path,
+    kind: GlobalScanKind,
+    targets: &[(&str, &str)],
+) {
+    for (relative_path, label) in targets {
+        push_global_root(roots, &base.join(relative_path), kind, *label);
+    }
+}
+
 fn push_developer_cache_roots(
     environment: &GlobalScanEnvironment,
     roots: &mut Vec<GlobalScanRoot>,
@@ -570,27 +581,51 @@ fn push_developer_cache_roots(
         }
 
         #[cfg(target_os = "macos")]
-        for (path, label) in [
-            (home.join("Library").join("Caches").join("pip"), "pip cache"),
-            (home.join("Library").join("Caches").join("uv"), "uv cache"),
-            (
-                home.join("Library").join("Caches").join("Yarn"),
-                "Yarn cache",
-            ),
-            (
-                home.join("Library").join("pnpm").join("store"),
-                "pnpm store",
-            ),
-            (
-                home.join("Library")
-                    .join("Developer")
-                    .join("Xcode")
-                    .join("DerivedData"),
-                "Xcode DerivedData",
-            ),
-        ] {
-            push_global_root(roots, &path, GlobalScanKind::DeveloperCaches, label);
-        }
+        push_relative_global_roots(
+            roots,
+            home,
+            GlobalScanKind::DeveloperCaches,
+            &[
+                ("Library/Caches/pip", "pip cache"),
+                ("Library/Caches/uv", "uv cache"),
+                ("Library/Caches/Yarn", "Yarn cache"),
+                ("Library/pnpm/store", "pnpm store"),
+                ("Library/Caches/Homebrew", "Homebrew download cache"),
+                ("Library/Caches/CocoaPods", "CocoaPods cache"),
+                ("Library/Caches/org.swift.swiftpm", "SwiftPM cache"),
+                ("Library/Caches/go-build", "Go build cache"),
+                ("Library/Caches/deno", "Deno cache"),
+                ("Library/Caches/Cypress", "Cypress binary cache"),
+                ("Library/Caches/composer", "Composer cache"),
+                (".bun/install/cache", "Bun cache"),
+                (".pub-cache", "Dart and Flutter pub cache"),
+                (".yarn/cache", "Yarn cache"),
+                ("Library/Developer/Xcode/DerivedData", "Xcode DerivedData"),
+                (
+                    "Library/Developer/CoreSimulator/Caches",
+                    "CoreSimulator caches",
+                ),
+                ("Library/Caches/com.apple.dt.Xcode", "Xcode cache"),
+                (
+                    "Library/Developer/Xcode/iOS DeviceSupport",
+                    "Xcode iOS device support",
+                ),
+                (
+                    "Library/Developer/Xcode/watchOS DeviceSupport",
+                    "Xcode watchOS device support",
+                ),
+                (
+                    "Library/Developer/Xcode/tvOS DeviceSupport",
+                    "Xcode tvOS device support",
+                ),
+                ("Library/Developer/Xcode/Archives", "Xcode archives"),
+                (
+                    "Library/Developer/Xcode/UserData/Previews",
+                    "Xcode previews",
+                ),
+                ("Library/Developer/XCTestDevices", "XCTest devices"),
+            ],
+        );
     }
 
     if let Some(cache) = &environment.cache_dir {
@@ -621,33 +656,20 @@ fn push_developer_cache_roots(
 fn push_browser_cache_roots(environment: &GlobalScanEnvironment, roots: &mut Vec<GlobalScanRoot>) {
     if let Some(home) = &environment.home_dir {
         #[cfg(target_os = "macos")]
-        for (path, label) in [
-            (
-                home.join("Library")
-                    .join("Caches")
-                    .join("Google")
-                    .join("Chrome"),
-                "Chrome cache",
-            ),
-            (
-                home.join("Library").join("Caches").join("Chromium"),
-                "Chromium cache",
-            ),
-            (
-                home.join("Library").join("Caches").join("Microsoft Edge"),
-                "Microsoft Edge cache",
-            ),
-            (
-                home.join("Library").join("Caches").join("Firefox"),
-                "Firefox cache",
-            ),
-            (
-                home.join("Library").join("Caches").join("com.apple.Safari"),
-                "Safari cache",
-            ),
-        ] {
-            push_global_root(roots, &path, GlobalScanKind::BrowserCaches, label);
-        }
+        push_relative_global_roots(
+            roots,
+            home,
+            GlobalScanKind::BrowserCaches,
+            &[
+                ("Library/Caches/Google/Chrome", "Chrome cache"),
+                ("Library/Caches/Chromium", "Chromium cache"),
+                ("Library/Caches/Microsoft Edge", "Microsoft Edge cache"),
+                ("Library/Caches/Firefox", "Firefox cache"),
+                ("Library/Caches/BraveSoftware/Brave-Browser", "Brave cache"),
+                ("Library/Caches/Arc", "Arc cache"),
+                ("Library/Caches/com.apple.Safari", "Safari cache"),
+            ],
+        );
 
         #[cfg(all(
             unix,
@@ -703,6 +725,7 @@ fn push_browser_cache_roots(environment: &GlobalScanEnvironment, roots: &mut Vec
 }
 
 fn push_app_cache_roots(environment: &GlobalScanEnvironment, roots: &mut Vec<GlobalScanRoot>) {
+    #[cfg(not(target_os = "windows"))]
     if let Some(cache) = &environment.cache_dir {
         push_global_root(
             roots,
@@ -720,35 +743,145 @@ fn push_app_cache_roots(environment: &GlobalScanEnvironment, roots: &mut Vec<Glo
             GlobalScanKind::AppCaches,
             "macOS application caches",
         );
+
+        push_relative_global_roots(
+            roots,
+            home,
+            GlobalScanKind::AppCaches,
+            &[
+                ("Library/Application Support/Slack/Cache", "Slack cache"),
+                (
+                    "Library/Application Support/Slack/Code Cache",
+                    "Slack code cache",
+                ),
+                (
+                    "Library/Application Support/Slack/GPUCache",
+                    "Slack GPU cache",
+                ),
+                ("Library/Application Support/discord/Cache", "Discord cache"),
+                (
+                    "Library/Application Support/discord/Code Cache",
+                    "Discord code cache",
+                ),
+                (
+                    "Library/Application Support/discord/GPUCache",
+                    "Discord GPU cache",
+                ),
+                ("Library/Application Support/Code/Cache", "VS Code cache"),
+                (
+                    "Library/Application Support/Code/Code Cache",
+                    "VS Code code cache",
+                ),
+                (
+                    "Library/Application Support/Code/GPUCache",
+                    "VS Code GPU cache",
+                ),
+                (
+                    "Library/Application Support/Code/CachedData",
+                    "VS Code cached data",
+                ),
+                ("Library/Application Support/Cursor/Cache", "Cursor cache"),
+                (
+                    "Library/Application Support/Cursor/Code Cache",
+                    "Cursor code cache",
+                ),
+                (
+                    "Library/Application Support/Cursor/GPUCache",
+                    "Cursor GPU cache",
+                ),
+                (
+                    "Library/Application Support/Cursor/CachedData",
+                    "Cursor cached data",
+                ),
+                ("Library/Application Support/Signal/Cache", "Signal cache"),
+                (
+                    "Library/Application Support/Signal/Code Cache",
+                    "Signal code cache",
+                ),
+                (
+                    "Library/Application Support/Signal/GPUCache",
+                    "Signal GPU cache",
+                ),
+                (
+                    "Library/Application Support/obsidian/Cache",
+                    "Obsidian cache",
+                ),
+                (
+                    "Library/Application Support/obsidian/Code Cache",
+                    "Obsidian code cache",
+                ),
+                (
+                    "Library/Application Support/obsidian/GPUCache",
+                    "Obsidian GPU cache",
+                ),
+                ("Library/Application Support/Notion/Cache", "Notion cache"),
+                (
+                    "Library/Application Support/Notion/Code Cache",
+                    "Notion code cache",
+                ),
+                (
+                    "Library/Application Support/Notion/GPUCache",
+                    "Notion GPU cache",
+                ),
+                (
+                    "Library/Application Support/Spotify/PersistentCache",
+                    "Spotify persistent cache",
+                ),
+                (
+                    "Library/Containers/com.microsoft.teams2/Data/Library/Caches",
+                    "Microsoft Teams cache",
+                ),
+                (
+                    "Library/Application Support/zoom.us/AutoUpdater",
+                    "Zoom update installers",
+                ),
+            ],
+        );
     }
 
     #[cfg(target_os = "windows")]
+    push_windows_app_cache_roots(environment, roots);
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn push_windows_app_cache_roots(
+    environment: &GlobalScanEnvironment,
+    roots: &mut Vec<GlobalScanRoot>,
+) {
     if let Some(local) = &environment.data_local_dir {
-        push_global_root(
+        push_relative_global_roots(
             roots,
             local,
             GlobalScanKind::AppCaches,
-            "Local application data caches",
+            &[("D3DSCache", "Windows DirectX compiled shader cache files")],
         );
     }
 }
 
 fn push_log_roots(environment: &GlobalScanEnvironment, roots: &mut Vec<GlobalScanRoot>) {
+    #[cfg(target_os = "macos")]
     if let Some(home) = &environment.home_dir {
-        #[cfg(target_os = "macos")]
         push_global_root(
             roots,
             &home.join("Library").join("Logs"),
             GlobalScanKind::Logs,
             "macOS user logs",
         );
+        push_global_root(
+            roots,
+            &home.join("Library").join("DiagnosticReports"),
+            GlobalScanKind::Logs,
+            "Legacy macOS diagnostic reports",
+        );
+    }
 
-        #[cfg(all(
-            unix,
-            not(target_os = "macos"),
-            not(target_os = "ios"),
-            not(target_os = "android")
-        ))]
+    #[cfg(all(
+        unix,
+        not(target_os = "macos"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    ))]
+    if let Some(home) = &environment.home_dir {
         push_global_root(
             roots,
             &home.join(".local").join("state"),
@@ -757,15 +890,8 @@ fn push_log_roots(environment: &GlobalScanEnvironment, roots: &mut Vec<GlobalSca
         );
     }
 
-    #[cfg(target_os = "windows")]
-    if let Some(local) = &environment.data_local_dir {
-        push_global_root(
-            roots,
-            &local.join("CrashDumps"),
-            GlobalScanKind::Logs,
-            "Windows crash dumps",
-        );
-    }
+    #[cfg(not(all(unix, not(target_os = "ios"), not(target_os = "android"))))]
+    let _ = (environment, roots);
 }
 
 fn normalize_global_roots(
@@ -1127,6 +1253,91 @@ mod tests {
         assert!(roots.iter().any(|root| root.path == downloads));
         assert!(!roots.iter().any(|root| root.path == pnpm));
         assert!(!roots.iter().any(|root| root.path == home));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_global_roots_cover_known_user_level_cleanup_locations() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let library_caches = home.join("Library").join("Caches");
+        let brave = library_caches.join("BraveSoftware").join("Brave-Browser");
+        let slack = home
+            .join("Library")
+            .join("Application Support")
+            .join("Slack")
+            .join("Cache");
+        let simulator = home
+            .join("Library")
+            .join("Developer")
+            .join("CoreSimulator")
+            .join("Caches");
+        let diagnostics = home.join("Library").join("DiagnosticReports");
+        for path in [&brave, &slack, &simulator, &diagnostics] {
+            fs::create_dir_all(path).expect("cleanup root");
+        }
+        let environment = GlobalScanEnvironment {
+            home_dir: Some(home),
+            cache_dir: Some(library_caches.clone()),
+            ..GlobalScanEnvironment::default()
+        };
+
+        let browser_roots =
+            discover_global_scan_roots(&[GlobalScanKind::BrowserCaches], &environment);
+        let app_roots = discover_global_scan_roots(&[GlobalScanKind::AppCaches], &environment);
+        let developer_roots =
+            discover_global_scan_roots(&[GlobalScanKind::DeveloperCaches], &environment);
+        let log_roots = discover_global_scan_roots(&[GlobalScanKind::Logs], &environment);
+
+        assert!(browser_roots.iter().any(|root| {
+            root.path == brave.canonicalize().expect("canonical Brave cache")
+                && root.kind == GlobalScanKind::BrowserCaches
+        }));
+        assert!(app_roots.iter().any(|root| {
+            root.path == slack.canonicalize().expect("canonical Slack cache")
+                && root.kind == GlobalScanKind::AppCaches
+        }));
+        assert!(app_roots.iter().any(|root| {
+            root.path
+                == library_caches
+                    .canonicalize()
+                    .expect("canonical Library caches")
+        }));
+        assert!(developer_roots.iter().any(|root| {
+            root.path == simulator.canonicalize().expect("canonical simulator cache")
+                && root.kind == GlobalScanKind::DeveloperCaches
+        }));
+        assert!(log_roots.iter().any(|root| {
+            root.path == diagnostics.canonicalize().expect("canonical diagnostics")
+                && root.kind == GlobalScanKind::Logs
+        }));
+    }
+
+    #[test]
+    fn windows_app_cache_roots_are_narrow_and_user_level() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let local = temp.path().join("AppData").join("Local");
+        let shader_cache = local.join("D3DSCache");
+        let unrelated = local.join("Packages");
+        fs::create_dir_all(&shader_cache).expect("shader cache");
+        fs::create_dir_all(&unrelated).expect("unrelated local data");
+        let environment = GlobalScanEnvironment {
+            data_local_dir: Some(local.clone()),
+            ..GlobalScanEnvironment::default()
+        };
+
+        let mut roots = Vec::new();
+        push_windows_app_cache_roots(&environment, &mut roots);
+        let roots = normalize_global_roots(roots, &environment);
+
+        assert_eq!(roots.len(), 1);
+        assert_eq!(
+            roots[0].path,
+            shader_cache.canonicalize().expect("canonical shader cache")
+        );
+        assert_eq!(roots[0].kind, GlobalScanKind::AppCaches);
+        assert_ne!(roots[0].path, local);
+        assert_ne!(roots[0].path, unrelated);
     }
 
     #[test]

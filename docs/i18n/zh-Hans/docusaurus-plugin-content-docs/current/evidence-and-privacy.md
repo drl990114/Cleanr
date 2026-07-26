@@ -24,6 +24,34 @@ cleanr analyze /path/to/project
 preselect_after_days = 90
 ```
 
+对于常规 macOS 审阅，除非用户把开发者缓存纳入范围，否则应将其分开：
+
+```bash
+cleanr analyze --global \
+  --global-kind browser-caches \
+  --global-kind app-caches \
+  --global-kind logs \
+  --global-kind temp-files \
+  --global-kind downloads
+```
+
+只有用户认可该范围后，才可以把相同的 `global-kind` 参数用于
+`cleanr plan --output`。需要检查 Homebrew、包管理器和 Xcode 目标时，再明确加入
+`developer-caches`。
+
+Windows 常规审阅应把默认范围限制在两个保守、仅包含普通文件的分类：
+
+```bash
+cleanr analyze --global \
+  --global-kind app-caches \
+  --global-kind temp-files
+```
+
+这个范围会发现当前用户的 Temp 与 DirectX `D3DSCache` 位置。Windows 专属规则只
+匹配至少 30 天未修改的普通文件，不会选择这两个目录本身。加入浏览器或开发者缓存前
+应另行询问用户。崩溃转储、Explorer 缩略图数据库、Windows Update 数据、Prefetch、
+Downloads、注册表数据、回收站和系统所有的根目录不属于这个常规范围。
+
 将 `preselect_after_days` 设为 `0` 可关闭年龄门槛，也可设为 `1` 到 `3650` 之间的
 整数。TUI、`cleanr analyze`、`cleanr plan` 和 `cleanr dry-run` 使用同一项策略。
 
@@ -68,16 +96,20 @@ Cleanr 会考虑已扫描后代中最新的观测修改时间。缺失、未来�
 
 1. 本地 Agent 对用户认可的范围调用 `cleanr analyze`。
 2. 它读取报告，提出问题、解释或建议审阅顺序。
-3. 如果用户希望清理，它使用 `cleanr plan --output` 写入本地计划，检查已选的
-   trash 动作，并汇总确切根目录、数量、大小、风险、路径和输出的 SHA-256。
-4. 当前用户在看到摘要后明确授权该确切计划。
-5. Agent 使用计划路径、已审阅 SHA-256 和 `--authorized-by-user` 运行
+3. 如果用户希望清理，它使用 `cleanr plan --output` 写入本地计划。只有当前用户在
+   审阅证据后对确切候选路径作出选择时，才可以用可重复的 `--select` 和
+   `--deselect` 记录这些选择；不要直接编辑计划文件。
+4. Agent 检查已选的 trash 动作，并汇总确切根目录、数量、大小、风险、计划路径和
+   输出的 SHA-256。
+5. 当前用户在看到摘要后明确授权该确切计划。
+6. Agent 使用计划路径、已审阅 SHA-256 和 `--authorized-by-user` 运行
    `cleanr clean`。
-6. Cleanr 校验摘要、重新扫描并比较计划、逐项校验目标，把成功条目移动到系统
+7. Cleanr 校验摘要、重新扫描并比较计划、逐项校验目标，把成功条目移动到系统
    回收站并记录清单。
 
 分析命令没有清理操作。建议、推荐、最初的清理请求或宽泛的长期授权都不是执行令牌。
-计划发生变化时，Agent 必须重新生成、汇总并取得新计划的授权。
+Agent 不能仅凭自己的判断选中需审阅候选项；未知、被重叠抑制或被安全策略排除的路径
+无法选中。计划发生变化时，Agent 必须重新生成、汇总并取得新计划的授权。
 
 ## 数据边界
 

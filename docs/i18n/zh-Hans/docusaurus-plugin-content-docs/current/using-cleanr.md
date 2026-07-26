@@ -37,6 +37,17 @@ cleanr ~/projects/app-one ~/projects/app-two
 /scan --global-kind browser-caches
 ```
 
+Windows 常规审阅建议使用更窄、仅包含普通文件的范围：
+
+```text
+/scan --global-kind app-caches --global-kind temp-files
+```
+
+在 Windows 上，这个范围只发现当前用户的 DirectX `D3DSCache` 和用户 Temp 目录。
+对应的高置信度 Windows 规则只匹配至少 30 天未修改的普通文件，绝不匹配这两个目录
+本身。只有用户希望审阅浏览器或开发者缓存时，才应额外加入 `browser-caches` 或
+`developer-caches`。
+
 TUI 中输入的路径不会经过 Shell 展开，因此 `~` 和环境变量会被当成普通文字。
 请使用绝对路径。路径包含空格时，建议在启动 Cleanr 时通过带引号的参数传入。
 
@@ -100,6 +111,7 @@ Cleanr 不会覆盖已经存在的恢复目标。
 cleanr scan --json /path/to/project
 cleanr analyze /path/to/project
 cleanr plan --output cleanr-plan.json /path/to/project
+cleanr plan --output cleanr-plan.json --select /exact/candidate /path/to/project
 cleanr dry-run --json /path/to/project
 cleanr clean --plan cleanr-plan.json --plan-sha256 <reviewed-sha256> --authorized-by-user
 cleanr restore list
@@ -111,10 +123,16 @@ cleanr restore run <run-id> --confirm
 TUI、`plan` 和 `dry-run` 共用 `[recommendations].preselect_after_days`。`dry-run`
 和 `plan` 只生成清理计划。
 
+`plan` 和 `dry-run` 会从确定性推荐开始。可以重复使用 `--select <路径>` 或
+`--deselect <路径>`，记录证据审阅中对确切候选路径作出的选择。目标路径必须存在、
+属于本次扫描的候选项，并且没有被重叠处理抑制或被安全策略排除。需审阅候选项也可以
+用这种方式选中，但 Agent 只有在当前用户对该确切候选路径明确作出决定后才能这样做。
+不要编辑生成的计划文件。
+
 `plan` 写入文件时会打印该文件的 SHA-256。`clean` 只用于当前用户已经审阅并明确
 授权的确切计划。它会校验传入的摘要，重新扫描计划根目录，重新生成确定性计划，并在
-计划发生变化时拒绝执行。它只会把通过校验的条目移动到系统回收站并记录执行清单，
-不会永久删除。恢复仍然要求显式传入 `--confirm`。
+计划发生变化时拒绝执行。重新生成时会保留已审阅的确切选择。它只会把通过校验的条目
+移动到系统回收站并记录执行清单，不会永久删除。恢复仍然要求显式传入 `--confirm`。
 
 ## 斜杠命令
 
