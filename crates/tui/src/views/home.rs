@@ -256,11 +256,7 @@ pub(crate) fn home_action_line(
     };
 
     Line::from(vec![
-        Span::styled(
-            if primary { "› " } else { "  " },
-            Style::default().fg(theme.accent),
-        ),
-        Span::styled(format!("{key:<4}"), key_style),
+        Span::styled(format!("[{key}]  "), key_style),
         Span::styled(description, description_style),
     ])
 }

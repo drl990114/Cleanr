@@ -107,7 +107,7 @@ pub(crate) fn render_header(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("  ›  ", Style::default().fg(app.theme.accent)),
+            Span::styled("  •  ", Style::default().fg(app.theme.accent)),
             Span::styled(
                 status,
                 Style::default().fg(if app.has_background_task() {

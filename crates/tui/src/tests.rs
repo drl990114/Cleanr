@@ -145,8 +145,9 @@ fn home_layout_has_one_clear_primary_action() {
     println!("{screen}");
 
     assert!(screen.contains("Safe intelligent disk organization"));
-    assert!(screen.contains("Scan & analyze"));
+    assert!(screen.contains("[s]  Scan & analyze"));
     assert!(screen.contains("Every item is reviewed first"));
+    assert!(!screen.contains('›'));
     assert!(!screen.contains("Recent activity"));
     assert!(!screen.contains("No scan yet"));
 }
@@ -212,8 +213,9 @@ fn chinese_home_matches_the_primary_terminal_layout() {
         .collect::<String>();
 
     assert!(compact.contains("安全智能磁盘整理"));
-    assert!(compact.contains("扫描分析"));
+    assert!(compact.contains("[s]扫描分析"));
     assert!(compact.contains("所有清理项都会先审阅"));
+    assert!(!compact.contains('›'));
     assert!(!compact.contains("最近活动"));
     assert!(!compact.contains("尚未扫描"));
 }
