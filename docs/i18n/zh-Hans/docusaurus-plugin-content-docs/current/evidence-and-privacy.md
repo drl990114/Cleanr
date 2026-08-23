@@ -31,13 +31,13 @@ cleanr analyze --global \
   --global-kind browser-caches \
   --global-kind app-caches \
   --global-kind logs \
-  --global-kind temp-files \
-  --global-kind downloads
+  --global-kind temp-files
 ```
 
 只有用户认可该范围后，才可以把相同的 `global-kind` 参数用于
 `cleanr plan --output`。需要检查 Homebrew、包管理器和 Xcode 目标时，再明确加入
-`developer-caches`。
+`developer-caches`。只有用户明确要求审阅 Downloads 中的个人文件时，才加入
+`downloads`。
 
 Windows 常规审阅应把默认范围限制在两个保守、仅包含普通文件的分类：
 
@@ -84,6 +84,8 @@ SHA-256 后，它才允许执行。执行使用系统回收站和本地清单，
 
 - schema 和分析标识符、策略快照和完成时间；
 - 扫描根目录、完整性状态和结构化扫描问题；
+- 对于全局分析，还包括请求的全局类别，以及每个已存在命名位置的类别、标签、本地
+  路径和实际覆盖它的扫描根目录；
 - 每个候选项的报告作用域不透明 ID、本地路径、大小、类型和回收方式；
 - 修改时间证据、覆盖范围、规则匹配和重叠处理结果；
 - 确定性的推荐状态和决策代码，既解释推荐，也解释未预选。
@@ -91,6 +93,14 @@ SHA-256 后，它才允许执行。执行使用系统回收站和本地清单，
 修改时间是观测到的文件系统元数据，并不等于用户最后访问文件的证据。对于目录，
 Cleanr 会考虑已扫描后代中最新的观测修改时间。缺失、未来、部分或不完整的证据都会
 阻止自动预选。
+
+可选的 `scan.global` 对象是 `cleanr.analysis.v1` 的向后兼容附加字段。显式路径分析会
+省略它，旧的 v1 报告即使没有该字段也仍可反序列化。不要从 `scan.roots` 猜测全局
+覆盖：父目录会为提高扫描效率而去重，而 `scan.global.locations` 会保留命名类别到
+位置的证据。请求类别没有位置，表示 Cleanr 没有发现该类别的已知现存位置，不表示
+电脑已经干净。仓库内置 Agent Skill 会把这些证据转换为 `found-candidates`、
+`checked-empty`、`no-known-location` 或 `partial`；对于 Cleanr 不应执行的系统更新和
+其他系统所有工作，则使用 `os-managed`。
 
 ## 推荐的外部 Agent 工作流
 

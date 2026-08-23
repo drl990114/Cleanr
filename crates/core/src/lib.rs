@@ -16,10 +16,11 @@ mod evidence;
 pub use evidence::{
     ANALYSIS_REPORT_SCHEMA_VERSION, ActivityEvidence, ActivitySource, ActivityStatus, AnalysisId,
     AnalysisReport, CandidateCoverage, CandidateEvidence, CandidateId, DecisionCode,
-    MAX_RECOMMENDATION_AGE_DAYS, OverlapEvidence, RecommendationDecision, RecommendationPolicy,
-    RecommendationPolicyError, RecommendationState, ReportIntegrity, RuleEvidence, RuleKey,
-    RuleResolution, RuleResolutionState, ScanEvidence, ScanIssue, ScanIssueCode, UserSelection,
-    build_analysis_report, build_analysis_report_with_safety_policy,
+    GlobalScanEvidence, GlobalScanLocationEvidence, MAX_RECOMMENDATION_AGE_DAYS, OverlapEvidence,
+    RecommendationDecision, RecommendationPolicy, RecommendationPolicyError, RecommendationState,
+    ReportIntegrity, RuleEvidence, RuleKey, RuleResolution, RuleResolutionState, ScanEvidence,
+    ScanIssue, ScanIssueCode, UserSelection, build_analysis_report,
+    build_analysis_report_with_safety_policy,
 };
 
 pub const CLEANUP_PLAN_SCHEMA_VERSION: &str = "cleanr.cleanup-plan.v1";

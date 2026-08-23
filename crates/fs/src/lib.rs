@@ -61,6 +61,7 @@ impl GlobalScanEnvironment {
 pub struct ResolvedScanRoots {
     pub roots: Vec<PathBuf>,
     pub global_roots: Vec<GlobalScanRoot>,
+    pub global_locations: Vec<GlobalScanRoot>,
 }
 
 #[derive(Debug, Clone)]
@@ -138,31 +139,51 @@ pub fn resolve_scan_roots_with_env(
 ) -> Result<ResolvedScanRoots> {
     let mut roots = request.paths.clone();
     let mut global_roots = Vec::new();
+    let mut global_locations = Vec::new();
     if request.include_global {
         let global_kinds = if request.global_kinds.is_empty() {
             configured_global_kinds
         } else {
             &request.global_kinds
         };
-        global_roots = discover_global_scan_roots(global_kinds, environment);
+        let requested_locations = discover_global_scan_locations(global_kinds, environment);
+        global_roots = normalize_global_roots(requested_locations, environment);
+        global_locations = discover_global_scan_locations(&GlobalScanKind::ALL, environment)
+            .into_iter()
+            .filter(|location| {
+                global_roots.iter().any(|root| {
+                    location.path == root.path || location.path.starts_with(&root.path)
+                })
+            })
+            .collect();
         roots.extend(global_roots.iter().map(|root| root.path.clone()));
     }
 
-    if roots.is_empty() {
-        if request.include_global {
-            bail!(NO_GLOBAL_SCAN_ROOTS);
-        }
+    if roots.is_empty() && !request.include_global {
         roots.push(std::env::current_dir()?);
     }
 
     Ok(ResolvedScanRoots {
         roots: normalize_roots(roots),
         global_roots,
+        global_locations,
     })
 }
 
 #[must_use]
 pub fn discover_global_scan_roots(
+    kinds: &[GlobalScanKind],
+    environment: &GlobalScanEnvironment,
+) -> Vec<GlobalScanRoot> {
+    normalize_global_roots(
+        discover_global_scan_locations(kinds, environment),
+        environment,
+    )
+}
+
+/// Discover every existing named global location before parent scan roots are coalesced.
+#[must_use]
+pub fn discover_global_scan_locations(
     kinds: &[GlobalScanKind],
     environment: &GlobalScanEnvironment,
 ) -> Vec<GlobalScanRoot> {
@@ -205,7 +226,7 @@ pub fn discover_global_scan_roots(
             );
         }
     }
-    normalize_global_roots(roots, environment)
+    normalize_global_locations(roots, environment)
 }
 
 pub fn scan_paths(paths: &[PathBuf], options: &ScanOptions) -> Result<ScanReport> {
@@ -895,6 +916,24 @@ fn push_log_roots(environment: &GlobalScanEnvironment, roots: &mut Vec<GlobalSca
 }
 
 fn normalize_global_roots(
+    roots: Vec<GlobalScanRoot>,
+    environment: &GlobalScanEnvironment,
+) -> Vec<GlobalScanRoot> {
+    let roots = normalize_global_locations(roots, environment);
+    let mut normalized = Vec::<GlobalScanRoot>::new();
+    for root in roots {
+        if normalized
+            .iter()
+            .any(|parent| root.path == parent.path || root.path.starts_with(&parent.path))
+        {
+            continue;
+        }
+        normalized.push(root);
+    }
+    normalized
+}
+
+fn normalize_global_locations(
     mut roots: Vec<GlobalScanRoot>,
     environment: &GlobalScanEnvironment,
 ) -> Vec<GlobalScanRoot> {
@@ -911,19 +950,12 @@ fn normalize_global_roots(
             .cmp(&b.path.components().count())
             .then_with(|| a.path.cmp(&b.path))
             .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.label.cmp(&b.label))
     });
-
-    let mut normalized = Vec::<GlobalScanRoot>::new();
-    for root in roots {
-        if normalized
-            .iter()
-            .any(|parent| root.path == parent.path || root.path.starts_with(&parent.path))
-        {
-            continue;
-        }
-        normalized.push(root);
-    }
-    normalized
+    roots.dedup_by(|left, right| {
+        left.path == right.path && left.kind == right.kind && left.label == right.label
+    });
+    roots
 }
 
 fn allows_global_root(path: &Path, environment: &GlobalScanEnvironment) -> bool {
@@ -1255,6 +1287,57 @@ mod tests {
         assert!(!roots.iter().any(|root| root.path == home));
     }
 
+    #[test]
+    fn resolved_global_locations_survive_parent_root_deduplication() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = temp.path().join("home");
+        let cache = home.join(".cache");
+        let pnpm = cache.join("pnpm");
+        fs::create_dir_all(&pnpm).expect("pnpm cache");
+        let environment = GlobalScanEnvironment {
+            home_dir: Some(home),
+            cache_dir: Some(cache.clone()),
+            ..GlobalScanEnvironment::default()
+        };
+        let request = ScanRequest::global(vec![
+            GlobalScanKind::DeveloperCaches,
+            GlobalScanKind::AppCaches,
+        ]);
+
+        let resolved =
+            resolve_scan_roots_with_env(&request, &[], &environment).expect("resolve global roots");
+        let cache = cache.canonicalize().expect("canonical cache");
+        let pnpm = pnpm.canonicalize().expect("canonical pnpm");
+
+        assert_eq!(resolved.roots, vec![cache.clone()]);
+        assert_eq!(resolved.global_roots.len(), 1);
+        assert!(resolved.global_locations.iter().any(|location| {
+            location.path == pnpm
+                && location.kind == GlobalScanKind::DeveloperCaches
+                && location.label == "pnpm cache"
+        }));
+        assert!(resolved.global_locations.iter().any(|location| {
+            location.path == cache && location.kind == GlobalScanKind::AppCaches
+        }));
+
+        let mut reversed_request = request;
+        reversed_request.global_kinds.reverse();
+        let reversed = resolve_scan_roots_with_env(&reversed_request, &[], &environment)
+            .expect("resolve reversed global roots");
+        assert_eq!(resolved.global_locations, reversed.global_locations);
+
+        let app_only = resolve_scan_roots_with_env(
+            &ScanRequest::global(vec![GlobalScanKind::AppCaches]),
+            &[],
+            &environment,
+        )
+        .expect("resolve app cache root");
+        assert_eq!(app_only.roots, vec![cache]);
+        assert!(app_only.global_locations.iter().any(|location| {
+            location.path == pnpm && location.kind == GlobalScanKind::DeveloperCaches
+        }));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_global_roots_cover_known_user_level_cleanup_locations() {
@@ -1361,17 +1444,19 @@ mod tests {
     }
 
     #[test]
-    fn global_scan_request_reports_missing_global_roots() {
+    fn global_scan_request_preserves_empty_global_coverage() {
         let request = ScanRequest::global(vec![GlobalScanKind::TempFiles]);
 
-        let error = resolve_scan_roots_with_env(
+        let resolved = resolve_scan_roots_with_env(
             &request,
             &GlobalScanKind::ALL,
             &GlobalScanEnvironment::default(),
         )
-        .expect_err("missing roots");
+        .expect("empty global coverage");
 
-        assert!(error.to_string().contains(NO_GLOBAL_SCAN_ROOTS));
+        assert!(resolved.roots.is_empty());
+        assert!(resolved.global_roots.is_empty());
+        assert!(resolved.global_locations.is_empty());
     }
 
     #[test]

@@ -9,7 +9,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{Confidence, EntryKind, RuleHit, RuleMatchRole, RuleTrust, SafetyPolicy, ScanEntry};
+use crate::{
+    Confidence, EntryKind, GlobalScanKind, RuleHit, RuleMatchRole, RuleTrust, SafetyPolicy,
+    ScanEntry,
+};
 
 /// The schema identifier for the read-only local analysis contract.
 pub const ANALYSIS_REPORT_SCHEMA_VERSION: &str = "cleanr.analysis.v1";
@@ -305,6 +308,7 @@ pub enum DecisionCode {
     UnresolvedRuleConflict,
     CoveredDescendantHasBlocker,
     OverlapSuppressed,
+    GlobalKindNotRequested,
     ScanRoot,
     SafetyPolicyExcluded,
 }
@@ -326,6 +330,7 @@ impl fmt::Display for DecisionCode {
             Self::UnresolvedRuleConflict => "unresolved-rule-conflict",
             Self::CoveredDescendantHasBlocker => "covered-descendant-has-blocker",
             Self::OverlapSuppressed => "overlap-suppressed",
+            Self::GlobalKindNotRequested => "global-kind-not-requested",
             Self::ScanRoot => "scan-root",
             Self::SafetyPolicyExcluded => "safety-policy-excluded",
         })
@@ -356,12 +361,38 @@ pub struct CandidateEvidence {
     pub rollback_method: String,
 }
 
+/// One existing named global location and the deduplicated root that covered it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GlobalScanLocationEvidence {
+    pub kind: GlobalScanKind,
+    pub label: String,
+    pub local_path: PathBuf,
+    pub scan_root: PathBuf,
+}
+
+/// Requested global categories and the existing named locations that were covered locally.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GlobalScanEvidence {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requested_kinds: Vec<GlobalScanKind>,
+    #[serde(default)]
+    pub locations: Vec<GlobalScanLocationEvidence>,
+}
+
+impl GlobalScanEvidence {
+    fn is_empty(&self) -> bool {
+        self.requested_kinds.is_empty() && self.locations.is_empty()
+    }
+}
+
 /// Local scan facts attached to an analysis report.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScanEvidence {
     pub roots: Vec<PathBuf>,
     pub integrity: ReportIntegrity,
     pub issues: Vec<ScanIssue>,
+    #[serde(default, skip_serializing_if = "GlobalScanEvidence::is_empty")]
+    pub global: GlobalScanEvidence,
 }
 
 /// Immutable analysis facts and their deterministic recommendations.
@@ -512,6 +543,7 @@ fn build_analysis_report_inner(
             roots: scan_roots,
             integrity,
             issues: issues.to_vec(),
+            global: GlobalScanEvidence::default(),
         },
         candidates,
     })
@@ -1041,6 +1073,39 @@ mod tests {
     fn policy_rejects_ages_larger_than_ten_years() {
         assert!(RecommendationPolicy::new(MAX_RECOMMENDATION_AGE_DAYS).is_ok());
         assert!(RecommendationPolicy::new(MAX_RECOMMENDATION_AGE_DAYS + 1).is_err());
+    }
+
+    #[test]
+    fn analysis_reports_without_global_coverage_still_deserialize() {
+        let as_of = Utc::now();
+        let mut report = build_analysis_report(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/repo")],
+            &[],
+            &[],
+            RecommendationPolicy::default(),
+        )
+        .expect("analysis report");
+        report.scan.global = GlobalScanEvidence {
+            requested_kinds: vec![GlobalScanKind::DeveloperCaches],
+            locations: vec![GlobalScanLocationEvidence {
+                kind: GlobalScanKind::DeveloperCaches,
+                label: "pnpm store".to_string(),
+                local_path: PathBuf::from("/repo/.pnpm-store"),
+                scan_root: PathBuf::from("/repo"),
+            }],
+        };
+        let mut value = serde_json::to_value(report).expect("serialize report");
+        value["scan"]
+            .as_object_mut()
+            .expect("scan object")
+            .remove("global");
+
+        let restored: AnalysisReport =
+            serde_json::from_value(value).expect("deserialize old analysis report");
+
+        assert_eq!(restored.scan.global, GlobalScanEvidence::default());
     }
 
     #[test]

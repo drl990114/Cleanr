@@ -1,6 +1,6 @@
 ---
 name: cleanr-review-disk-cleanup
-description: "Review local disk-cleanup evidence with Cleanr and, only after the current user explicitly authorizes an exact reviewed plan, execute recoverable cleanup through the system trash. Use for `cleanr analyze`, conservative macOS or Windows routine cleanup, recommendation states, exact path selection, age policy, plan review, authorized cleanup, manifests, or restore review. Keep paths local; never permanently delete files or empty the trash."
+description: "Review local disk-cleanup evidence with Cleanr and, only after the current user explicitly authorizes an exact reviewed plan, execute recoverable cleanup through the system trash. Use for `cleanr analyze`, macOS, Linux, or Windows cleanup coverage, developer and browser caches, recommendation states, exact path selection, age policy, plan review, authorized cleanup, manifests, or restore review. Keep paths local; never permanently delete files or empty the trash."
 ---
 
 # Review and Recoverably Clean with Cleanr
@@ -53,6 +53,13 @@ to TUI automation, another deletion tool, or a custom script.
 - Never use `rm`, permanent-delete APIs, trash-emptying commands, or a custom
   deletion script.
 - Never automate the TUI or simulate `/clean --confirm`.
+- Never substitute `pnpm store prune`, `npm cache clean`, `yarn cache clean`,
+  an OS cleanup command, or another package-manager command for Cleanr.
+- Treat browser profiles, cookies, history, passwords, service workers, and
+  saved sessions as user data, not cleanup candidates.
+- Treat Windows Update, Delivery Optimization, staged macOS updates, system
+  snapshots, and system-owned roots as OS-managed. Do not scan, plan, or run
+  native cleanup commands for them.
 - Use only `cleanr clean` for delegated cleanup. It uses the system trash,
   writes an execution manifest, validates each target, and preserves restore
   information.
@@ -69,6 +76,11 @@ cleanr analyze /path/to/project
 Use `--config` only for a user-provided or approved config. Use `--global` only
 after explicit approval.
 
+For a global or multi-category request, read
+[`references/global-coverage.md`](references/global-coverage.md) before choosing
+arguments or interpreting the report. Select only categories the user approved.
+Do not add Downloads to a routine scan unless the user explicitly includes it.
+
 For a user-approved routine macOS review, prefer:
 
 ```bash
@@ -76,8 +88,7 @@ cleanr analyze --global \
   --global-kind browser-caches \
   --global-kind app-caches \
   --global-kind logs \
-  --global-kind temp-files \
-  --global-kind downloads
+  --global-kind temp-files
 ```
 
 Add `--global-kind developer-caches` only when the user includes Homebrew,
@@ -85,6 +96,10 @@ package-manager, and Xcode caches. Cleanr intentionally excludes Trash
 contents, Mail data, iOS backups, Time Machine snapshots, browser service
 workers, and system-owned roots. Ask the user to quit an app before selecting
 its cache.
+
+For a user-approved Linux cache review, use the same narrow category mapping.
+Add `developer-caches`, `browser-caches`, `app-caches`, `logs`, or `temp-files`
+only when each category matches the request.
 
 For a user-approved routine Windows review, prefer:
 
@@ -107,11 +122,15 @@ place as a recorded failure.
 Before recommending cleanup:
 
 1. Require a supported `schema_version`.
-2. Require `scan.integrity = complete` for automatic preselection.
-3. Read `policy.preselect_after_days`.
-4. Explain each relevant `recommendation.state` and decision `codes`.
-5. Exclude `suppressed` and `excluded` candidates.
-6. Require human review for `review`, incomplete, conflicting, missing,
+2. For a global report, require `scan.global`, verify `requested_kinds` against
+   the approved request, and produce the coverage ledger defined in the
+   reference. If the field is absent, remain read-only and rerun global analysis
+   with a current CLI; never infer coverage from `scan.roots` alone.
+3. Require `scan.integrity = complete` for automatic preselection.
+4. Read `policy.preselect_after_days`.
+5. Explain each relevant `recommendation.state` and decision `codes`.
+6. Exclude `suppressed` and `excluded` candidates.
+7. Require human review for `review`, incomplete, conflicting, missing,
    future-dated, untrusted, or lower-confidence evidence.
 
 `preselected` is only a deterministic default. Modification time is observed

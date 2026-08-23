@@ -6,7 +6,7 @@
     <a href="https://drl990114.github.io/cleanr/">Documentation</a>
     ·
     <a href="https://github.com/drl990114/cleanr/releases">Download</a>
-    ·12312
+    ·
     <a href="https://github.com/drl990114/cleanr/discussions">Discussions</a>
   </p>
   <p>

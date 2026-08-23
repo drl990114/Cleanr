@@ -34,13 +34,13 @@ cleanr analyze --global \
   --global-kind browser-caches \
   --global-kind app-caches \
   --global-kind logs \
-  --global-kind temp-files \
-  --global-kind downloads
+  --global-kind temp-files
 ```
 
 Use the same global-kind arguments with `cleanr plan --output` only after the
 user approves that scope. Add `developer-caches` explicitly for Homebrew,
-package-manager, and Xcode targets.
+package-manager, and Xcode targets. Add `downloads` only when the user
+explicitly asks to review personal files in Downloads.
 
 For a routine Windows review, keep the default scope to the two conservative
 file-only categories:
@@ -99,6 +99,8 @@ threshold boundary. It includes:
 
 - schema and analysis identifiers, the policy snapshot, and completion time;
 - scan roots, integrity state, and structured scan issues;
+- for global analysis, the requested global categories and every existing named
+  location with its category, label, local path, and covering scan root;
 - each candidate's opaque report-scoped ID, local path, size, kind, and
   rollback method;
 - modification-time evidence, coverage, rule matches, and overlap resolution;
@@ -109,6 +111,17 @@ Modification time is observed filesystem metadata, not proof that a user last
 accessed a file. For a directory, Cleanr considers the newest observed
 modification time in its scanned descendants. Missing, future, partial, or
 incomplete evidence blocks automatic preselection.
+
+The optional `scan.global` object is additive to `cleanr.analysis.v1`. It is
+omitted for explicit-path analysis, and older v1 reports without it still
+deserialize. Do not infer global coverage from `scan.roots`: parent roots are
+deduplicated for efficient scanning, while `scan.global.locations` preserves
+the named category-to-location evidence. A requested category with no location
+means Cleanr found no known existing location for that category; it does not
+mean the computer is clean. The bundled agent skill converts this evidence into
+`found-candidates`, `checked-empty`, `no-known-location`, or `partial`, and uses
+`os-managed` for requested system-update or other system-owned work that Cleanr
+must not execute.
 
 ## Recommended external-agent workflow
 

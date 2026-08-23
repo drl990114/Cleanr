@@ -7,11 +7,12 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use cleanr_config::{Config, default_config_path, default_state_dir};
 use cleanr_core::{
-    AnalysisReport, CleanupPlan, RecommendationPolicy, RecommendationState, SafetyPolicy,
+    AnalysisReport, CleanupPlan, DecisionCode, GlobalScanEvidence, GlobalScanKind,
+    GlobalScanLocationEvidence, RecommendationPolicy, RecommendationState, SafetyPolicy,
     ScanRequest, UserSelection, build_analysis_report_with_safety_policy,
     build_cleanup_plan_from_analysis,
 };
-use cleanr_fs::{ScanOptions, ScanReport, resolve_scan_roots, scan_paths};
+use cleanr_fs::{ResolvedScanRoots, ScanOptions, ScanReport, resolve_scan_roots, scan_paths};
 use cleanr_rules::RuleRegistry;
 use cleanr_tasks::{
     CleanupAuthorization, ManifestRepository, SystemRestoreExecutor, TrashExecutor,
@@ -65,6 +66,8 @@ struct WorkflowScan {
     config_path: Option<PathBuf>,
     registry: RuleRegistry,
     roots: Vec<PathBuf>,
+    explicit_roots: Vec<PathBuf>,
+    global_scan: GlobalScanEvidence,
     report: ScanReport,
 }
 
@@ -231,22 +234,82 @@ fn run_scan(config_path: Option<PathBuf>, request: ScanRequest) -> Result<Workfl
     let config_path_for_policy = config_path.clone().or_else(default_config_path);
     let config = load_config(config_path)?;
     let registry = RuleRegistry::load(&config)?;
-    let roots = resolve_scan_roots(&request, &config.scan.global_kinds)?.roots;
+    let explicit_roots = request
+        .paths
+        .iter()
+        .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
+        .collect();
+    let resolved = resolve_scan_roots(&request, &config.scan.global_kinds)?;
+    let roots = resolved.roots.clone();
     let options = ScanOptions {
         stay_on_filesystem: config.scan.stay_on_filesystem,
         ignore_dirs: config.scan.ignore_dirs.clone(),
         ignore_patterns: config.scan.ignore_patterns.clone(),
     };
-    let mut report = scan_paths(&roots, &options)?;
+    let mut report = if roots.is_empty() {
+        ScanReport::default()
+    } else {
+        scan_paths(&roots, &options)?
+    };
     registry.annotate_entries_at(&mut report.entries, report.as_of);
     let roots = report.summary.roots.clone();
+    let global_scan = global_scan_evidence(&request, &config.scan.global_kinds, &resolved, &roots);
     Ok(WorkflowScan {
         config,
         config_path: config_path_for_policy,
         registry,
         roots,
+        explicit_roots,
+        global_scan,
         report,
     })
+}
+
+fn global_scan_evidence(
+    request: &ScanRequest,
+    configured_global_kinds: &[GlobalScanKind],
+    resolved: &ResolvedScanRoots,
+    scan_roots: &[PathBuf],
+) -> GlobalScanEvidence {
+    if !request.include_global {
+        return GlobalScanEvidence::default();
+    }
+
+    let mut requested_kinds = if request.global_kinds.is_empty() {
+        configured_global_kinds.to_vec()
+    } else {
+        request.global_kinds.clone()
+    };
+    requested_kinds.sort();
+    requested_kinds.dedup();
+
+    let mut locations = resolved
+        .global_locations
+        .iter()
+        .filter_map(|location| {
+            let scan_root = scan_roots.iter().find(|root| {
+                location.path == root.as_path() || location.path.starts_with(root.as_path())
+            })?;
+            Some(GlobalScanLocationEvidence {
+                kind: location.kind,
+                label: location.label.clone(),
+                local_path: location.path.clone(),
+                scan_root: scan_root.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    locations.sort_by(|left, right| {
+        left.kind
+            .cmp(&right.kind)
+            .then_with(|| left.label.cmp(&right.label))
+            .then_with(|| left.local_path.cmp(&right.local_path))
+            .then_with(|| left.scan_root.cmp(&right.scan_root))
+    });
+
+    GlobalScanEvidence {
+        requested_kinds,
+        locations,
+    }
 }
 
 fn build_analysis_report(
@@ -254,7 +317,7 @@ fn build_analysis_report(
     policy: RecommendationPolicy,
     safety: &SafetyPolicy,
 ) -> Result<AnalysisReport> {
-    Ok(build_analysis_report_with_safety_policy(
+    let mut report = build_analysis_report_with_safety_policy(
         scan.report.as_of,
         Utc::now(),
         scan.roots.clone(),
@@ -262,7 +325,73 @@ fn build_analysis_report(
         &scan.report.issues,
         policy,
         safety,
-    )?)
+    )?;
+    report.scan.global = scan.global_scan.clone();
+    suppress_unrequested_global_candidates(&mut report, &scan.explicit_roots);
+    Ok(report)
+}
+
+fn suppress_unrequested_global_candidates(
+    report: &mut AnalysisReport,
+    explicit_roots: &[PathBuf],
+) {
+    let requested_kinds = report
+        .scan
+        .global
+        .requested_kinds
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if requested_kinds.is_empty() {
+        return;
+    }
+
+    for candidate in &mut report.candidates {
+        if explicit_roots.iter().any(|root| {
+            candidate.local_path == *root || candidate.local_path.starts_with(root)
+        }) {
+            continue;
+        }
+        let max_depth = report
+            .scan
+            .global
+            .locations
+            .iter()
+            .filter(|location| {
+                candidate.local_path == location.local_path
+                    || candidate.local_path.starts_with(&location.local_path)
+            })
+            .map(|location| location.local_path.components().count())
+            .max();
+        let Some(max_depth) = max_depth else {
+            continue;
+        };
+        let belongs_to_requested_kind = report.scan.global.locations.iter().any(|location| {
+            location.local_path.components().count() == max_depth
+                && (candidate.local_path == location.local_path
+                    || candidate.local_path.starts_with(&location.local_path))
+                && requested_kinds.contains(&location.kind)
+        });
+        if belongs_to_requested_kind
+            || candidate.recommendation.state == RecommendationState::Excluded
+        {
+            continue;
+        }
+
+        candidate.recommendation.state = RecommendationState::Suppressed;
+        candidate.recommendation.initial_selected = false;
+        if !candidate
+            .recommendation
+            .codes
+            .contains(&DecisionCode::GlobalKindNotRequested)
+        {
+            candidate
+                .recommendation
+                .codes
+                .push(DecisionCode::GlobalKindNotRequested);
+            candidate.recommendation.codes.sort();
+        }
+    }
 }
 
 enum PlanSelection {
@@ -499,7 +628,7 @@ mod tests {
         Confidence, EntryKind, RuleHit, RuleMatchRole, RuleTrust, ScanEntry, ScanIssue,
         ScanIssueCode,
     };
-    use cleanr_fs::ScanError;
+    use cleanr_fs::{GlobalScanRoot, ScanError};
 
     #[test]
     fn scan_json_separates_structured_issues_from_local_diagnostics() {
@@ -545,6 +674,238 @@ mod tests {
         let pathless_issue = &pathless_value["issues"][0];
         assert_eq!(pathless_issue["code"], "unknown");
         assert!(pathless_issue.get("path").is_none());
+    }
+
+    #[test]
+    fn analysis_json_preserves_requested_global_kinds_and_named_locations() {
+        let scan_root = PathBuf::from("/tmp/cleanr-cache");
+        let pnpm = scan_root.join("pnpm");
+        let request = ScanRequest::global(vec![
+            GlobalScanKind::AppCaches,
+            GlobalScanKind::DeveloperCaches,
+            GlobalScanKind::BrowserCaches,
+            GlobalScanKind::DeveloperCaches,
+        ]);
+        let resolved = ResolvedScanRoots {
+            roots: vec![scan_root.clone()],
+            global_roots: vec![GlobalScanRoot {
+                path: scan_root.clone(),
+                kind: GlobalScanKind::AppCaches,
+                label: "Application caches".to_string(),
+            }],
+            global_locations: vec![
+                GlobalScanRoot {
+                    path: scan_root.clone(),
+                    kind: GlobalScanKind::AppCaches,
+                    label: "Application caches".to_string(),
+                },
+                GlobalScanRoot {
+                    path: pnpm.clone(),
+                    kind: GlobalScanKind::DeveloperCaches,
+                    label: "pnpm cache".to_string(),
+                },
+            ],
+        };
+        let global_scan = global_scan_evidence(&request, &[], &resolved, &resolved.roots);
+        let mut reversed_request = request.clone();
+        reversed_request.global_kinds.reverse();
+        let mut reversed_resolved = resolved.clone();
+        reversed_resolved.global_locations.reverse();
+        let reversed_global_scan = global_scan_evidence(
+            &reversed_request,
+            &[],
+            &reversed_resolved,
+            &reversed_resolved.roots,
+        );
+        assert_eq!(global_scan, reversed_global_scan);
+        assert_eq!(
+            serde_json::to_value(&global_scan).expect("coverage JSON"),
+            serde_json::to_value(&reversed_global_scan).expect("reversed coverage JSON")
+        );
+        let config = Config::default();
+        let scan = WorkflowScan {
+            config: config.clone(),
+            config_path: None,
+            registry: RuleRegistry::builtin().expect("builtin registry"),
+            roots: resolved.roots,
+            explicit_roots: Vec::new(),
+            global_scan,
+            report: ScanReport::default(),
+        };
+
+        let report = build_analysis_report(
+            &scan,
+            RecommendationPolicy::default(),
+            &safety_policy(&config, None),
+        )
+        .expect("analysis report");
+        let value = serde_json::to_value(report).expect("analysis JSON");
+
+        assert_eq!(
+            value["scan"]["global"]["requested_kinds"],
+            json!(["developer-caches", "browser-caches", "app-caches"])
+        );
+        assert_eq!(
+            value["scan"]["global"]["locations"][0]["label"],
+            "pnpm cache"
+        );
+        assert_eq!(
+            value["scan"]["global"]["locations"][0]["local_path"],
+            pnpm.to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            value["scan"]["global"]["locations"][0]["scan_root"],
+            scan_root.to_string_lossy().as_ref()
+        );
+    }
+
+    #[test]
+    fn app_cache_scope_suppresses_nested_unrequested_developer_candidates() {
+        let scan_root = PathBuf::from("/tmp/cleanr-cache");
+        let pnpm = scan_root.join("pnpm");
+        let request = ScanRequest::global(vec![GlobalScanKind::AppCaches]);
+        let resolved = ResolvedScanRoots {
+            roots: vec![scan_root.clone()],
+            global_roots: vec![GlobalScanRoot {
+                path: scan_root.clone(),
+                kind: GlobalScanKind::AppCaches,
+                label: "Application caches".to_string(),
+            }],
+            global_locations: vec![
+                GlobalScanRoot {
+                    path: scan_root.clone(),
+                    kind: GlobalScanKind::AppCaches,
+                    label: "Application caches".to_string(),
+                },
+                GlobalScanRoot {
+                    path: pnpm.clone(),
+                    kind: GlobalScanKind::DeveloperCaches,
+                    label: "pnpm cache".to_string(),
+                },
+            ],
+        };
+        let global_scan = global_scan_evidence(&request, &[], &resolved, &resolved.roots);
+        let as_of = Utc::now();
+        let config = Config::default();
+        let scan = WorkflowScan {
+            config: config.clone(),
+            config_path: None,
+            registry: RuleRegistry::builtin().expect("builtin registry"),
+            roots: resolved.roots,
+            explicit_roots: Vec::new(),
+            global_scan,
+            report: ScanReport {
+                as_of,
+                entries: vec![ScanEntry {
+                    path: pnpm,
+                    kind: EntryKind::Directory,
+                    size_bytes: 1024,
+                    modified_at: Some(as_of - chrono::Duration::days(100)),
+                    rule_hits: vec![RuleHit {
+                        rule_pack_id: "builtin-dev".to_string(),
+                        rule_id: "pnpm-cache".to_string(),
+                        label: "pnpm cache".to_string(),
+                        category: "developer-cache".to_string(),
+                        confidence: Confidence::High,
+                        reason: "rebuildable".to_string(),
+                        risk_note: "dependencies may be downloaded again".to_string(),
+                        default_selected: true,
+                        trust: RuleTrust::Builtin,
+                        match_role: RuleMatchRole::Primary,
+                    }],
+                }],
+                ..ScanReport::default()
+            },
+        };
+
+        let analysis = build_analysis_report(
+            &scan,
+            RecommendationPolicy::default(),
+            &safety_policy(&config, None),
+        )
+        .expect("analysis report");
+
+        assert_eq!(
+            analysis.candidates[0].recommendation.state,
+            RecommendationState::Suppressed
+        );
+        assert!(
+            analysis.candidates[0]
+                .recommendation
+                .codes
+                .contains(&DecisionCode::GlobalKindNotRequested)
+        );
+        let plan = build_plan(
+            &scan,
+            PlanSelection::Recommendations(SelectionOverrides::default()),
+        )
+        .expect("cleanup plan");
+        assert_eq!(plan.summary.candidate_count, 0);
+        assert_eq!(plan.summary.selected_count, 0);
+    }
+
+    #[test]
+    fn explicit_path_analysis_does_not_invent_global_coverage() {
+        let request = ScanRequest::paths(vec![PathBuf::from("/tmp/project")]);
+        let roots = request.paths.clone();
+        let evidence = global_scan_evidence(
+            &request,
+            &GlobalScanKind::ALL,
+            &ResolvedScanRoots::default(),
+            &roots,
+        );
+        let config = Config::default();
+        let scan = WorkflowScan {
+            config: config.clone(),
+            config_path: None,
+            registry: RuleRegistry::builtin().expect("builtin registry"),
+            roots,
+            explicit_roots: vec![PathBuf::from("/tmp/project")],
+            global_scan: evidence.clone(),
+            report: ScanReport::default(),
+        };
+        let report = build_analysis_report(
+            &scan,
+            RecommendationPolicy::default(),
+            &safety_policy(&config, None),
+        )
+        .expect("analysis report");
+        let value = serde_json::to_value(report).expect("analysis JSON");
+
+        assert_eq!(evidence, GlobalScanEvidence::default());
+        assert!(value["scan"].get("global").is_none());
+    }
+
+    #[test]
+    fn global_analysis_preserves_requested_kind_when_no_location_exists() {
+        let request = ScanRequest::global(vec![GlobalScanKind::BrowserCaches]);
+        let resolved = ResolvedScanRoots::default();
+        let global_scan = global_scan_evidence(&request, &[], &resolved, &[]);
+        let config = Config::default();
+        let scan = WorkflowScan {
+            config: config.clone(),
+            config_path: None,
+            registry: RuleRegistry::builtin().expect("builtin registry"),
+            roots: Vec::new(),
+            explicit_roots: Vec::new(),
+            global_scan,
+            report: ScanReport::default(),
+        };
+
+        let report = build_analysis_report(
+            &scan,
+            RecommendationPolicy::default(),
+            &safety_policy(&config, None),
+        )
+        .expect("analysis report");
+        let value = serde_json::to_value(report).expect("analysis JSON");
+
+        assert_eq!(
+            value["scan"]["global"]["requested_kinds"],
+            json!(["browser-caches"])
+        );
+        assert_eq!(value["scan"]["global"]["locations"], json!([]));
+        assert_eq!(value["scan"]["roots"], json!([]));
     }
 
     #[test]
