@@ -242,7 +242,7 @@ jobs:
         run: node .github/scripts/publish-npm-packages.mjs "${GITHUB_REF_NAME#v}"
 
   publish-release:
-    name: Publish GitHub prerelease
+    name: Publish GitHub release
     needs:
       - create-draft-release
       - publish-crates
@@ -251,7 +251,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Publish draft prerelease
+      - name: Publish draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false --prerelease
+        run: gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false --latest
