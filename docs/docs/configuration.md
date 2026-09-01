@@ -73,6 +73,10 @@ You can edit the TOML file directly or use dotted keys:
 cleanr config get ui.theme
 cleanr config set ui.theme dark
 cleanr config set scan.stay_on_filesystem true
+cleanr config set scan.budgets.max_entries 1000000
+cleanr config set scan.budgets.max_elapsed_seconds 180
+cleanr config set scan.budgets.max_estimated_memory_mib 512
+cleanr config set scan.budgets.max_issue_details 1024
 cleanr config set cleanup.require_confirm false
 cleanr config set recommendations.preselect_after_days 180
 cleanr config set i18n.locale zh-CN
@@ -101,6 +105,29 @@ repeatable names or layouts:
 ignore_dirs = ["/home/me/projects/large-fixture"]
 ignore_patterns = ["**/.git/**", "**/vendor/**", "**/.venv/**"]
 ```
+
+#### Optional scan budgets
+
+Budgets are omitted from the default file and default to `0` (unlimited), preserving historical
+scan coverage. A conservative opt-in profile for unusually large global scans is:
+
+```toml
+[scan.budgets]
+max_entries = 1000000
+max_elapsed_seconds = 180
+max_estimated_memory_mib = 512
+max_issue_details = 1024
+```
+
+`max_entries` limits successfully retained `ScanEntry` records and their O(N) post-processing
+memory; use elapsed time to limit traversal work. The memory value is a conservative allocation
+estimate for retained entries, paths, diagnostics, and aggregation scratch—not process RSS.
+Reaching any budget records a path-free budget ledger alongside local, path-bearing read-only
+partial evidence and cannot produce or execute a cleanup plan. Any enabled budget uses one
+traversal worker so retention limits are enforced before records enter the report. The retained
+partial subset is not guaranteed to be identical across runs. Elapsed limits include root
+canonicalization and are checked between discovery, metadata, and aggregation boundaries; they
+cannot interrupt a filesystem call that is already blocked inside the operating system.
 
 ### `[cleanup]`
 

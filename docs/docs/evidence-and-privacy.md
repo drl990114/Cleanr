@@ -115,10 +115,12 @@ incomplete evidence blocks automatic preselection.
 The optional `scan.global` object is additive to `cleanr.analysis.v1`. It is
 omitted for explicit-path analysis, and older v1 reports without it still
 deserialize. Do not infer global coverage from `scan.roots`: parent roots are
-deduplicated for efficient scanning, while `scan.global.locations` preserves
-the named category-to-location evidence. A requested category with no location
-means Cleanr found no known existing location for that category; it does not
-mean the computer is clean. The bundled agent skill converts this evidence into
+deduplicated for efficient scanning, while `scan.global.locations` maps each
+named location to a covering root whose traversal ended naturally. Structured
+scan issues still identify ignored or filesystem-boundary subtrees, so a
+location row alone does not prove every descendant was read. When scan integrity is complete, a
+requested category with no location means Cleanr found no known existing location for that
+category; it does not mean the computer is clean. The bundled agent skill converts this evidence into
 `found-candidates`, `checked-empty`, `no-known-location`, or `partial`, and uses
 `os-managed` for requested system-update or other system-owned work that Cleanr
 must not execute.
@@ -154,6 +156,13 @@ plan.
 They contain raw local paths, scan roots, rule reasons and risk notes, and issue
 paths. Cleanr has no embedded AI provider, API-key setting, prompt transport,
 or telemetry that sends them elsewhere.
+
+## Budget-limited evidence
+
+When a scan budget is reached, `scan.budget_exceeded` contains path-free limit and observed
+values, report integrity is `partial`, and candidate coverage is `unknown`. The already collected
+local evidence remains useful for review, but it is read-only: Cleanr refuses to create a cleanup
+plan from it. A later complete scan is required before planning or cleanup.
 
 Do not forward the JSON to a remote service as-is. If you choose to share any
 of it, you are responsible for minimizing the scope and removing sensitive

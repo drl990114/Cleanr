@@ -73,6 +73,10 @@ theme = "auto"
 cleanr config get ui.theme
 cleanr config set ui.theme dark
 cleanr config set scan.stay_on_filesystem true
+cleanr config set scan.budgets.max_entries 1000000
+cleanr config set scan.budgets.max_elapsed_seconds 180
+cleanr config set scan.budgets.max_estimated_memory_mib 512
+cleanr config set scan.budgets.max_issue_details 1024
 cleanr config set cleanup.require_confirm false
 cleanr config set recommendations.preselect_after_days 180
 cleanr config set i18n.locale zh-CN
@@ -100,6 +104,27 @@ cleanr config set i18n.locale zh-CN
 ignore_dirs = ["/home/me/projects/large-fixture"]
 ignore_patterns = ["**/.git/**", "**/vendor/**", "**/.venv/**"]
 ```
+
+#### 可选扫描预算
+
+默认配置文件不写入预算，四项默认都是 `0`（无限制），因此不会改变原有扫描覆盖。
+对于异常庞大的全局扫描，可以选择下面这组保守配置；它只是建议示例，并非默认值：
+
+```toml
+[scan.budgets]
+max_entries = 1000000
+max_elapsed_seconds = 180
+max_estimated_memory_mib = 512
+max_issue_details = 1024
+```
+
+`max_entries` 限制成功保留的 `ScanEntry` 数量及其 O(N) 后处理内存；若要限制遍历工作量，
+应使用耗时预算。内存值是对保留条目、路径、诊断和聚合临时结构的保守分配估算，
+不是进程 RSS。任一预算命中都会在仍含本地路径的只读部分证据旁记录一份不含路径的预算
+账本，且不能生成或执行清理计划。启用任一预算时扫描使用单个遍历 worker，以便在记录
+进入报告前执行上限；部分结果的具体子集不保证跨运行完全相同。耗时上限包含根路径规范
+化，并会在发现、元数据读取和聚合边界检查，无法中断已经阻塞在操作系统内核中的文件系统
+调用。
 
 ### `[cleanup]`
 

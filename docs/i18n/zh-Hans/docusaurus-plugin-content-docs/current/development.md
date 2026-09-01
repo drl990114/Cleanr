@@ -44,6 +44,46 @@ cargo run --locked -p cleanr-cli -- plugin schema language >/dev/null
 cargo run --locked -p cleanr-cli -- plugin schema config >/dev/null
 ```
 
+## 测量本地扫描性能
+
+被忽略的文件系统基准只扫描显式传入的根目录，并输出汇总耗时、条目数、错误数和
+字节数。它不会输出单条路径，也不会随常规测试运行。
+
+```bash
+CLEANR_BENCH_ROOT=/path/to/local/fixture \
+CLEANR_BENCH_ROUNDS=5 \
+CLEANR_BENCH_WORKERS=1 \
+cargo test -p cleanr-fs --locked --test scan_performance -- \
+  --ignored --nocapture
+```
+
+扫描器改动前后应使用相同 fixture、文件系统状态、构建配置和冷热缓存条件。开发机
+结果不能直接作为跨平台发布性能结论。worker 数量大于 `1` 时运行的是内部实验后端，
+不是用户配置。只有在重复运行的报告指纹一致、P95 有实质改善，并且独立测得的峰值 RSS
+不超过串行基线的 `1.25x` 时，才应考虑公开或默认启用。macOS 上应让编译后的测试
+可执行文件直接运行在 `/usr/bin/time -l` 下，以排除 Cargo 和编译器内存；基准输出的
+`rss_after_kib` 只是扫描后快照，不是峰值 RSS。
+
+内存中的证据、计划和 JSON 序列化阶段可使用合成的忽略基准；其中只会生成 fixture
+名称，不会包含本地文件系统路径。
+
+```bash
+CLEANR_BENCH_ENTRIES=100000 \
+CLEANR_BENCH_ROUNDS=5 \
+cargo test -p cleanr-core --locked --test pipeline_performance -- \
+  --ignored --nocapture
+```
+
+TUI 的忽略基准会先构造大型合成候选集并完成预热，只测量 `TestBackend` 的 draw 调用，
+输出平均、P95 和最大帧耗时，但不设置依赖机器性能的通过阈值：
+
+```bash
+CLEANR_BENCH_CANDIDATES=10000 \
+CLEANR_BENCH_FRAMES=200 \
+cargo test -p cleanr-tui --locked \
+  scan_view_render_performance -- --ignored --nocapture
+```
+
 ## 本地运行文档站点
 
 ```bash

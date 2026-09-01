@@ -115,6 +115,9 @@ dialog for a direct local `/clean` request. It does not turn `analyze` into an
 execution interface or remove the delegated command's digest and authorization
 requirements.
 
+Budget-limited scans never authorize cleanup. Their provenance is retained in analysis evidence,
+and both plan creation and the execution layer fail closed before any trash or manifest operation.
+
 ## Practical safety checklist
 
 - Start with a narrow project directory.

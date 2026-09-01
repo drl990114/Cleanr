@@ -108,6 +108,15 @@ or:
 export CLEANR_NO_UPDATE_CHECK=true
 ```
 
+## A global scan is slow or appears stuck
+
+Opt into the scan budgets described in [Configuration](./configuration) to bound retained entries,
+elapsed time, estimated allocation, or retained diagnostics. Enabled budgets use one traversal
+worker and return read-only partial evidence when reached. An elapsed limit is cooperative: it is
+checked between scan phases and filesystem operations, but cannot interrupt a metadata or directory
+read already blocked in the operating system kernel. Cancel the scan if the kernel call eventually
+returns; investigate the filesystem, mount, or network share if it repeatedly blocks.
+
 ## Get more help
 
 If the problem is reproducible, open an issue on
