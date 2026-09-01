@@ -14,7 +14,11 @@ chrono.workspace = true
 cleanr-core = { version = "0.10.0", path = "../core" }
 dirs.workspace = true
 globset.workspace = true
+ignore.workspace = true
 walkdir.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winapi-util.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

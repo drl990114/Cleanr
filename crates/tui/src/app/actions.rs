@@ -33,6 +33,10 @@ impl Workbench {
             self.status = self.i18n.t("status_operation_running");
             return;
         }
+        if self.scan_is_budget_limited() {
+            self.reject_budget_limited_action();
+            return;
+        }
         if self.plan.is_none() {
             self.build_plan();
         }
@@ -276,19 +280,25 @@ impl Workbench {
     pub(crate) fn ensure_analysis_report(
         &mut self,
     ) -> std::result::Result<(), RecommendationPolicyError> {
+        self.rebuild_candidate_projection_if_stale();
         if self.analysis.is_some() {
             return Ok(());
         }
         let safety = self.safety_policy();
-        let analysis = build_analysis_report_with_safety_policy(
+        let mut analysis = build_analysis_report_with_scan_context(
             self.scan_as_of,
             Utc::now(),
             self.roots.clone(),
             &self.entries,
             &self.scan_issues,
             RecommendationPolicy::new(self.config.recommendations.preselect_after_days)?,
-            &safety,
+            AnalysisScanContext {
+                budget_exceeded: &self.scan_budget_exceeded,
+                safety_policy: Some(&safety),
+            },
         )?;
+        analysis.scan.global = self.scan_global_evidence.clone();
+        suppress_unrequested_global_candidates(&mut analysis, &self.scan_explicit_roots);
         self.candidate_ids_by_path = analysis
             .candidates
             .iter()
@@ -300,12 +310,17 @@ impl Workbench {
     }
 
     pub(crate) fn build_plan_for_view(&mut self, activate_scan: bool) {
+        if activate_scan {
+            self.view = View::Scan;
+        }
+        if self.scan_is_budget_limited() {
+            self.plan = None;
+            self.reject_budget_limited_action();
+            return;
+        }
         if self.entries.is_empty() {
             self.status = self.i18n.t("status_no_scan_results");
             return;
-        }
-        if activate_scan {
-            self.view = View::Scan;
         }
         if let Err(error) = self.ensure_analysis_report() {
             self.status = error.to_string();
@@ -315,26 +330,32 @@ impl Workbench {
         let Some(analysis) = &self.analysis else {
             return;
         };
-        self.plan = Some(build_cleanup_plan_from_analysis(
+        let plan = match build_cleanup_plan_from_analysis(
             self.roots.clone(),
             self.registry.versions(),
             &self.entries,
             analysis,
             &self.selection,
             &policy,
-        ));
-        if let Some(plan) = &self.plan {
-            self.status = self.i18n.format(
-                "status_plan_ready",
-                &[
-                    ("candidates", plan.summary.candidate_count.to_string()),
-                    ("selected", plan.summary.selected_count.to_string()),
-                    ("size", format_bytes(plan.summary.selected_size_bytes)),
-                ],
-            );
-            if self.view == View::Scan {
-                self.select_first();
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.plan = None;
+                self.status = error.to_string();
+                return;
             }
+        };
+        self.status = self.i18n.format(
+            "status_plan_ready",
+            &[
+                ("candidates", plan.summary.candidate_count.to_string()),
+                ("selected", plan.summary.selected_count.to_string()),
+                ("size", format_bytes(plan.summary.selected_size_bytes)),
+            ],
+        );
+        self.plan = Some(plan);
+        if self.view == View::Scan {
+            self.select_first();
         }
     }
 
@@ -353,6 +374,10 @@ impl Workbench {
     }
 
     pub(crate) fn export_plan(&mut self, path: Option<PathBuf>) {
+        if self.scan_is_budget_limited() {
+            self.reject_budget_limited_action();
+            return;
+        }
         if self.plan.is_none() {
             self.build_plan();
         }
@@ -369,6 +394,15 @@ impl Workbench {
             }
             Err(err) => self.status = err.to_string(),
         }
+    }
+
+    pub(crate) fn scan_is_budget_limited(&self) -> bool {
+        !self.scan_budget_exceeded.is_empty()
+    }
+
+    pub(crate) fn reject_budget_limited_action(&mut self) {
+        self.plan = None;
+        self.status = self.i18n.t("status_scan_budget_read_only");
     }
 
     pub(crate) fn show_restore(&mut self) {
@@ -455,12 +489,7 @@ impl Workbench {
         }
         self.view = View::Usage;
         let candidates = self.plan.as_ref().map_or_else(
-            || {
-                self.entries
-                    .iter()
-                    .filter(|entry| !entry.rule_hits.is_empty())
-                    .count()
-            },
+            || self.candidate_count_cached(),
             |plan| plan.summary.candidate_count,
         );
         let (selected, selected_size) = self.plan.as_ref().map_or((0, 0), |plan| {
@@ -493,7 +522,21 @@ impl Workbench {
             return;
         }
         let view = self.view;
-        self.start_scan_for_view(ScanRequest::default(), view);
+        let include_global = !self.scan_global_evidence.requested_kinds.is_empty()
+            || !self.scan_global_evidence.locations.is_empty();
+        let paths = if self.scan_explicit_roots.is_empty() && !include_global {
+            self.roots.clone()
+        } else {
+            self.scan_explicit_roots.clone()
+        };
+        self.start_scan_for_view(
+            ScanRequest {
+                paths,
+                include_global,
+                global_kinds: self.scan_global_evidence.requested_kinds.clone(),
+            },
+            view,
+        );
         if self.scan_rx.is_some() {
             self.status_after_scan = Some(completed_status);
         }

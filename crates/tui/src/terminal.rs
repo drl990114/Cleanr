@@ -78,7 +78,9 @@ pub fn run(options: TuiOptions) -> Result<()> {
         }
 
         if redraw {
+            let draw_started_at = Instant::now();
             let area = terminal.draw(|frame| render(frame, &mut app))?.area;
+            app.record_frame_duration(draw_started_at.elapsed());
             if matches!(app.mode, Mode::Normal) {
                 terminal.set_cursor_position(ime_guard_position(area))?;
                 terminal.hide_cursor()?;
@@ -100,11 +102,15 @@ pub fn run(options: TuiOptions) -> Result<()> {
         }
         match event::read()? {
             Event::Key(key) => {
+                let input_started_at = Instant::now();
                 app.handle_key(key);
+                app.record_input_duration(input_started_at.elapsed());
                 redraw = true;
             }
             Event::Paste(value) => {
+                let input_started_at = Instant::now();
                 app.handle_paste(&value);
+                app.record_input_duration(input_started_at.elapsed());
                 redraw = true;
             }
             Event::Resize(_, _) => redraw = true,

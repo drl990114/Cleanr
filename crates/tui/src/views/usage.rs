@@ -84,12 +84,7 @@ pub(crate) fn render_usage(frame: &mut Frame<'_>, area: Rect, app: &mut Workbenc
     let detail_title = app.i18n.t("label_details");
 
     let candidates = app.plan.as_ref().map_or_else(
-        || {
-            app.entries
-                .iter()
-                .filter(|entry| !entry.rule_hits.is_empty())
-                .count()
-        },
+        || app.candidate_count_cached(),
         |plan| plan.summary.candidate_count,
     );
     let selected = app

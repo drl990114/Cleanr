@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     Confidence, EntryKind, GlobalScanKind, RuleHit, RuleMatchRole, RuleTrust, SafetyPolicy,
-    ScanEntry,
+    ScanEntry, merge_path_forest,
 };
 
 /// The schema identifier for the read-only local analysis contract.
@@ -39,6 +39,70 @@ impl ReportIntegrity {
             Self::Complete
         }
     }
+
+    /// Derive report integrity from both filesystem issues and scan-budget outcomes.
+    ///
+    /// Budget exhaustion is deliberately separate from [`ScanIssueCode`], so older readers do
+    /// not encounter an unknown enum variant when reading an additive analysis field.
+    #[must_use]
+    pub fn from_scan(issues: &[ScanIssue], budget_exceeded: &[ScanBudgetExceeded]) -> Self {
+        if budget_exceeded.is_empty() {
+            Self::from_issues(issues)
+        } else {
+            Self::Partial
+        }
+    }
+}
+
+/// A path-free record of a soft scan budget that was exhausted.
+///
+/// Budget hits make the result read-only. Values are expressed in stable base units so the
+/// evidence can be consumed without consulting the local configuration schema.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ScanBudgetExceeded {
+    EntryCount {
+        limit: u64,
+        observed: u64,
+    },
+    ElapsedTime {
+        limit_millis: u64,
+        observed_millis: u64,
+    },
+    EstimatedMemory {
+        limit_bytes: u64,
+        observed_bytes: u64,
+    },
+    IssueDetails {
+        limit: u64,
+        observed: u64,
+    },
+}
+
+/// Normalized soft scan limits in stable base units. Zero keeps a limit unlimited.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScanBudgetLimits {
+    pub entries: u64,
+    pub elapsed_millis: u64,
+    pub estimated_memory_bytes: u64,
+    pub issue_details: u64,
+}
+
+impl ScanBudgetLimits {
+    #[must_use]
+    pub const fn is_unlimited(self) -> bool {
+        self.entries == 0
+            && self.elapsed_millis == 0
+            && self.estimated_memory_bytes == 0
+            && self.issue_details == 0
+    }
+}
+
+/// Optional scan facts and local safety policy used while constructing analysis evidence.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AnalysisScanContext<'a> {
+    pub budget_exceeded: &'a [ScanBudgetExceeded],
+    pub safety_policy: Option<&'a SafetyPolicy>,
 }
 
 /// A structured local scan condition. Its `path` is deliberately not a remote DTO.
@@ -361,7 +425,9 @@ pub struct CandidateEvidence {
     pub rollback_method: String,
 }
 
-/// One existing named global location and the deduplicated root that covered it.
+/// One existing named global location and its naturally completed, deduplicated covering root.
+/// Structured scan issues still describe ignored or filesystem-boundary subtrees; this mapping
+/// alone does not assert that every descendant was read.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GlobalScanLocationEvidence {
     pub kind: GlobalScanKind,
@@ -370,7 +436,7 @@ pub struct GlobalScanLocationEvidence {
     pub scan_root: PathBuf,
 }
 
-/// Requested global categories and the existing named locations that were covered locally.
+/// Requested global categories and existing named locations reached by completed covering roots.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GlobalScanEvidence {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -385,12 +451,81 @@ impl GlobalScanEvidence {
     }
 }
 
+/// Suppress candidates whose most-specific named global location belongs only to a category the
+/// user did not request. Explicit roots remain user-owned overrides, and safety exclusions remain
+/// excluded rather than being weakened to suppression.
+pub fn suppress_unrequested_global_candidates(
+    report: &mut AnalysisReport,
+    explicit_roots: &[PathBuf],
+) {
+    let requested_kinds = report
+        .scan
+        .global
+        .requested_kinds
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if requested_kinds.is_empty() {
+        return;
+    }
+
+    for candidate in &mut report.candidates {
+        if explicit_roots
+            .iter()
+            .any(|root| candidate.local_path == *root || candidate.local_path.starts_with(root))
+        {
+            continue;
+        }
+        let max_depth = report
+            .scan
+            .global
+            .locations
+            .iter()
+            .filter(|location| {
+                candidate.local_path == location.local_path
+                    || candidate.local_path.starts_with(&location.local_path)
+            })
+            .map(|location| location.local_path.components().count())
+            .max();
+        let Some(max_depth) = max_depth else {
+            continue;
+        };
+        let belongs_to_requested_kind = report.scan.global.locations.iter().any(|location| {
+            location.local_path.components().count() == max_depth
+                && (candidate.local_path == location.local_path
+                    || candidate.local_path.starts_with(&location.local_path))
+                && requested_kinds.contains(&location.kind)
+        });
+        if belongs_to_requested_kind
+            || candidate.recommendation.state == RecommendationState::Excluded
+        {
+            continue;
+        }
+
+        candidate.recommendation.state = RecommendationState::Suppressed;
+        candidate.recommendation.initial_selected = false;
+        if !candidate
+            .recommendation
+            .codes
+            .contains(&DecisionCode::GlobalKindNotRequested)
+        {
+            candidate
+                .recommendation
+                .codes
+                .push(DecisionCode::GlobalKindNotRequested);
+            candidate.recommendation.codes.sort();
+        }
+    }
+}
+
 /// Local scan facts attached to an analysis report.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScanEvidence {
     pub roots: Vec<PathBuf>,
     pub integrity: ReportIntegrity,
     pub issues: Vec<ScanIssue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub budget_exceeded: Vec<ScanBudgetExceeded>,
     #[serde(default, skip_serializing_if = "GlobalScanEvidence::is_empty")]
     pub global: GlobalScanEvidence,
 }
@@ -445,6 +580,27 @@ pub fn build_analysis_report(
     issues: &[ScanIssue],
     policy: RecommendationPolicy,
 ) -> Result<AnalysisReport, RecommendationPolicyError> {
+    build_analysis_report_with_budget(
+        as_of,
+        completed_at,
+        scan_roots,
+        entries,
+        issues,
+        &[],
+        policy,
+    )
+}
+
+/// Build an immutable evidence report that records exhausted scan budgets.
+pub fn build_analysis_report_with_budget(
+    as_of: DateTime<Utc>,
+    completed_at: DateTime<Utc>,
+    scan_roots: Vec<PathBuf>,
+    entries: &[ScanEntry],
+    issues: &[ScanIssue],
+    budget_exceeded: &[ScanBudgetExceeded],
+    policy: RecommendationPolicy,
+) -> Result<AnalysisReport, RecommendationPolicyError> {
     build_analysis_report_inner(
         as_of,
         completed_at,
@@ -452,7 +608,10 @@ pub fn build_analysis_report(
         entries,
         issues,
         policy,
-        None,
+        AnalysisScanContext {
+            budget_exceeded,
+            safety_policy: None,
+        },
     )
 }
 
@@ -468,6 +627,30 @@ pub fn build_analysis_report_with_safety_policy(
     policy: RecommendationPolicy,
     safety_policy: &SafetyPolicy,
 ) -> Result<AnalysisReport, RecommendationPolicyError> {
+    build_analysis_report_with_scan_context(
+        as_of,
+        completed_at,
+        scan_roots,
+        entries,
+        issues,
+        policy,
+        AnalysisScanContext {
+            budget_exceeded: &[],
+            safety_policy: Some(safety_policy),
+        },
+    )
+}
+
+/// Build immutable evidence from filesystem issues, budget outcomes, and a local safety policy.
+pub fn build_analysis_report_with_scan_context(
+    as_of: DateTime<Utc>,
+    completed_at: DateTime<Utc>,
+    scan_roots: Vec<PathBuf>,
+    entries: &[ScanEntry],
+    issues: &[ScanIssue],
+    policy: RecommendationPolicy,
+    context: AnalysisScanContext<'_>,
+) -> Result<AnalysisReport, RecommendationPolicyError> {
     build_analysis_report_inner(
         as_of,
         completed_at,
@@ -475,7 +658,7 @@ pub fn build_analysis_report_with_safety_policy(
         entries,
         issues,
         policy,
-        Some(safety_policy),
+        context,
     )
 }
 
@@ -486,17 +669,17 @@ fn build_analysis_report_inner(
     entries: &[ScanEntry],
     issues: &[ScanIssue],
     policy: RecommendationPolicy,
-    safety_policy: Option<&SafetyPolicy>,
+    context: AnalysisScanContext<'_>,
 ) -> Result<AnalysisReport, RecommendationPolicyError> {
     policy.validate()?;
-    let integrity = ReportIntegrity::from_issues(issues);
+    let integrity = ReportIntegrity::from_scan(issues, context.budget_exceeded);
     let recommendation_context = RecommendationContext {
         scan_roots: &scan_roots,
         integrity,
         policy: &policy,
-        safety_policy,
+        safety_policy: context.safety_policy,
     };
-    let issue_scopes = IssueScopes::new(issues);
+    let issue_scopes = IssueScopes::new(issues, !context.budget_exceeded.is_empty());
     let activity_by_path = activity_by_path(entries, as_of, &issue_scopes);
     let mut candidates = entries
         .iter()
@@ -505,17 +688,25 @@ fn build_analysis_report_inner(
             let coverage = issue_scopes.coverage(&entry.path);
             let rules = resolve_rules(&entry.rule_hits);
             let activity = activity_by_path
-                .get(&entry.path)
+                .get(entry.path.as_path())
                 .cloned()
                 .unwrap_or_else(ActivityFacts::missing)
                 .into_evidence(coverage, as_of);
-            let recommendation = recommend_candidate(
+            let mut recommendation = recommend_candidate(
                 &entry.path,
                 &rules,
                 &activity,
                 coverage,
                 &recommendation_context,
             );
+            // Keep budget-limited evidence readable, but encode the read-only boundary with an
+            // existing fail-closed state as well as the additive budget ledger. Older v1 readers
+            // that ignore `budget_exceeded` already understand `Excluded` and therefore cannot
+            // promote one of these candidates through the analysis-backed plan builder.
+            if !context.budget_exceeded.is_empty() {
+                recommendation.state = RecommendationState::Excluded;
+                recommendation.initial_selected = false;
+            }
             CandidateEvidence {
                 id: CandidateId::new_random(),
                 local_path: entry.path.clone(),
@@ -543,6 +734,7 @@ fn build_analysis_report_inner(
             roots: scan_roots,
             integrity,
             issues: issues.to_vec(),
+            budget_exceeded: context.budget_exceeded.to_vec(),
             global: GlobalScanEvidence::default(),
         },
         candidates,
@@ -628,41 +820,76 @@ impl ActivityFacts {
     }
 }
 
-fn activity_by_path(
-    entries: &[ScanEntry],
+fn activity_by_path<'a>(
+    entries: &'a [ScanEntry],
     as_of: DateTime<Utc>,
     issue_scopes: &IssueScopes,
-) -> HashMap<PathBuf, ActivityFacts> {
+) -> HashMap<&'a Path, ActivityFacts> {
+    // As with tree fingerprints, only directories need parent links. Files can be folded directly
+    // into their immediate directory, and only rule-matched entries need a lookup result.
+    let directory_indices = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, entry)| (entry.kind == EntryKind::Directory).then_some(idx))
+        .collect::<Vec<_>>();
+    let directory_paths = directory_indices
+        .iter()
+        .map(|idx| entries[*idx].path.as_path())
+        .collect::<Vec<_>>();
+    let directory_by_path = directory_indices
+        .iter()
+        .enumerate()
+        .map(|(directory_idx, entry_idx)| (entries[*entry_idx].path.as_path(), directory_idx))
+        .collect::<HashMap<_, _>>();
     let mut activity = entries
         .iter()
-        .map(|entry| (entry.path.clone(), ActivityFacts::from_entry(entry, as_of)))
-        .collect::<HashMap<_, _>>();
-    let mut paths = activity.keys().cloned().collect::<Vec<_>>();
-    paths.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+        .map(|entry| ActivityFacts::from_entry(entry, as_of))
+        .collect::<Vec<_>>();
 
-    for path in paths {
-        let Some(facts) = activity.get(&path).cloned() else {
+    for (entry_idx, entry) in entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.kind != EntryKind::Directory)
+    {
+        let Some(parent_directory_idx) = entry
+            .path
+            .parent()
+            .and_then(|parent| directory_by_path.get(parent).copied())
+        else {
             continue;
         };
-        let Some(parent) = path.parent() else {
-            continue;
-        };
-        if let Some(parent_facts) = activity.get_mut(parent) {
-            parent_facts.absorb_descendant(&facts);
-        }
+        let parent_entry_idx = directory_indices[parent_directory_idx];
+        let child = activity[entry_idx].clone();
+        activity[parent_entry_idx].absorb_descendant(&child);
     }
 
-    for (path, facts) in &mut activity {
-        if issue_scopes.unknown || issue_scopes.affected_ancestors.contains(path) {
-            facts.has_missing_timestamp = true;
-        }
-    }
-    activity
+    merge_path_forest(
+        &directory_paths,
+        |_| true,
+        |parent_directory_idx, child_directory_idx| {
+            let parent_entry_idx = directory_indices[parent_directory_idx];
+            let child_entry_idx = directory_indices[child_directory_idx];
+            let child = activity[child_entry_idx].clone();
+            activity[parent_entry_idx].absorb_descendant(&child);
+        },
+    );
+
+    entries
+        .iter()
+        .zip(activity)
+        .filter(|(entry, _)| !entry.rule_hits.is_empty())
+        .map(|(entry, mut facts)| {
+            if issue_scopes.unknown || issue_scopes.affected_ancestors.contains(&entry.path) {
+                facts.has_missing_timestamp = true;
+            }
+            (entry.path.as_path(), facts)
+        })
+        .collect()
 }
 
 #[cfg(test)]
 fn candidate_coverage(path: &Path, issues: &[ScanIssue]) -> CandidateCoverage {
-    IssueScopes::new(issues).coverage(path)
+    IssueScopes::new(issues, false).coverage(path)
 }
 
 struct IssueScopes {
@@ -671,7 +898,7 @@ struct IssueScopes {
 }
 
 impl IssueScopes {
-    fn new(issues: &[ScanIssue]) -> Self {
+    fn new(issues: &[ScanIssue], budget_exceeded: bool) -> Self {
         let mut affected_ancestors = HashSet::new();
         for path in issues.iter().filter_map(|issue| issue.path.as_deref()) {
             affected_ancestors.extend(
@@ -681,7 +908,7 @@ impl IssueScopes {
             );
         }
         Self {
-            unknown: issue_with_unknown_scope(issues),
+            unknown: budget_exceeded || issue_with_unknown_scope(issues),
             affected_ancestors,
         }
     }
@@ -1076,6 +1303,32 @@ mod tests {
     }
 
     #[test]
+    fn zero_scan_budget_limits_are_unlimited() {
+        assert!(ScanBudgetLimits::default().is_unlimited());
+
+        for limits in [
+            ScanBudgetLimits {
+                entries: 1,
+                ..ScanBudgetLimits::default()
+            },
+            ScanBudgetLimits {
+                elapsed_millis: 1,
+                ..ScanBudgetLimits::default()
+            },
+            ScanBudgetLimits {
+                estimated_memory_bytes: 1,
+                ..ScanBudgetLimits::default()
+            },
+            ScanBudgetLimits {
+                issue_details: 1,
+                ..ScanBudgetLimits::default()
+            },
+        ] {
+            assert!(!limits.is_unlimited());
+        }
+    }
+
+    #[test]
     fn analysis_reports_without_global_coverage_still_deserialize() {
         let as_of = Utc::now();
         let mut report = build_analysis_report(
@@ -1106,6 +1359,70 @@ mod tests {
             serde_json::from_value(value).expect("deserialize old analysis report");
 
         assert_eq!(restored.scan.global, GlobalScanEvidence::default());
+        assert!(restored.scan.budget_exceeded.is_empty());
+    }
+
+    #[test]
+    fn exhausted_budget_is_path_free_and_forces_read_only_evidence() {
+        let as_of = Utc::now();
+        let budget = ScanBudgetExceeded::EstimatedMemory {
+            limit_bytes: 512,
+            observed_bytes: 640,
+        };
+        let entries = [entry(
+            "/repo/cache",
+            Some(as_of - Duration::days(100)),
+            vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+        )];
+        let report = build_analysis_report_with_budget(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/repo")],
+            &entries,
+            &[],
+            std::slice::from_ref(&budget),
+            RecommendationPolicy::default(),
+        )
+        .expect("valid policy");
+
+        assert_eq!(report.scan.integrity, ReportIntegrity::Partial);
+        assert_eq!(report.scan.budget_exceeded, vec![budget]);
+        assert_eq!(report.candidates[0].coverage, CandidateCoverage::Unknown);
+        assert_eq!(
+            report.candidates[0].recommendation.state,
+            RecommendationState::Excluded
+        );
+        assert!(!report.candidates[0].recommendation.initial_selected);
+        assert!(
+            report.candidates[0]
+                .recommendation
+                .codes
+                .contains(&DecisionCode::CandidateCoverageUnknown)
+        );
+
+        let budget_json = serde_json::to_value(&report.scan.budget_exceeded)
+            .expect("serialize scan budget evidence");
+        assert_eq!(budget_json[0]["kind"], "estimated-memory");
+        assert!(budget_json[0].get("path").is_none());
+
+        // Simulate a v1 consumer that ignores the additive budget field. The established
+        // `Excluded` state remains enough to prevent an explicitly selected candidate from
+        // becoming a cleanup item, so downgrade behavior fails closed rather than silently
+        // turning truncated evidence into an executable plan.
+        let mut legacy_view = report;
+        legacy_view.scan.budget_exceeded.clear();
+        let mut selection = UserSelection::default();
+        selection.select(legacy_view.candidates[0].id.clone());
+        let plan = crate::build_cleanup_plan_from_analysis(
+            vec![PathBuf::from("/repo")],
+            Vec::new(),
+            &entries,
+            &legacy_view,
+            &selection,
+            &crate::SafetyPolicy::default(),
+        )
+        .expect("legacy view keeps the supported v1 schema");
+        assert!(plan.items.is_empty());
     }
 
     #[test]
@@ -1252,6 +1569,184 @@ mod tests {
                 .recommendation
                 .codes
                 .contains(&DecisionCode::RecentObservedContent)
+        );
+    }
+
+    #[test]
+    fn activity_propagation_is_order_independent_across_multiple_roots() {
+        let as_of = Utc::now();
+        let entries = vec![
+            entry(
+                "/first",
+                Some(as_of - Duration::days(100)),
+                vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+            ),
+            entry(
+                "/first/nested",
+                Some(as_of - Duration::days(80)),
+                Vec::new(),
+            ),
+            ScanEntry {
+                path: PathBuf::from("/first/nested/file"),
+                kind: EntryKind::File,
+                size_bytes: 1,
+                modified_at: Some(as_of - Duration::days(1)),
+                rule_hits: Vec::new(),
+            },
+            entry(
+                "/second",
+                Some(as_of - Duration::days(50)),
+                vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+            ),
+            ScanEntry {
+                path: PathBuf::from("/second/file"),
+                kind: EntryKind::File,
+                size_bytes: 1,
+                modified_at: Some(as_of - Duration::days(40)),
+                rule_hits: Vec::new(),
+            },
+        ];
+        let reversed = entries.iter().cloned().rev().collect::<Vec<_>>();
+        let activities = |entries: &[ScanEntry]| {
+            build_analysis_report(
+                as_of,
+                as_of,
+                vec![PathBuf::from("/first"), PathBuf::from("/second")],
+                entries,
+                &[],
+                RecommendationPolicy::default(),
+            )
+            .expect("valid policy")
+            .candidates
+            .into_iter()
+            .map(|candidate| (candidate.local_path, candidate.activity))
+            .collect::<Vec<_>>()
+        };
+
+        let forward = activities(&entries);
+        let backward = activities(&reversed);
+
+        assert_eq!(forward, backward);
+        assert_eq!(forward[0].1.age_days, Some(1));
+        assert_eq!(forward[0].1.source, ActivitySource::Descendant);
+        assert_eq!(forward[1].1.age_days, Some(40));
+        assert_eq!(forward[1].1.source, ActivitySource::Descendant);
+    }
+
+    #[test]
+    fn missing_immediate_parent_stops_activity_but_preserves_partial_integrity() {
+        let as_of = Utc::now();
+        let root_modified_at = as_of - Duration::days(100);
+        let report = build_analysis_report(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/repo")],
+            &[
+                entry(
+                    "/repo/cache",
+                    Some(root_modified_at),
+                    vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+                ),
+                ScanEntry {
+                    path: PathBuf::from("/repo/cache/missing/new-file"),
+                    kind: EntryKind::File,
+                    size_bytes: 1,
+                    modified_at: Some(as_of - Duration::days(1)),
+                    rule_hits: Vec::new(),
+                },
+            ],
+            &[ScanIssue {
+                code: ScanIssueCode::MetadataUnavailable,
+                path: Some(PathBuf::from("/repo/cache/missing")),
+            }],
+            RecommendationPolicy::default(),
+        )
+        .expect("valid policy");
+
+        let candidate = &report.candidates[0];
+        assert_eq!(report.scan.integrity, ReportIntegrity::Partial);
+        assert_eq!(candidate.coverage, CandidateCoverage::Partial);
+        assert_eq!(
+            candidate.activity.latest_observed_modified_at,
+            Some(root_modified_at)
+        );
+        assert_eq!(candidate.activity.source, ActivitySource::Own);
+        assert_eq!(candidate.activity.status, ActivityStatus::Partial);
+        assert_eq!(candidate.activity.effective_modified_at, None);
+        assert_eq!(candidate.recommendation.state, RecommendationState::Review);
+    }
+
+    #[test]
+    fn unrequested_global_candidates_use_the_most_specific_named_location() {
+        let as_of = Utc::now();
+        let cache_root = PathBuf::from("/cache");
+        let pnpm = cache_root.join("pnpm");
+        let mut report = build_analysis_report(
+            as_of,
+            as_of,
+            vec![cache_root.clone()],
+            &[entry(
+                pnpm.to_str().expect("UTF-8 test path"),
+                Some(as_of - Duration::days(100)),
+                vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+            )],
+            &[],
+            RecommendationPolicy::default(),
+        )
+        .expect("valid policy");
+        report.scan.global = GlobalScanEvidence {
+            requested_kinds: vec![GlobalScanKind::AppCaches],
+            locations: vec![
+                GlobalScanLocationEvidence {
+                    kind: GlobalScanKind::AppCaches,
+                    label: "Application caches".to_string(),
+                    local_path: cache_root.clone(),
+                    scan_root: cache_root.clone(),
+                },
+                GlobalScanLocationEvidence {
+                    kind: GlobalScanKind::DeveloperCaches,
+                    label: "pnpm cache".to_string(),
+                    local_path: pnpm.clone(),
+                    scan_root: cache_root,
+                },
+            ],
+        };
+        assert_eq!(
+            report.candidates[0].recommendation.state,
+            RecommendationState::Preselected
+        );
+        let mut explicit = report.clone();
+        let mut excluded = report.clone();
+        excluded.candidates[0].recommendation.state = RecommendationState::Excluded;
+        excluded.candidates[0].recommendation.initial_selected = false;
+        let excluded_recommendation = excluded.candidates[0].recommendation.clone();
+
+        suppress_unrequested_global_candidates(&mut report, &[]);
+        suppress_unrequested_global_candidates(&mut report, &[]);
+
+        let recommendation = &report.candidates[0].recommendation;
+        assert_eq!(recommendation.state, RecommendationState::Suppressed);
+        assert!(!recommendation.initial_selected);
+        assert_eq!(
+            recommendation
+                .codes
+                .iter()
+                .filter(|code| **code == DecisionCode::GlobalKindNotRequested)
+                .count(),
+            1
+        );
+
+        suppress_unrequested_global_candidates(&mut explicit, &[pnpm]);
+        assert_eq!(
+            explicit.candidates[0].recommendation.state,
+            RecommendationState::Preselected
+        );
+        assert!(explicit.candidates[0].recommendation.initial_selected);
+
+        suppress_unrequested_global_candidates(&mut excluded, &[]);
+        assert_eq!(
+            excluded.candidates[0].recommendation,
+            excluded_recommendation
         );
     }
 

@@ -1,24 +1,24 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, VecDeque},
     path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver},
     },
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Utc};
 use cleanr_config::{Config, default_config_path, default_state_dir};
 use cleanr_core::{
-    AnalysisReport, CandidateId, CleanupPlan, EntryKind, ExecutionManifest, RecommendationPolicy,
-    RecommendationPolicyError, RecommendationState, SafetyPolicy, ScanEntry, ScanIssue,
-    ScanRequest, ScanSummary, UserSelection, build_analysis_report_with_safety_policy,
-    build_cleanup_plan_from_analysis,
+    AnalysisReport, AnalysisScanContext, CandidateId, CleanupPlan, ExecutionManifest,
+    GlobalScanEvidence, RecommendationPolicy, RecommendationPolicyError, RecommendationState,
+    SafetyPolicy, ScanBudgetExceeded, ScanEntry, ScanIssue, ScanRequest, ScanSummary,
+    UserSelection, build_analysis_report_with_scan_context, build_cleanup_plan_from_analysis,
+    suppress_unrequested_global_candidates,
 };
-use cleanr_fs::{
-    NO_GLOBAL_SCAN_ROOTS, SCAN_CANCELLED, ScanOptions, ScanPhase, ScanProgress, resolve_scan_roots,
-};
+use cleanr_fs::ScanOptions;
 use cleanr_i18n::I18n;
 use cleanr_plugin_api::PluginDiagnostic;
 use cleanr_rules::RuleRegistry;
@@ -36,8 +36,10 @@ use crate::{
         palette_command_invocation, parse_slash_command,
     },
     effects::{
-        OperationEvent, OperationKind, TaskEvent, export_cleanup_plan, load_history, save_config,
-        spawn_cleanup, spawn_restore, spawn_scan,
+        OperationEvent, OperationKind, PreparedPlanning, PreparedScan, ScanDiagnostics,
+        ScanFailure, ScanPreparation, ScanSample, ScanStage, ScanTaskProgress, TaskEvent,
+        build_usage_projection, export_cleanup_plan, load_history, save_config, spawn_cleanup,
+        spawn_restore, spawn_scan,
     },
     theme::Theme,
     views::format_bytes,
@@ -70,10 +72,49 @@ pub(crate) enum View {
     Restore,
 }
 
+const DURATION_SAMPLE_CAPACITY: usize = 128;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DurationRecorder {
+    samples: VecDeque<Duration>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DurationSummary {
+    pub p95: Duration,
+    pub max: Duration,
+}
+
+impl DurationRecorder {
+    pub(crate) fn record(&mut self, duration: Duration) {
+        if self.samples.len() == DURATION_SAMPLE_CAPACITY {
+            self.samples.pop_front();
+        }
+        self.samples.push_back(duration);
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.samples.clear();
+    }
+
+    pub(crate) fn summary(&self) -> DurationSummary {
+        if self.samples.is_empty() {
+            return DurationSummary::default();
+        }
+        let mut sorted = self.samples.iter().copied().collect::<Vec<_>>();
+        sorted.sort_unstable();
+        let p95_index = sorted.len().saturating_mul(95).div_ceil(100) - 1;
+        DurationSummary {
+            p95: sorted[p95_index],
+            max: *sorted.last().expect("non-empty duration samples"),
+        }
+    }
+}
+
 pub struct Workbench {
     pub(crate) roots: Vec<PathBuf>,
     pub(crate) config: Config,
-    pub(crate) registry: RuleRegistry,
+    pub(crate) registry: Arc<RuleRegistry>,
     pub(crate) i18n: I18n,
     pub(crate) theme: Theme,
     pub(crate) state_dir: PathBuf,
@@ -92,6 +133,12 @@ pub struct Workbench {
     pub(crate) scan_summary: ScanSummary,
     pub(crate) scan_as_of: DateTime<Utc>,
     pub(crate) scan_issues: Vec<ScanIssue>,
+    pub(crate) scan_budget_exceeded: Vec<ScanBudgetExceeded>,
+    pub(crate) scan_explicit_roots: Vec<PathBuf>,
+    pub(crate) scan_global_evidence: GlobalScanEvidence,
+    pub(crate) candidate_count: usize,
+    pub(crate) candidate_entry_indices: Vec<usize>,
+    pub(crate) candidate_projection_entries_len: usize,
     /// One immutable report per completed scan. Candidate IDs remain stable while the user edits
     /// selection and rebuilds a plan.
     pub(crate) analysis: Option<AnalysisReport>,
@@ -102,8 +149,19 @@ pub struct Workbench {
     pub(crate) execution_manifests: Vec<cleanr_core::ExecutionManifest>,
     pub(crate) restore_manifests: Vec<cleanr_core::RestoreManifest>,
     pub(crate) scan_rx: Option<Receiver<TaskEvent>>,
+    pub(crate) scan_sample_rx: Option<Receiver<ScanSample>>,
     pub(crate) scan_cancel: Option<Arc<AtomicBool>>,
-    pub(crate) scan_progress: Option<ScanProgress>,
+    pub(crate) scan_job_id: Option<u64>,
+    pub(crate) next_scan_job_id: u64,
+    pub(crate) scan_cancel_requested: bool,
+    pub(crate) scan_progress: Option<ScanTaskProgress>,
+    pub(crate) scan_started_at: Option<Instant>,
+    pub(crate) scan_phase_started_at: Option<Instant>,
+    pub(crate) scan_last_progress_at: Option<Instant>,
+    pub(crate) scan_stall_reported_seconds: Option<u64>,
+    pub(crate) scan_diagnostics: Option<ScanDiagnostics>,
+    pub(crate) frame_durations: DurationRecorder,
+    pub(crate) input_durations: DurationRecorder,
     pub(crate) operation_rx: Option<Receiver<OperationEvent>>,
     pub(crate) operation_kind: Option<OperationKind>,
     /// Stable, size-sorted indices used by the usage view. Keeping this outside the renderer

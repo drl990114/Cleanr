@@ -12,7 +12,7 @@ impl Workbench {
         Self {
             roots,
             config,
-            registry,
+            registry: Arc::new(registry),
             i18n,
             theme,
             state_dir: default_state_dir(),
@@ -28,6 +28,12 @@ impl Workbench {
             scan_summary: ScanSummary::default(),
             scan_as_of: Utc::now(),
             scan_issues: Vec::new(),
+            scan_budget_exceeded: Vec::new(),
+            scan_explicit_roots: Vec::new(),
+            scan_global_evidence: GlobalScanEvidence::default(),
+            candidate_count: 0,
+            candidate_entry_indices: Vec::new(),
+            candidate_projection_entries_len: 0,
             analysis: None,
             candidate_ids_by_path: HashMap::new(),
             selection: UserSelection::default(),
@@ -36,8 +42,19 @@ impl Workbench {
             execution_manifests: Vec::new(),
             restore_manifests: Vec::new(),
             scan_rx: None,
+            scan_sample_rx: None,
             scan_cancel: None,
+            scan_job_id: None,
+            next_scan_job_id: 0,
+            scan_cancel_requested: false,
             scan_progress: None,
+            scan_started_at: None,
+            scan_phase_started_at: None,
+            scan_last_progress_at: None,
+            scan_stall_reported_seconds: None,
+            scan_diagnostics: None,
+            frame_durations: DurationRecorder::default(),
+            input_durations: DurationRecorder::default(),
             operation_rx: None,
             operation_kind: None,
             usage_order: Vec::new(),
@@ -102,5 +119,13 @@ impl Workbench {
     #[must_use]
     pub fn entries(&self) -> &[ScanEntry] {
         &self.entries
+    }
+
+    pub(crate) fn record_frame_duration(&mut self, duration: Duration) {
+        self.frame_durations.record(duration);
+    }
+
+    pub(crate) fn record_input_duration(&mut self, duration: Duration) {
+        self.input_durations.record(duration);
     }
 }

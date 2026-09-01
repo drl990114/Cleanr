@@ -39,7 +39,7 @@ pub(crate) fn render_scan_progress(
     frame.render_widget(panel, panel_area);
 
     let progress = app.scan_progress.as_ref();
-    let phase = progress.map_or(ScanPhase::Discovering, |value| value.phase);
+    let stage = progress.map_or(ScanStage::Resolving, |value| value.stage);
     let progress_label = scan_progress_label(progress, app);
 
     let rows = Layout::default()
@@ -65,7 +65,7 @@ pub(crate) fn render_scan_progress(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            app.scan_phase_label(phase),
+            app.scan_stage_label(stage),
             Style::default()
                 .fg(app.theme.fg)
                 .add_modifier(Modifier::BOLD),
@@ -81,7 +81,7 @@ pub(crate) fn render_scan_progress(
             .alignment(ratatui::layout::Alignment::Right),
         heading[1],
     );
-    frame.render_widget(Paragraph::new(scan_stage_line(phase, app)), rows[1]);
+    frame.render_widget(Paragraph::new(scan_stage_line(stage, app)), rows[1]);
     frame.render_widget(
         Paragraph::new(activity_bar_line(
             rows[2].width as usize,
@@ -99,6 +99,7 @@ pub(crate) fn render_scan_progress(
                 &[
                     ("size", format_bytes(value.bytes_scanned)),
                     ("errors", value.errors.to_string()),
+                    ("elapsed", app.scan_elapsed_label()),
                 ],
             )
         },
@@ -113,16 +114,20 @@ pub(crate) fn render_scan_progress(
     let current_path = progress
         .and_then(|value| value.current_path.as_ref())
         .map_or_else(
-            || {
-                if phase == ScanPhase::Aggregating {
-                    app.i18n.t("scan_phase_aggregating")
-                } else {
-                    app.i18n.t("scan_preparing")
-                }
-            },
+            || app.scan_stage_label(stage),
             |path| path.display().to_string(),
         );
-    let current_path_label = format!("{}  ", app.i18n.t("scan_current_path"));
+    let current_path_label = format!(
+        "{}  ",
+        if progress
+            .and_then(|value| value.current_path.as_ref())
+            .is_some()
+        {
+            app.i18n.t("scan_current_path")
+        } else {
+            app.i18n.t("scan_current_stage")
+        }
+    );
     let current_path_width = rows[4]
         .width
         .saturating_sub(u16::try_from(display_width(&current_path_label)).unwrap_or(u16::MAX))
@@ -145,15 +150,11 @@ pub(crate) fn render_scan_progress(
     );
 }
 
-fn scan_progress_label(progress: Option<&cleanr_fs::ScanProgress>, app: &Workbench) -> String {
+fn scan_progress_label(progress: Option<&ScanTaskProgress>, app: &Workbench) -> String {
     progress.map_or_else(
         || app.i18n.t("scan_preparing"),
-        |value| match value.phase {
-            ScanPhase::Discovering => app.i18n.format(
-                "scan_progress_discovered",
-                &[("total", value.entries_total.to_string())],
-            ),
-            ScanPhase::Scanning => {
+        |value| match value.stage {
+            ScanStage::Scanning => {
                 if value.entries_total == 0 {
                     app.i18n.format(
                         "scan_progress_unbounded",
@@ -169,19 +170,28 @@ fn scan_progress_label(progress: Option<&cleanr_fs::ScanProgress>, app: &Workben
                     )
                 }
             }
-            ScanPhase::Aggregating => app.i18n.t("scan_progress_aggregating"),
+            ScanStage::Aggregating => app.i18n.t("scan_progress_aggregating"),
+            stage => app.scan_stage_label(stage),
         },
     )
 }
 
-fn scan_stage_line(phase: ScanPhase, app: &Workbench) -> Line<'static> {
-    let stages = [ScanPhase::Scanning, ScanPhase::Aggregating];
-    let current = stage_index(phase);
+fn scan_stage_line(stage: ScanStage, app: &Workbench) -> Line<'static> {
+    let stages = [
+        ScanStage::Resolving,
+        ScanStage::Scanning,
+        ScanStage::Aggregating,
+        ScanStage::Rules,
+        ScanStage::Evidence,
+        ScanStage::Plan,
+        ScanStage::Usage,
+    ];
+    let current = stage_index(stage);
     let mut spans = Vec::new();
 
     for (index, stage) in stages.into_iter().enumerate() {
         if index > 0 {
-            spans.push(Span::styled(" ── ", Style::default().fg(app.theme.border)));
+            spans.push(Span::styled(" › ", Style::default().fg(app.theme.border)));
         }
         let style = if index < current {
             Style::default().fg(app.theme.ok)
@@ -200,7 +210,7 @@ fn scan_stage_line(phase: ScanPhase, app: &Workbench) -> Line<'static> {
             "○"
         };
         spans.push(Span::styled(
-            format!("{marker} {}", app.scan_phase_label(stage)),
+            format!("{marker} {}", scan_stage_short_label(stage, app)),
             style,
         ));
     }
@@ -208,11 +218,29 @@ fn scan_stage_line(phase: ScanPhase, app: &Workbench) -> Line<'static> {
     Line::from(spans)
 }
 
-fn stage_index(phase: ScanPhase) -> usize {
-    match phase {
-        ScanPhase::Discovering | ScanPhase::Scanning => 0,
-        ScanPhase::Aggregating => 1,
+fn stage_index(stage: ScanStage) -> usize {
+    match stage {
+        ScanStage::Resolving => 0,
+        ScanStage::Scanning => 1,
+        ScanStage::Aggregating => 2,
+        ScanStage::Rules => 3,
+        ScanStage::Evidence => 4,
+        ScanStage::Plan => 5,
+        ScanStage::Usage => 6,
     }
+}
+
+fn scan_stage_short_label(stage: ScanStage, app: &Workbench) -> String {
+    let key = match stage {
+        ScanStage::Resolving => "scan_stage_resolving",
+        ScanStage::Scanning => "scan_stage_scanning",
+        ScanStage::Aggregating => "scan_stage_aggregating",
+        ScanStage::Rules => "scan_stage_rules",
+        ScanStage::Evidence => "scan_stage_evidence",
+        ScanStage::Plan => "scan_stage_plan",
+        ScanStage::Usage => "scan_stage_usage",
+    };
+    app.i18n.t(key)
 }
 
 fn activity_bar_line(width: usize, animation_tick: u64, theme: Theme) -> Line<'static> {
@@ -259,15 +287,11 @@ pub(crate) fn render_candidates(
     app: &mut Workbench,
     wide: bool,
 ) {
-    let item_count = app.plan.as_ref().map_or_else(
-        || {
-            app.entries
-                .iter()
-                .filter(|entry| !entry.rule_hits.is_empty())
-                .count()
-        },
-        |plan| plan.items.len(),
-    );
+    app.rebuild_candidate_projection_if_stale();
+    let item_count = app
+        .plan
+        .as_ref()
+        .map_or_else(|| app.candidate_count, |plan| plan.items.len());
     let viewport_height = area.height.saturating_sub(1).max(1) as usize;
     let window = visible_list_window(&mut app.list_state, item_count, viewport_height);
     let has_scrollbar = item_count > viewport_height;
@@ -287,11 +311,11 @@ pub(crate) fn render_candidates(
             })
             .collect()
     } else {
-        app.entries
+        app.candidate_entry_indices
             .iter()
-            .filter(|entry| !entry.rule_hits.is_empty())
             .skip(window.start)
             .take(window.len())
+            .filter_map(|entry_index| app.entries.get(*entry_index))
             .map(|entry| {
                 ListItem::new(scan_candidate_line(
                     entry,

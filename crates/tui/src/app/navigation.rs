@@ -8,10 +8,7 @@ impl Workbench {
                 if let Some(plan) = &self.plan {
                     return plan.items.len();
                 }
-                self.entries
-                    .iter()
-                    .filter(|e| !e.rule_hits.is_empty())
-                    .count()
+                self.candidate_count_cached()
             }
             View::Languages => self.i18n.packs().len(),
             View::Rules => self
@@ -28,48 +25,35 @@ impl Workbench {
     }
 
     pub(crate) fn rebuild_usage_order(&mut self) {
-        let entries = &self.entries;
-        let mut order = Vec::new();
+        let projection = build_usage_projection(&self.entries, &self.roots);
+        self.usage_order = projection.order;
+        self.usage_max_size = projection.max_size;
+        self.usage_descendant_counts = projection.descendant_counts;
+    }
 
-        for root in &self.roots {
-            let root_path = root.as_path();
-            let mut children = entries
+    pub(crate) fn candidate_count_cached(&self) -> usize {
+        if self.candidate_projection_entries_len == self.entries.len() {
+            self.candidate_count
+        } else {
+            self.entries
                 .iter()
-                .enumerate()
-                .filter(|(_, entry)| entry.path.parent() == Some(root_path))
-                .map(|(index, _)| index)
-                .collect::<Vec<_>>();
-            children.sort_by_key(|index| std::cmp::Reverse(entries[*index].size_bytes));
-            order.extend(children);
+                .filter(|entry| !entry.rule_hits.is_empty())
+                .count()
         }
+    }
 
-        if order.is_empty() {
-            order.extend(0..entries.len());
-            order.sort_by_key(|index| std::cmp::Reverse(entries[*index].size_bytes));
-            order.truncate(100);
+    pub(crate) fn rebuild_candidate_projection_if_stale(&mut self) {
+        if self.candidate_projection_entries_len == self.entries.len() {
+            return;
         }
-
-        self.usage_max_size = order
-            .iter()
-            .map(|index| entries[*index].size_bytes)
-            .max()
-            .unwrap_or(0);
-        let usage_positions = order
+        self.candidate_entry_indices = self
+            .entries
             .iter()
             .enumerate()
-            .filter(|(_, entry_index)| entries[**entry_index].kind == EntryKind::Directory)
-            .map(|(position, entry_index)| (entries[*entry_index].path.as_path(), position))
-            .collect::<HashMap<_, _>>();
-        let mut descendant_counts = vec![0usize; order.len()];
-        for entry in entries {
-            for ancestor in entry.path.ancestors().skip(1) {
-                if let Some(position) = usage_positions.get(ancestor) {
-                    descendant_counts[*position] = descendant_counts[*position].saturating_add(1);
-                }
-            }
-        }
-        self.usage_order = order;
-        self.usage_descendant_counts = descendant_counts;
+            .filter_map(|(index, entry)| (!entry.rule_hits.is_empty()).then_some(index))
+            .collect();
+        self.candidate_count = self.candidate_entry_indices.len();
+        self.candidate_projection_entries_len = self.entries.len();
     }
 
     pub(crate) fn reset_list_selection(&mut self) {
@@ -197,6 +181,10 @@ impl Workbench {
     }
 
     pub(crate) fn toggle_scan_selection(&mut self) {
+        if self.scan_is_budget_limited() {
+            self.reject_budget_limited_action();
+            return;
+        }
         if self.plan.is_none() && !self.entries.is_empty() {
             self.build_plan();
         }
@@ -237,6 +225,10 @@ impl Workbench {
     pub(crate) fn toggle_all_scan_selection(&mut self) {
         if self.view != View::Scan {
             self.status = self.i18n.t("status_select_scan_only");
+            return;
+        }
+        if self.scan_is_budget_limited() {
+            self.reject_budget_limited_action();
             return;
         }
         if self.plan.is_none() && !self.entries.is_empty() {

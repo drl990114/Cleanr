@@ -65,6 +65,16 @@ fn get_value(config: &Config, key: &str) -> Result<String> {
     let parts: Vec<&str> = key.split('.').collect();
     match parts.as_slice() {
         ["scan", "stay_on_filesystem"] => Ok(config.scan.stay_on_filesystem.to_string()),
+        ["scan", "budgets", "max_entries"] => Ok(config.scan.budgets.max_entries.to_string()),
+        ["scan", "budgets", "max_elapsed_seconds"] => {
+            Ok(config.scan.budgets.max_elapsed_seconds.to_string())
+        }
+        ["scan", "budgets", "max_estimated_memory_mib"] => {
+            Ok(config.scan.budgets.max_estimated_memory_mib.to_string())
+        }
+        ["scan", "budgets", "max_issue_details"] => {
+            Ok(config.scan.budgets.max_issue_details.to_string())
+        }
         ["cleanup", "default_action"] => Ok(config.cleanup.default_action.to_string()),
         ["cleanup", "require_confirm"] => Ok(config.cleanup.require_confirm.to_string()),
         ["recommendations", "preselect_after_days"] => {
@@ -82,6 +92,18 @@ fn apply_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
         ["scan", "stay_on_filesystem"] => {
             config.scan.stay_on_filesystem = parse_bool(value)?;
         }
+        ["scan", "budgets", "max_entries"] => {
+            config.scan.budgets.max_entries = parse_budget(value, key)?;
+        }
+        ["scan", "budgets", "max_elapsed_seconds"] => {
+            config.scan.budgets.max_elapsed_seconds = parse_budget(value, key)?;
+        }
+        ["scan", "budgets", "max_estimated_memory_mib"] => {
+            config.scan.budgets.max_estimated_memory_mib = parse_budget(value, key)?;
+        }
+        ["scan", "budgets", "max_issue_details"] => {
+            config.scan.budgets.max_issue_details = parse_budget(value, key)?;
+        }
         ["cleanup", "default_action"] => {
             config.cleanup.default_action = value.parse::<CleanupAction>()?;
         }
@@ -98,6 +120,12 @@ fn apply_value(config: &mut Config, key: &str, value: &str) -> Result<()> {
         _ => bail!("unknown config key: {key}"),
     }
     Ok(())
+}
+
+fn parse_budget(value: &str, key: &str) -> Result<u64> {
+    value
+        .parse::<u64>()
+        .with_context(|| format!("{key} must be a non-negative integer (0 means unlimited)"))
 }
 
 fn parse_bool(value: &str) -> Result<bool> {
@@ -133,6 +161,10 @@ mod tests {
             ("recommendations.preselect_after_days", "120", "120"),
             ("i18n.locale", "zh-CN", "zh-CN"),
             ("ui.theme", "dark", "dark"),
+            ("scan.budgets.max_entries", "1000", "1000"),
+            ("scan.budgets.max_elapsed_seconds", "30", "30"),
+            ("scan.budgets.max_estimated_memory_mib", "256", "256"),
+            ("scan.budgets.max_issue_details", "100", "100"),
         ] {
             apply_value(&mut config, key, value).expect(key);
             assert_eq!(get_value(&config, key).expect(key), expected);
@@ -140,6 +172,7 @@ mod tests {
 
         assert!(apply_value(&mut config, "missing.key", "value").is_err());
         assert!(get_value(&config, "missing.key").is_err());
+        assert!(apply_value(&mut config, "scan.budgets.max_entries", "-1").is_err());
     }
 
     #[test]
@@ -170,10 +203,33 @@ mod tests {
         assert!(set(Some(missing.clone()), "ui.theme", "neon").is_err());
         assert!(!missing.exists());
 
+        assert!(
+            set(
+                Some(missing.clone()),
+                "scan.budgets.max_entries",
+                &u64::MAX.to_string(),
+            )
+            .is_err()
+        );
+        assert!(!missing.exists());
+
         let existing = temp.path().join("existing.toml");
         Config::default().save_to(&existing).expect("seed config");
         let before = std::fs::read_to_string(&existing).expect("before");
         assert!(set(Some(existing.clone()), "cleanup.default_action", "delete").is_err());
-        assert_eq!(std::fs::read_to_string(existing).expect("after"), before);
+        assert_eq!(std::fs::read_to_string(&existing).expect("after"), before);
+
+        assert!(
+            set(
+                Some(existing.clone()),
+                "scan.budgets.max_elapsed_seconds",
+                &u64::MAX.to_string(),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(existing).expect("after overflow"),
+            before
+        );
     }
 }

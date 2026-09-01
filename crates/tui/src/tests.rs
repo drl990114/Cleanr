@@ -1,7 +1,11 @@
 use super::*;
 use crate::{
-    app::{ConfirmChoice, Mode, View},
+    app::{ConfirmChoice, DurationRecorder, Mode, View},
     commands::{ActionRequest, CleanupIntent, palette_command_invocation},
+    effects::{
+        PreparedScan, ScanDiagnostics, ScanFailure, ScanStage, ScanTaskProgress, TaskEvent,
+        build_usage_projection,
+    },
     views::{
         bottom_bounded_rect, centered_bounded_rect, command_cursor_position, command_input_view,
         display_width, fluid_content_rect, ime_guard_position, render, scan_loading_bar_sample,
@@ -10,11 +14,12 @@ use crate::{
 };
 use cleanr_config::Config;
 use cleanr_core::{
-    Confidence, EXECUTION_SCHEMA_VERSION, EntryKind, ExecutionItem, ExecutionManifest,
-    ExecutionStatus, ExecutionSummary, GlobalScanKind, PlannedAction, RollbackReceipt, RuleHit,
-    RuleTrust, ScanEntry, ScanRequest,
+    Confidence, DecisionCode, EXECUTION_SCHEMA_VERSION, EntryKind, ExecutionItem,
+    ExecutionManifest, ExecutionStatus, ExecutionSummary, GlobalScanKind, PlannedAction,
+    RecommendationState, RollbackReceipt, RuleHit, RuleTrust, ScanBudgetExceeded, ScanEntry,
+    ScanRequest,
 };
-use cleanr_fs::{ScanOptions, ScanPhase, ScanProgress, scan_paths};
+use cleanr_fs::{GlobalScanRoot, ResolvedScanRoots, ScanOptions, global_scan_evidence, scan_paths};
 use cleanr_i18n::{I18n, builtin_language_packs};
 use cleanr_rules::RuleRegistry;
 use cleanr_tasks::{FakeTrashExecutor, write_execution_manifest};
@@ -26,7 +31,14 @@ use ratatui::{
     style::Color,
     widgets::ListState,
 };
-use std::{collections::BTreeMap, fs, path::PathBuf, thread, time::Duration};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicBool, mpsc},
+    thread,
+    time::{Duration, Instant},
+};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent {
@@ -35,6 +47,21 @@ fn key(code: KeyCode) -> KeyEvent {
         kind: KeyEventKind::Press,
         state: crossterm::event::KeyEventState::empty(),
     }
+}
+
+#[test]
+fn duration_recorder_keeps_latest_128_samples_and_reports_p95_and_max() {
+    let mut recorder = DurationRecorder::default();
+    for millis in 1..=130 {
+        recorder.record(Duration::from_millis(millis));
+    }
+
+    let summary = recorder.summary();
+    assert_eq!(summary.p95, Duration::from_millis(124));
+    assert_eq!(summary.max, Duration::from_millis(130));
+
+    recorder.clear();
+    assert_eq!(recorder.summary(), Default::default());
 }
 
 fn ctrl(code: KeyCode) -> KeyEvent {
@@ -392,8 +419,8 @@ fn chinese_scan_progress_uses_refined_thin_rail_layout() {
         Theme::light(),
     );
     app.dispatch(ActionRequest::Scan(ScanRequest::default()));
-    app.scan_progress = Some(ScanProgress {
-        phase: ScanPhase::Scanning,
+    app.scan_progress = Some(ScanTaskProgress {
+        stage: ScanStage::Scanning,
         entries_total: 0,
         entries_scanned: 155_840,
         bytes_scanned: (12.74 * 1024.0 * 1024.0 * 1024.0) as u64,
@@ -579,24 +606,312 @@ fn scan_command_runs_in_background_and_finds_candidates() {
     }
 
     assert!(!app.is_scan_running());
+    assert!(app.usage_order.is_empty());
+    assert_eq!(app.candidate_projection_entries_len, app.entries.len());
+    let stages = app
+        .scan_diagnostics
+        .as_ref()
+        .expect("scan diagnostics")
+        .phases
+        .iter()
+        .map(|phase| phase.stage)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stages,
+        vec![
+            ScanStage::Resolving,
+            ScanStage::Scanning,
+            ScanStage::Aggregating,
+            ScanStage::Rules,
+            ScanStage::Evidence,
+            ScanStage::Plan,
+        ]
+    );
+    assert!(!stages.contains(&ScanStage::Usage));
+    assert_eq!(
+        app.scan_explicit_roots,
+        vec![
+            temp.path()
+                .canonicalize()
+                .unwrap_or_else(|_| temp.path().to_path_buf())
+        ]
+    );
     app.dispatch(ActionRequest::Review);
     assert_eq!(app.plan().expect("plan").summary.selected_count, 0);
 }
 
 #[test]
-fn global_scan_request_replaces_current_roots() {
+fn real_budget_limited_scan_commits_read_only_results_without_planning() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::write(temp.path().join("first"), b"first").expect("first");
+    fs::write(temp.path().join("second"), b"second").expect("second");
+
+    let mut app = app(temp.path().to_path_buf());
+    app.config.scan.budgets.max_entries = 1;
+    app.dispatch(ActionRequest::Scan(ScanRequest::default()));
+    for _ in 0..50 {
+        app.poll_tasks();
+        if !app.is_scan_running() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(!app.is_scan_running());
+    assert_eq!(app.entries.len(), 1);
+    assert!(!app.scan_budget_exceeded.is_empty());
+    assert!(app.plan().is_none());
+    assert!(app.status().contains("read-only"), "{}", app.status());
+    let stages = app
+        .scan_diagnostics
+        .as_ref()
+        .expect("scan diagnostics")
+        .phases
+        .iter()
+        .map(|phase| phase.stage)
+        .collect::<Vec<_>>();
+    assert!(stages.contains(&ScanStage::Rules));
+    assert!(!stages.contains(&ScanStage::Evidence));
+    assert!(!stages.contains(&ScanStage::Plan));
+}
+
+#[test]
+fn cancelled_scan_rejects_a_queued_prepared_result() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::write(temp.path().join("queued-result"), b"result").expect("write");
+    let report = scan_paths(&[temp.path().to_path_buf()], &ScanOptions::default()).expect("scan");
+    assert!(!report.entries.is_empty());
+
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(TaskEvent::ScanFinished {
+            job_id: 7,
+            result: Ok(Box::new(PreparedScan {
+                report,
+                explicit_roots: vec![temp.path().to_path_buf()],
+                global_scan: Default::default(),
+                candidate_count: 0,
+                candidate_entry_indices: Vec::new(),
+                usage: None,
+                planning: Ok(None),
+            })),
+            diagnostics: ScanDiagnostics::default(),
+        })
+        .expect("queue prepared scan");
+    drop(sender);
+
+    let mut app = app(temp.path().to_path_buf());
+    app.scan_rx = Some(receiver);
+    app.scan_cancel = Some(Arc::new(AtomicBool::new(false)));
+    app.scan_job_id = Some(7);
+
+    app.cancel_scan();
+    app.poll_tasks();
+
+    assert!(!app.is_scan_running());
+    assert!(app.entries().is_empty());
+    assert!(app.status().contains("cancelled"), "{}", app.status());
+}
+
+#[test]
+fn stale_scan_job_cannot_replace_current_state() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::write(temp.path().join("stale-result"), b"result").expect("write");
+    let report = scan_paths(&[temp.path().to_path_buf()], &ScanOptions::default()).expect("scan");
+    assert!(!report.entries.is_empty());
+
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(TaskEvent::ScanFinished {
+            job_id: 7,
+            result: Ok(Box::new(PreparedScan {
+                report,
+                explicit_roots: vec![temp.path().to_path_buf()],
+                global_scan: Default::default(),
+                candidate_count: 0,
+                candidate_entry_indices: Vec::new(),
+                usage: None,
+                planning: Ok(None),
+            })),
+            diagnostics: ScanDiagnostics::default(),
+        })
+        .expect("queue stale scan");
+    drop(sender);
+
+    let mut app = app(temp.path().to_path_buf());
+    app.scan_rx = Some(receiver);
+    app.scan_cancel = Some(Arc::new(AtomicBool::new(false)));
+    app.scan_job_id = Some(8);
+
+    app.poll_tasks();
+
+    assert!(!app.is_scan_running());
+    assert!(app.entries().is_empty());
+    assert_eq!(app.scan_job_id, None);
+}
+
+#[test]
+fn completed_scan_atomically_commits_worker_resolved_scope() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::write(temp.path().join("resolved-result"), b"result").expect("write");
+    let report = scan_paths(&[temp.path().to_path_buf()], &ScanOptions::default()).expect("scan");
+    let expected_roots = report.summary.roots.clone();
+    let explicit_root = temp
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| temp.path().to_path_buf());
+    let global_scan = cleanr_core::GlobalScanEvidence {
+        requested_kinds: vec![GlobalScanKind::TempFiles],
+        locations: Vec::new(),
+    };
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(TaskEvent::ScanFinished {
+            job_id: 17,
+            result: Ok(Box::new(PreparedScan {
+                report,
+                explicit_roots: vec![explicit_root.clone()],
+                global_scan: global_scan.clone(),
+                candidate_count: 0,
+                candidate_entry_indices: Vec::new(),
+                usage: None,
+                planning: Ok(None),
+            })),
+            diagnostics: ScanDiagnostics::default(),
+        })
+        .expect("queue prepared scan");
+
+    let mut app = app(temp.path().join("old-scope"));
+    app.scan_rx = Some(receiver);
+    app.scan_cancel = Some(Arc::new(AtomicBool::new(false)));
+    app.scan_job_id = Some(17);
+    app.poll_tasks();
+
+    assert_eq!(app.roots, expected_roots);
+    assert_eq!(app.scan_explicit_roots, vec![explicit_root]);
+    assert_eq!(app.scan_global_evidence, global_scan);
+    let diagnostics = app.task_log.last().expect("diagnostics log");
+    assert!(diagnostics.contains("frame p95/max"), "{diagnostics}");
+    assert!(!diagnostics.contains(&temp.path().display().to_string()));
+}
+
+#[test]
+fn structured_scan_failure_preserves_previous_scope() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let previous_root = temp.path().join("previous");
+    let previous_explicit = temp.path().join("explicit");
+    let previous_global = cleanr_core::GlobalScanEvidence {
+        requested_kinds: vec![GlobalScanKind::AppCaches],
+        locations: Vec::new(),
+    };
+    let (sender, receiver) = mpsc::channel();
+    sender
+        .send(TaskEvent::ScanFinished {
+            job_id: 18,
+            result: Err(ScanFailure::NoGlobalRoots),
+            diagnostics: ScanDiagnostics::default(),
+        })
+        .expect("queue failed scan");
+
+    let mut app = app(previous_root.clone());
+    app.scan_explicit_roots = vec![previous_explicit.clone()];
+    app.scan_global_evidence = previous_global.clone();
+    app.scan_rx = Some(receiver);
+    app.scan_cancel = Some(Arc::new(AtomicBool::new(false)));
+    app.scan_job_id = Some(18);
+    app.poll_tasks();
+
+    assert_eq!(app.roots, vec![previous_root]);
+    assert_eq!(app.scan_explicit_roots, vec![previous_explicit]);
+    assert_eq!(app.scan_global_evidence, previous_global);
+    assert!(app.status().contains("No known system cleanup locations"));
+}
+
+#[test]
+fn scan_stall_watchdog_updates_once_per_second_and_progress_resets_it() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
-    let expected_temp = std::env::temp_dir()
-        .canonicalize()
-        .unwrap_or_else(|_| std::env::temp_dir());
+    let (sender, receiver) = mpsc::channel();
+    app.scan_rx = Some(receiver);
+    app.scan_job_id = Some(19);
+    let started_at = Instant::now();
+    app.scan_started_at = Some(started_at);
+    app.scan_phase_started_at = Some(started_at);
+    app.scan_last_progress_at = Some(started_at);
+    app.scan_progress = Some(ScanTaskProgress {
+        stage: ScanStage::Scanning,
+        entries_total: 0,
+        entries_scanned: 12,
+        bytes_scanned: 4096,
+        errors: 1,
+        current_path: Some(PathBuf::from("/private/secret/cache")),
+    });
+
+    assert!(!app.update_scan_stall_at(started_at + Duration::from_secs(1)));
+    assert!(app.update_scan_stall_at(started_at + Duration::from_secs(2)));
+    assert!(app.status().contains("2s"), "{}", app.status());
+    assert!(
+        !app.status().contains("/private/secret"),
+        "{}",
+        app.status()
+    );
+    assert!(!app.update_scan_stall_at(started_at + Duration::from_millis(2_900)));
+    assert!(app.update_scan_stall_at(started_at + Duration::from_secs(3)));
+
+    sender
+        .send(TaskEvent::ScanProgress {
+            job_id: 19,
+            progress: ScanTaskProgress {
+                stage: ScanStage::Evidence,
+                entries_total: 12,
+                entries_scanned: 12,
+                bytes_scanned: 4096,
+                errors: 1,
+                current_path: None,
+            },
+        })
+        .expect("progress");
+    assert!(app.poll_tasks());
+    assert_eq!(app.scan_stall_reported_seconds, None);
+    assert_eq!(
+        app.scan_progress.as_ref().map(|progress| progress.stage),
+        Some(ScanStage::Evidence)
+    );
+
+    sender
+        .send(TaskEvent::ScanProgress {
+            job_id: 19,
+            progress: ScanTaskProgress {
+                stage: ScanStage::Scanning,
+                entries_total: 0,
+                entries_scanned: 13,
+                bytes_scanned: 8192,
+                errors: 1,
+                current_path: Some(PathBuf::from("/private/secret/stale")),
+            },
+        })
+        .expect("stale progress");
+    app.poll_tasks();
+    assert_eq!(
+        app.scan_progress.as_ref().map(|progress| progress.stage),
+        Some(ScanStage::Evidence)
+    );
+}
+
+#[test]
+fn global_scan_request_preserves_current_scope_until_worker_finishes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut app = app(temp.path().to_path_buf());
+    let original_roots = app.roots.clone();
+    let original_evidence = app.scan_global_evidence.clone();
 
     app.dispatch(ActionRequest::Scan(ScanRequest::global(vec![
         GlobalScanKind::TempFiles,
     ])));
 
     assert!(app.is_scan_running());
-    assert_eq!(app.roots, vec![expected_temp]);
+    assert_eq!(app.roots, original_roots);
+    assert_eq!(app.scan_global_evidence, original_evidence);
     app.cancel_scan();
     for _ in 0..50 {
         app.poll_tasks();
@@ -605,6 +920,68 @@ fn global_scan_request_replaces_current_roots() {
         }
         thread::sleep(Duration::from_millis(2));
     }
+    assert!(!app.is_scan_running());
+    assert_eq!(app.roots, original_roots);
+    assert_eq!(app.scan_global_evidence, original_evidence);
+}
+
+#[test]
+fn tui_analysis_suppresses_candidates_from_unrequested_global_kinds() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scan_root = temp.path().join("cache");
+    let pnpm = scan_root.join("pnpm");
+    fs::create_dir_all(&pnpm).expect("global locations");
+    let request = ScanRequest::global(vec![GlobalScanKind::AppCaches]);
+    let resolved = ResolvedScanRoots {
+        roots: vec![scan_root.clone()],
+        global_roots: vec![GlobalScanRoot {
+            path: scan_root.clone(),
+            kind: GlobalScanKind::AppCaches,
+            label: "Application caches".to_string(),
+        }],
+        global_locations: vec![
+            GlobalScanRoot {
+                path: scan_root.clone(),
+                kind: GlobalScanKind::AppCaches,
+                label: "Application caches".to_string(),
+            },
+            GlobalScanRoot {
+                path: pnpm.clone(),
+                kind: GlobalScanKind::DeveloperCaches,
+                label: "pnpm cache".to_string(),
+            },
+        ],
+    };
+
+    let mut app = app(scan_root.clone());
+    app.roots = resolved.roots.clone();
+    app.scan_global_evidence = global_scan_evidence(&request, &[], &resolved, &app.roots);
+    app.entries = vec![ScanEntry {
+        path: pnpm,
+        kind: EntryKind::Directory,
+        size_bytes: 1024,
+        modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
+        rule_hits: vec![test_rule_hit("pnpm-cache")],
+    }];
+
+    app.build_plan();
+
+    let analysis = app.analysis.as_ref().expect("analysis");
+    assert_eq!(
+        analysis.scan.global.requested_kinds,
+        vec![GlobalScanKind::AppCaches]
+    );
+    assert_eq!(
+        analysis.candidates[0].recommendation.state,
+        RecommendationState::Suppressed
+    );
+    assert!(
+        analysis.candidates[0]
+            .recommendation
+            .codes
+            .contains(&DecisionCode::GlobalKindNotRequested)
+    );
+    assert_eq!(app.plan().expect("plan").summary.candidate_count, 0);
 }
 
 #[test]
@@ -656,6 +1033,75 @@ fn scan_view_virtualizes_ten_thousand_candidates_and_keeps_last_selected_visible
     assert!(screen.contains("candidate-09999"), "{screen}");
     assert_eq!(app.list_state.selected(), Some(candidate_count - 1));
     assert!(app.list_state.offset() > 0);
+}
+
+#[test]
+#[ignore = "manual local render evidence; set CLEANR_BENCH_CANDIDATES/CLEANR_BENCH_FRAMES"]
+fn scan_view_render_performance_keeps_large_candidate_sets_off_the_frame_path() {
+    let candidate_count = std::env::var("CLEANR_BENCH_CANDIDATES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(10_000)
+        .max(1);
+    let frames = std::env::var("CLEANR_BENCH_FRAMES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(200)
+        .max(50);
+    let root = PathBuf::from("/cleanr-render-fixture");
+    let mut app = app(root.clone());
+    app.entries = (0..candidate_count)
+        .map(|index| ScanEntry {
+            path: root.join(format!("candidate-{index:08}")),
+            kind: EntryKind::File,
+            size_bytes: u64::try_from(index).unwrap_or(u64::MAX),
+            modified_at: None,
+            rule_hits: vec![test_rule_hit("render-benchmark")],
+        })
+        .collect();
+    app.build_plan();
+    app.view = View::Scan;
+    app.list_state.select(Some(candidate_count - 1));
+
+    let backend = TestBackend::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    for _ in 0..10 {
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("warm render frame");
+    }
+
+    let mut samples = Vec::with_capacity(frames);
+    for frame_index in 0..frames {
+        let selected = candidate_count - 1 - frame_index % candidate_count.min(16);
+        app.list_state.select(Some(selected));
+        let started = Instant::now();
+        terminal
+            .draw(|frame| render(frame, &mut app))
+            .expect("render frame");
+        samples.push(started.elapsed());
+    }
+
+    samples.sort_unstable();
+    let p95_rank = (samples.len() * 95).div_ceil(100);
+    let p95 = samples[p95_rank.saturating_sub(1)];
+    let max = *samples.last().expect("render samples");
+    let total = samples.iter().copied().sum::<Duration>();
+    let mean = total / u32::try_from(samples.len()).expect("frame count fits u32");
+    eprintln!(
+        "cleanr-render-benchmark candidates={candidate_count} frames={} width=120 height=40 mean_us={} p95_us={} max_us={}",
+        samples.len(),
+        mean.as_micros(),
+        p95.as_micros(),
+        max.as_micros(),
+    );
+
+    let final_offset = (frames - 1) % candidate_count.min(16);
+    assert_eq!(
+        app.list_state.selected(),
+        Some(candidate_count - 1 - final_offset)
+    );
+    assert!(app.list_state.offset() > 0 || candidate_count <= 40);
 }
 
 #[test]
@@ -775,6 +1221,34 @@ fn usage_scan_exposes_live_progress() {
             .as_ref()
             .is_some_and(|progress| progress.entries_total > 0)
             || !app.is_scan_running()
+    );
+}
+
+#[test]
+fn usage_scan_prepares_the_usage_projection_on_demand() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    fs::write(temp.path().join("artifact"), b"1234").expect("write");
+    let mut app = app(temp.path().to_path_buf());
+
+    app.dispatch(ActionRequest::Usage(ScanRequest::default()));
+    for _ in 0..50 {
+        app.poll_tasks();
+        if !app.is_scan_running() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(!app.is_scan_running());
+    assert!(!app.usage_order.is_empty());
+    assert_eq!(app.usage_order.len(), app.usage_descendant_counts.len());
+    assert!(
+        app.scan_diagnostics
+            .as_ref()
+            .expect("scan diagnostics")
+            .phases
+            .iter()
+            .any(|phase| phase.stage == ScanStage::Usage)
     );
 }
 
@@ -919,6 +1393,71 @@ fn usage_details_count_recursive_directory_entries() {
 
     assert_eq!(usage_descendant_count(&entries, &entries[0]), 2);
     assert_eq!(usage_descendant_count(&entries, &entries[2]), 0);
+}
+
+#[test]
+fn usage_projection_merges_unordered_multi_root_descendants_and_stops_at_gaps() {
+    let first_root = PathBuf::from("/workspace-a");
+    let second_root = PathBuf::from("/workspace-b");
+    let entries = vec![
+        ScanEntry {
+            path: first_root.join("top/child/artifact"),
+            kind: EntryKind::File,
+            size_bytes: 3,
+            modified_at: None,
+            rule_hits: vec![],
+        },
+        ScanEntry {
+            path: second_root.join("other/artifact"),
+            kind: EntryKind::File,
+            size_bytes: 2,
+            modified_at: None,
+            rule_hits: vec![],
+        },
+        ScanEntry {
+            path: first_root.join("top"),
+            kind: EntryKind::Directory,
+            size_bytes: 20,
+            modified_at: None,
+            rule_hits: vec![],
+        },
+        ScanEntry {
+            path: first_root.join("top/orphan/artifact"),
+            kind: EntryKind::File,
+            size_bytes: 8,
+            modified_at: None,
+            rule_hits: vec![],
+        },
+        ScanEntry {
+            path: second_root.join("other"),
+            kind: EntryKind::Directory,
+            size_bytes: 10,
+            modified_at: None,
+            rule_hits: vec![],
+        },
+        ScanEntry {
+            path: first_root.join("top/child"),
+            kind: EntryKind::Directory,
+            size_bytes: 3,
+            modified_at: None,
+            rule_hits: vec![],
+        },
+    ];
+
+    let projection = build_usage_projection(&entries, &[first_root, second_root]);
+    let top_position = projection
+        .order
+        .iter()
+        .position(|index| entries[*index].path == std::path::Path::new("/workspace-a/top"))
+        .expect("first root child");
+    let other_position = projection
+        .order
+        .iter()
+        .position(|index| entries[*index].path == std::path::Path::new("/workspace-b/other"))
+        .expect("second root child");
+
+    assert_eq!(projection.descendant_counts[top_position], 2);
+    assert_eq!(projection.descendant_counts[other_position], 1);
 }
 
 #[test]
@@ -1172,6 +1711,77 @@ fn rebuilding_a_plan_preserves_the_user_selection_from_one_analysis_report() {
 }
 
 #[test]
+fn plan_build_errors_clear_stale_plan_and_surface_the_reason() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut app = app(temp.path().to_path_buf());
+    app.entries = vec![ScanEntry {
+        path: temp.path().join("old-cache"),
+        kind: EntryKind::Directory,
+        size_bytes: 1024,
+        modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
+        rule_hits: vec![test_rule_hit("generated")],
+    }];
+    app.build_plan();
+    assert!(app.plan().is_some());
+
+    app.analysis
+        .as_mut()
+        .expect("analysis")
+        .scan
+        .budget_exceeded
+        .push(ScanBudgetExceeded::EntryCount {
+            limit: 1,
+            observed: 2,
+        });
+    app.build_plan();
+    assert!(app.plan().is_none());
+    assert!(app.status().contains("scan budget was exceeded"));
+
+    let analysis = app.analysis.as_mut().expect("analysis");
+    analysis.scan.budget_exceeded.clear();
+    analysis.schema_version = "cleanr.analysis.v999".to_string();
+    app.build_plan();
+    assert!(app.plan().is_none());
+    assert!(app.status().contains("unsupported analysis report schema"));
+}
+
+#[test]
+fn budget_limited_scan_rejects_plan_export_and_cleanup_with_read_only_status() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut app = app(temp.path().to_path_buf());
+    app.entries = vec![ScanEntry {
+        path: temp.path().join("old-cache"),
+        kind: EntryKind::Directory,
+        size_bytes: 1024,
+        modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
+        rule_hits: vec![test_rule_hit("generated")],
+    }];
+    app.scan_budget_exceeded = vec![ScanBudgetExceeded::EntryCount {
+        limit: 1,
+        observed: 2,
+    }];
+    let output = temp.path().join("must-not-exist.json");
+
+    app.build_plan();
+    assert!(app.plan().is_none());
+    assert!(app.status().contains("read-only"), "{}", app.status());
+    app.export_plan(Some(output.clone()));
+    assert!(!output.exists());
+    app.request_cleanup(CleanupIntent::ExplicitUserConfirmation);
+    assert!(app.operation_rx.is_none());
+    assert!(app.status().contains("read-only"), "{}", app.status());
+
+    app.toggle_scan_selection();
+    assert!(app.status().contains("read-only"), "{}", app.status());
+    app.toggle_all_scan_selection();
+    assert!(app.status().contains("read-only"), "{}", app.status());
+
+    app.entries.clear();
+    app.build_plan();
+    assert!(app.status().contains("read-only"), "{}", app.status());
+}
+
+#[test]
 fn palette_selection_dispatches_non_scan_command() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
@@ -1208,9 +1818,6 @@ fn palette_global_filter_dispatches_global_scan() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
     let original_root = temp.path().to_path_buf();
-    let expected_temp = std::env::temp_dir()
-        .canonicalize()
-        .unwrap_or_else(|_| std::env::temp_dir());
 
     app.handle_key(key(KeyCode::Char('/')));
     for ch in "global".chars() {
@@ -1220,8 +1827,7 @@ fn palette_global_filter_dispatches_global_scan() {
 
     assert!(!app.palette_open());
     assert!(app.is_scan_running());
-    assert!(app.roots.contains(&expected_temp));
-    assert!(!app.roots.contains(&original_root));
+    assert_eq!(app.roots, vec![original_root.clone()]);
     app.cancel_scan();
     for _ in 0..50 {
         app.poll_tasks();
@@ -1230,6 +1836,7 @@ fn palette_global_filter_dispatches_global_scan() {
         }
         thread::sleep(Duration::from_millis(2));
     }
+    assert_eq!(app.roots, vec![original_root]);
 }
 
 #[test]

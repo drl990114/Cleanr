@@ -61,23 +61,20 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
         let progress = app.scan_progress.as_ref();
         let compact = progress.map_or_else(
             || app.i18n.t("scan_preparing"),
-            |value| match value.phase {
-                ScanPhase::Discovering => app.i18n.format(
-                    "scan_progress_discovered",
-                    &[("total", value.entries_total.to_string())],
-                ),
-                ScanPhase::Scanning if value.entries_total == 0 => app.i18n.format(
+            |value| match value.stage {
+                ScanStage::Scanning if value.entries_total == 0 => app.i18n.format(
                     "scan_progress_unbounded",
                     &[("scanned", value.entries_scanned.to_string())],
                 ),
-                ScanPhase::Scanning => app.i18n.format(
+                ScanStage::Scanning => app.i18n.format(
                     "scan_progress_count",
                     &[
                         ("scanned", value.entries_scanned.to_string()),
                         ("total", value.entries_total.to_string()),
                     ],
                 ),
-                ScanPhase::Aggregating => app.i18n.t("scan_progress_aggregating"),
+                ScanStage::Aggregating => app.i18n.t("scan_progress_aggregating"),
+                stage => app.scan_stage_label(stage),
             },
         );
         right.push(Span::styled(

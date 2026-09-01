@@ -2,6 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    error::Error,
     fmt,
     path::{Path, PathBuf},
     str::FromStr,
@@ -15,12 +16,14 @@ mod evidence;
 
 pub use evidence::{
     ANALYSIS_REPORT_SCHEMA_VERSION, ActivityEvidence, ActivitySource, ActivityStatus, AnalysisId,
-    AnalysisReport, CandidateCoverage, CandidateEvidence, CandidateId, DecisionCode,
-    GlobalScanEvidence, GlobalScanLocationEvidence, MAX_RECOMMENDATION_AGE_DAYS, OverlapEvidence,
-    RecommendationDecision, RecommendationPolicy, RecommendationPolicyError, RecommendationState,
-    ReportIntegrity, RuleEvidence, RuleKey, RuleResolution, RuleResolutionState, ScanEvidence,
-    ScanIssue, ScanIssueCode, UserSelection, build_analysis_report,
-    build_analysis_report_with_safety_policy,
+    AnalysisReport, AnalysisScanContext, CandidateCoverage, CandidateEvidence, CandidateId,
+    DecisionCode, GlobalScanEvidence, GlobalScanLocationEvidence, MAX_RECOMMENDATION_AGE_DAYS,
+    OverlapEvidence, RecommendationDecision, RecommendationPolicy, RecommendationPolicyError,
+    RecommendationState, ReportIntegrity, RuleEvidence, RuleKey, RuleResolution,
+    RuleResolutionState, ScanBudgetExceeded, ScanBudgetLimits, ScanEvidence, ScanIssue,
+    ScanIssueCode, UserSelection, build_analysis_report, build_analysis_report_with_budget,
+    build_analysis_report_with_safety_policy, build_analysis_report_with_scan_context,
+    suppress_unrequested_global_candidates,
 };
 
 pub const CLEANUP_PLAN_SCHEMA_VERSION: &str = "cleanr.cleanup-plan.v1";
@@ -219,10 +222,47 @@ pub struct CleanupPlan {
     pub created_at: DateTime<Utc>,
     pub scan_roots: Vec<PathBuf>,
     pub ruleset_versions: Vec<RulesetVersion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_scan: Option<CleanupPlanSourceScan>,
     pub summary: PlanSummary,
     pub items: Vec<CleanupItem>,
     pub safety: PlanSafety,
 }
+
+/// Read-only scan provenance retained by plans built from an analysis report.
+///
+/// Legacy entry-based plan builders leave this absent. Execution rejects any plan whose source
+/// analysis exhausted a scan budget.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CleanupPlanSourceScan {
+    pub analysis_id: AnalysisId,
+    pub integrity: ReportIntegrity,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub budget_exceeded: Vec<ScanBudgetExceeded>,
+}
+
+/// Why an analysis report cannot be promoted into an executable cleanup plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CleanupPlanBuildError {
+    UnsupportedAnalysisSchema { found: String },
+    ScanBudgetExceeded,
+}
+
+impl fmt::Display for CleanupPlanBuildError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedAnalysisSchema { found } => write!(
+                formatter,
+                "unsupported analysis report schema for cleanup planning: {found}"
+            ),
+            Self::ScanBudgetExceeded => formatter.write_str(
+                "scan budget was exceeded; analysis is read-only and cannot produce a cleanup plan",
+            ),
+        }
+    }
+}
+
+impl Error for CleanupPlanBuildError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RulesetVersion {
@@ -438,6 +478,12 @@ impl SafetyPolicy {
     }
 }
 
+/// Legacy entry-only builder for callers that already proved their scan is complete.
+///
+/// This API cannot observe a filesystem report's budget ledger. Never pass entries from a report
+/// whose `budget_exceeded` collection is non-empty. Product workflows should build analysis with
+/// `AnalysisScanContext` and then call [`build_cleanup_plan_from_analysis`] so the read-only budget
+/// boundary is retained in the plan provenance.
 #[must_use]
 pub fn build_cleanup_plan(
     scan_roots: Vec<PathBuf>,
@@ -452,6 +498,8 @@ pub fn build_cleanup_plan(
     )
 }
 
+/// Legacy policy-aware entry-only builder with the same complete-scan precondition as
+/// [`build_cleanup_plan`]. Budget-limited reports must use the analysis-backed builder instead.
 #[must_use]
 pub fn build_cleanup_plan_with_policy(
     scan_roots: Vec<PathBuf>,
@@ -485,7 +533,7 @@ pub fn build_cleanup_plan_with_policy(
                 size_bytes: entry.size_bytes,
                 modified_at: entry.modified_at,
                 tree_fingerprint: (entry.kind == EntryKind::Directory)
-                    .then(|| tree_fingerprints.get(&entry.path).cloned())
+                    .then(|| tree_fingerprints.get(entry.path.as_path()).cloned())
                     .flatten(),
                 rule_id: format!("{}:{}", hit.rule_pack_id, hit.rule_id),
                 category: hit.category.clone(),
@@ -505,6 +553,7 @@ pub fn build_cleanup_plan_with_policy(
         ruleset_versions,
         remove_overlapping_items(items),
         policy,
+        None,
     )
 }
 
@@ -513,7 +562,6 @@ pub fn build_cleanup_plan_with_policy(
 /// This is the product-facing plan builder: recommendation and overlap decisions come only from
 /// `analysis`, while `selection` records the user's later choices. The local safety policy is
 /// applied again defensively even though safety-aware analysis already records excluded paths.
-#[must_use]
 pub fn build_cleanup_plan_from_analysis(
     scan_roots: Vec<PathBuf>,
     ruleset_versions: Vec<RulesetVersion>,
@@ -521,7 +569,15 @@ pub fn build_cleanup_plan_from_analysis(
     analysis: &AnalysisReport,
     selection: &UserSelection,
     policy: &SafetyPolicy,
-) -> CleanupPlan {
+) -> Result<CleanupPlan, CleanupPlanBuildError> {
+    if analysis.schema_version != ANALYSIS_REPORT_SCHEMA_VERSION {
+        return Err(CleanupPlanBuildError::UnsupportedAnalysisSchema {
+            found: analysis.schema_version.clone(),
+        });
+    }
+    if !analysis.scan.budget_exceeded.is_empty() {
+        return Err(CleanupPlanBuildError::ScanBudgetExceeded);
+    }
     let normalized_scan_roots = normalize_protected_paths(scan_roots.clone());
     let tree_fingerprints = tree_fingerprints(entries);
     let entries_by_path = entries
@@ -566,7 +622,11 @@ pub fn build_cleanup_plan_from_analysis(
                 size_bytes: candidate.size_bytes,
                 modified_at,
                 tree_fingerprint: (candidate.kind == EntryKind::Directory)
-                    .then(|| tree_fingerprints.get(&candidate.local_path).cloned())
+                    .then(|| {
+                        tree_fingerprints
+                            .get(candidate.local_path.as_path())
+                            .cloned()
+                    })
                     .flatten(),
                 rule_id: format!("{}:{}", rule.key.rule_pack_id, rule.key.rule_id),
                 category: rule.category.clone(),
@@ -587,7 +647,18 @@ pub fn build_cleanup_plan_from_analysis(
         })
         .collect::<Vec<_>>();
 
-    finish_cleanup_plan(scan_roots, ruleset_versions, items, policy)
+    let source_scan = CleanupPlanSourceScan {
+        analysis_id: analysis.analysis_id.clone(),
+        integrity: analysis.scan.integrity,
+        budget_exceeded: analysis.scan.budget_exceeded.clone(),
+    };
+    Ok(finish_cleanup_plan(
+        scan_roots,
+        ruleset_versions,
+        items,
+        policy,
+        Some(source_scan),
+    ))
 }
 
 fn finish_cleanup_plan(
@@ -595,6 +666,7 @@ fn finish_cleanup_plan(
     ruleset_versions: Vec<RulesetVersion>,
     items: Vec<CleanupItem>,
     policy: &SafetyPolicy,
+    source_scan: Option<CleanupPlanSourceScan>,
 ) -> CleanupPlan {
     let mut items = items;
     items.sort_by(|a, b| {
@@ -621,6 +693,7 @@ fn finish_cleanup_plan(
         created_at: Utc::now(),
         scan_roots,
         ruleset_versions,
+        source_scan,
         summary,
         items,
         safety: PlanSafety {
@@ -684,47 +757,137 @@ fn remember_kept_path(
     );
 }
 
-fn tree_fingerprints(entries: &[ScanEntry]) -> HashMap<PathBuf, CleanupItemFingerprint> {
-    let mut fingerprints = entries
+/// Merge a set of unique paths from leaves towards their immediate parents without cloning paths
+/// or sorting by depth. Callers must use an order-independent merge operation.
+pub(crate) fn merge_path_forest(
+    paths: &[&Path],
+    can_merge_into: impl Fn(usize) -> bool,
+    mut merge: impl FnMut(usize, usize),
+) {
+    let parent_indices = {
+        let by_path = paths
+            .iter()
+            .enumerate()
+            .map(|(idx, path)| (*path, idx))
+            .collect::<HashMap<_, _>>();
+        paths
+            .iter()
+            .map(|path| {
+                path.parent()
+                    .and_then(|parent| by_path.get(parent).copied())
+                    .filter(|parent_idx| can_merge_into(*parent_idx))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut remaining_children = vec![0usize; paths.len()];
+    for parent_idx in parent_indices.iter().flatten() {
+        remaining_children[*parent_idx] = remaining_children[*parent_idx].saturating_add(1);
+    }
+    let mut ready = remaining_children
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, children)| (*children == 0).then_some(idx))
+        .collect::<Vec<_>>();
+
+    let mut processed = 0usize;
+    while let Some(child_idx) = ready.pop() {
+        processed += 1;
+        let Some(parent_idx) = parent_indices[child_idx] else {
+            continue;
+        };
+        merge(parent_idx, child_idx);
+        remaining_children[parent_idx] -= 1;
+        if remaining_children[parent_idx] == 0 {
+            ready.push(parent_idx);
+        }
+    }
+    debug_assert_eq!(processed, paths.len());
+}
+
+#[derive(Clone)]
+struct TreeFingerprintFacts {
+    descendants: usize,
+    latest_modified_at: Option<DateTime<Utc>>,
+}
+
+impl TreeFingerprintFacts {
+    fn absorb_leaf(&mut self, modified_at: Option<DateTime<Utc>>) {
+        self.descendants = self.descendants.saturating_add(1);
+        self.latest_modified_at = max_datetime(self.latest_modified_at, modified_at);
+    }
+
+    fn absorb_descendant(&mut self, descendant: &Self) {
+        self.descendants = self
+            .descendants
+            .saturating_add(1)
+            .saturating_add(descendant.descendants);
+        self.latest_modified_at =
+            max_datetime(self.latest_modified_at, descendant.latest_modified_at);
+    }
+}
+
+fn tree_fingerprints(entries: &[ScanEntry]) -> HashMap<&Path, CleanupItemFingerprint> {
+    // Only directories need parent links. Indexing every file made a shallow, file-heavy tree pay
+    // a large hash-table cost even though each file can be folded directly into its parent.
+    let directories = entries
         .iter()
         .filter(|entry| entry.kind == EntryKind::Directory)
-        .map(|entry| {
+        .collect::<Vec<_>>();
+    let paths = directories
+        .iter()
+        .map(|entry| entry.path.as_path())
+        .collect::<Vec<_>>();
+    let directory_by_path = paths
+        .iter()
+        .enumerate()
+        .map(|(idx, path)| (*path, idx))
+        .collect::<HashMap<_, _>>();
+    let mut facts = directories
+        .iter()
+        .map(|entry| TreeFingerprintFacts {
+            descendants: 0,
+            latest_modified_at: entry.modified_at,
+        })
+        .collect::<Vec<_>>();
+
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.kind != EntryKind::Directory)
+    {
+        let Some(parent_idx) = entry
+            .path
+            .parent()
+            .and_then(|parent| directory_by_path.get(parent).copied())
+        else {
+            continue;
+        };
+        facts[parent_idx].absorb_leaf(entry.modified_at);
+    }
+
+    merge_path_forest(
+        &paths,
+        |_| true,
+        |parent_idx, child_idx| {
+            let child = facts[child_idx].clone();
+            facts[parent_idx].absorb_descendant(&child);
+        },
+    );
+
+    directories
+        .iter()
+        .zip(facts)
+        .map(|(entry, facts)| {
             (
-                entry.path.clone(),
+                entry.path.as_path(),
                 CleanupItemFingerprint {
-                    descendants: 0,
+                    descendants: facts.descendants,
                     total_size_bytes: entry.size_bytes,
-                    latest_modified_at: entry.modified_at,
+                    latest_modified_at: facts.latest_modified_at,
                 },
             )
         })
-        .collect::<HashMap<_, _>>();
-
-    let mut indices = (0..entries.len()).collect::<Vec<_>>();
-    indices.sort_by_key(|idx| std::cmp::Reverse(entries[*idx].path.components().count()));
-
-    for idx in indices {
-        let entry = &entries[idx];
-        let Some(parent) = entry.path.parent() else {
-            continue;
-        };
-        let child_fingerprint = (entry.kind == EntryKind::Directory)
-            .then(|| fingerprints.get(&entry.path).cloned())
-            .flatten();
-        let descendants = 1 + child_fingerprint
-            .as_ref()
-            .map_or(0, |fingerprint| fingerprint.descendants);
-        let latest_modified_at = child_fingerprint
-            .and_then(|fingerprint| fingerprint.latest_modified_at)
-            .or(entry.modified_at);
-        if let Some(parent_fingerprint) = fingerprints.get_mut(parent) {
-            parent_fingerprint.descendants += descendants;
-            parent_fingerprint.latest_modified_at =
-                max_datetime(parent_fingerprint.latest_modified_at, latest_modified_at);
-        }
-    }
-
-    fingerprints
+        .collect()
 }
 
 fn max_datetime(
@@ -811,6 +974,7 @@ mod tests {
         assert_eq!(plan.summary.candidate_count, 2);
         assert_eq!(plan.summary.selected_count, 1);
         assert!(plan.items.iter().any(|item| item.selected));
+        assert!(plan.source_scan.is_none());
     }
 
     #[test]
@@ -857,7 +1021,16 @@ mod tests {
             &analysis,
             &selection,
             &safety,
-        );
+        )
+        .expect("supported complete analysis");
+
+        let source_scan = plan
+            .source_scan
+            .as_ref()
+            .expect("analysis plan retains scan provenance");
+        assert_eq!(source_scan.analysis_id, analysis.analysis_id);
+        assert_eq!(source_scan.integrity, analysis.scan.integrity);
+        assert!(source_scan.budget_exceeded.is_empty());
 
         let is_selected = |path: &str| {
             plan.items
@@ -877,6 +1050,74 @@ mod tests {
         assert_eq!(evidence.matched_rules.len(), 1);
         assert_eq!(evidence.rule_resolution_state, RuleResolutionState::Single);
         assert!(!evidence.decision_codes.is_empty());
+    }
+
+    #[test]
+    fn analysis_plan_builder_rejects_budget_exhaustion_and_unknown_schemas() {
+        let as_of = Utc::now();
+        let entries = vec![ScanEntry {
+            path: PathBuf::from("/repo/cache"),
+            kind: EntryKind::Directory,
+            size_bytes: 1,
+            modified_at: Some(as_of - chrono::Duration::days(100)),
+            rule_hits: vec![RuleHit {
+                rule_pack_id: "builtin-dev".into(),
+                rule_id: "cache".into(),
+                label: "Cache".into(),
+                category: "developer-cache".into(),
+                confidence: Confidence::High,
+                reason: "rebuildable".into(),
+                risk_note: "rebuild".into(),
+                default_selected: true,
+                trust: RuleTrust::Builtin,
+                match_role: RuleMatchRole::Primary,
+            }],
+        }];
+        let safety = SafetyPolicy::default();
+        let budget = [ScanBudgetExceeded::EntryCount {
+            limit: 1,
+            observed: 2,
+        }];
+        let analysis = build_analysis_report_with_budget(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/repo")],
+            &entries,
+            &[],
+            &budget,
+            RecommendationPolicy::default(),
+        )
+        .expect("valid policy");
+
+        let error = build_cleanup_plan_from_analysis(
+            vec![PathBuf::from("/repo")],
+            vec![],
+            &entries,
+            &analysis,
+            &UserSelection::default(),
+            &safety,
+        )
+        .expect_err("budget analysis must not create a plan");
+        assert_eq!(error, CleanupPlanBuildError::ScanBudgetExceeded);
+
+        let mut future_analysis = analysis;
+        future_analysis.scan.budget_exceeded.clear();
+        future_analysis.schema_version = "cleanr.analysis.v999".to_string();
+        let error = build_cleanup_plan_from_analysis(
+            vec![PathBuf::from("/repo")],
+            vec![],
+            &entries,
+            &future_analysis,
+            &UserSelection::default(),
+            &safety,
+        )
+        .expect_err("unknown analysis schemas must fail closed");
+        assert_eq!(
+            error,
+            CleanupPlanBuildError::UnsupportedAnalysisSchema {
+                found: "cleanr.analysis.v999".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -942,7 +1183,8 @@ mod tests {
             &analysis,
             &selection,
             &safety,
-        );
+        )
+        .expect("supported complete analysis");
         assert_eq!(plan.items.len(), 1);
         assert_eq!(plan.items[0].path, PathBuf::from("/repo/cache/child"));
         assert!(plan.items[0].selected);
@@ -991,6 +1233,10 @@ mod tests {
         let json = serde_json::to_string(&plan).expect("plan serializes");
         assert!(json.contains(CLEANUP_PLAN_SCHEMA_VERSION));
         assert!(json.contains("system-trash+manifest"));
+        assert!(!json.contains("source_scan"));
+
+        let restored: CleanupPlan = serde_json::from_str(&json).expect("legacy plan deserializes");
+        assert!(restored.source_scan.is_none());
     }
 
     #[test]
@@ -1087,6 +1333,118 @@ mod tests {
                 latest_modified_at: Some(newer_modified_at),
             })
         );
+    }
+
+    #[test]
+    fn tree_fingerprints_are_order_independent_across_multiple_roots() {
+        let modified_at = Utc::now();
+        let newer_modified_at = modified_at + chrono::Duration::seconds(1);
+        let entries = vec![
+            ScanEntry {
+                path: PathBuf::from("/first"),
+                kind: EntryKind::Directory,
+                size_bytes: 5,
+                modified_at: Some(modified_at),
+                rule_hits: Vec::new(),
+            },
+            ScanEntry {
+                path: PathBuf::from("/first/nested"),
+                kind: EntryKind::Directory,
+                size_bytes: 5,
+                modified_at: Some(modified_at),
+                rule_hits: Vec::new(),
+            },
+            ScanEntry {
+                path: PathBuf::from("/first/nested/file"),
+                kind: EntryKind::File,
+                size_bytes: 5,
+                modified_at: Some(newer_modified_at),
+                rule_hits: Vec::new(),
+            },
+            ScanEntry {
+                path: PathBuf::from("/second"),
+                kind: EntryKind::Directory,
+                size_bytes: 7,
+                modified_at: Some(modified_at),
+                rule_hits: Vec::new(),
+            },
+            ScanEntry {
+                path: PathBuf::from("/second/file"),
+                kind: EntryKind::File,
+                size_bytes: 7,
+                modified_at: Some(modified_at),
+                rule_hits: Vec::new(),
+            },
+        ];
+        let reversed = entries.iter().cloned().rev().collect::<Vec<_>>();
+
+        let forward = tree_fingerprints(&entries);
+        let backward = tree_fingerprints(&reversed);
+
+        assert_eq!(forward, backward);
+        assert_eq!(
+            forward.get(Path::new("/first")),
+            Some(&CleanupItemFingerprint {
+                descendants: 2,
+                total_size_bytes: 5,
+                latest_modified_at: Some(newer_modified_at),
+            })
+        );
+        assert_eq!(
+            forward.get(Path::new("/second")),
+            Some(&CleanupItemFingerprint {
+                descendants: 1,
+                total_size_bytes: 7,
+                latest_modified_at: Some(modified_at),
+            })
+        );
+    }
+
+    #[test]
+    fn tree_fingerprints_stop_at_a_missing_immediate_parent() {
+        let root_modified_at = Utc::now();
+        let descendant_modified_at = root_modified_at + chrono::Duration::seconds(1);
+        let entries = vec![
+            ScanEntry {
+                path: PathBuf::from("/repo/cache"),
+                kind: EntryKind::Directory,
+                size_bytes: 5,
+                modified_at: Some(root_modified_at),
+                rule_hits: Vec::new(),
+            },
+            ScanEntry {
+                path: PathBuf::from("/repo/cache/missing/file"),
+                kind: EntryKind::File,
+                size_bytes: 5,
+                modified_at: Some(descendant_modified_at),
+                rule_hits: Vec::new(),
+            },
+        ];
+
+        let fingerprints = tree_fingerprints(&entries);
+
+        assert_eq!(
+            fingerprints.get(Path::new("/repo/cache")),
+            Some(&CleanupItemFingerprint {
+                descendants: 0,
+                total_size_bytes: 5,
+                latest_modified_at: Some(root_modified_at),
+            })
+        );
+    }
+
+    #[test]
+    fn tree_fingerprint_descendant_count_saturates() {
+        let mut parent = TreeFingerprintFacts {
+            descendants: usize::MAX - 1,
+            latest_modified_at: None,
+        };
+        parent.absorb_descendant(&TreeFingerprintFacts {
+            descendants: 1,
+            latest_modified_at: None,
+        });
+
+        assert_eq!(parent.descendants, usize::MAX);
     }
 
     #[test]

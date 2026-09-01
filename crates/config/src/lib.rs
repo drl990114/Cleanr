@@ -9,7 +9,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use cleanr_core::{GlobalScanKind, MAX_RECOMMENDATION_AGE_DAYS, default_global_scan_kinds};
+use cleanr_core::{
+    GlobalScanKind, MAX_RECOMMENDATION_AGE_DAYS, ScanBudgetLimits, default_global_scan_kinds,
+};
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +33,53 @@ pub struct ScanConfig {
     pub ignore_dirs: Vec<PathBuf>,
     pub ignore_patterns: Vec<String>,
     pub global_kinds: Vec<GlobalScanKind>,
+    #[serde(default, skip_serializing_if = "ScanBudgetConfig::is_unlimited")]
+    pub budgets: ScanBudgetConfig,
+}
+
+/// Optional soft limits for a scan. Zero keeps the historical unlimited behavior.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct ScanBudgetConfig {
+    pub max_entries: u64,
+    pub max_elapsed_seconds: u64,
+    pub max_estimated_memory_mib: u64,
+    pub max_issue_details: u64,
+}
+
+impl ScanBudgetConfig {
+    #[must_use]
+    pub const fn is_unlimited(&self) -> bool {
+        self.max_entries == 0
+            && self.max_elapsed_seconds == 0
+            && self.max_estimated_memory_mib == 0
+            && self.max_issue_details == 0
+    }
+
+    /// Normalize user-facing units to the stable base units consumed by scan backends.
+    pub fn limits(&self) -> Result<ScanBudgetLimits> {
+        const TOML_MAX_INTEGER: u64 = i64::MAX as u64;
+        if self.max_entries > TOML_MAX_INTEGER {
+            bail!("scan.budgets.max_entries exceeds the largest TOML integer");
+        }
+        if self.max_issue_details > TOML_MAX_INTEGER {
+            bail!("scan.budgets.max_issue_details exceeds the largest TOML integer");
+        }
+        let elapsed_millis = self
+            .max_elapsed_seconds
+            .checked_mul(1000)
+            .context("scan.budgets.max_elapsed_seconds is too large")?;
+        let estimated_memory_bytes = self
+            .max_estimated_memory_mib
+            .checked_mul(1024 * 1024)
+            .context("scan.budgets.max_estimated_memory_mib is too large")?;
+        Ok(ScanBudgetLimits {
+            entries: self.max_entries,
+            elapsed_millis,
+            estimated_memory_bytes,
+            issue_details: self.max_issue_details,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -131,6 +180,7 @@ impl Default for ScanConfig {
             ignore_dirs: Vec::new(),
             ignore_patterns: vec!["**/.git".to_string(), "**/.git/**".to_string()],
             global_kinds: default_global_scan_kinds(),
+            budgets: ScanBudgetConfig::default(),
         }
     }
 }
@@ -284,6 +334,7 @@ impl Config {
             &self.scan.global_kinds,
             "scan.global_kinds cannot contain duplicate global scan kinds",
         )?;
+        self.scan.budgets.limits()?;
         Ok(())
     }
 }
@@ -422,11 +473,115 @@ mod tests {
     }
 
     #[test]
+    fn scan_budgets_default_to_unlimited_for_existing_configs() {
+        let config: Config = toml::from_str(
+            r#"
+            [scan]
+            stay_on_filesystem = true
+            "#,
+        )
+        .expect("legacy config loads");
+
+        assert_eq!(config.scan.budgets, ScanBudgetConfig::default());
+        assert_eq!(
+            config.scan.budgets.limits().unwrap(),
+            ScanBudgetLimits::default()
+        );
+        assert!(config.scan.budgets.limits().unwrap().is_unlimited());
+    }
+
+    #[test]
+    fn unlimited_scan_budgets_are_omitted_when_serializing() {
+        let raw = toml::to_string_pretty(&Config::default()).expect("serialize default config");
+
+        assert!(!raw.contains("[scan.budgets]"));
+        assert!(!raw.contains("max_entries"));
+    }
+
+    #[test]
+    fn nonzero_scan_budgets_are_serialized_and_round_trip() {
+        let mut config = Config::default();
+        config.scan.budgets.max_elapsed_seconds = 180;
+        config.scan.budgets.max_issue_details = 1024;
+
+        let raw = toml::to_string_pretty(&config).expect("serialize configured budgets");
+        let restored: Config = toml::from_str(&raw).expect("reload configured budgets");
+
+        assert!(raw.contains("[scan.budgets]"));
+        assert_eq!(restored.scan.budgets, config.scan.budgets);
+    }
+
+    #[test]
+    fn scan_budget_memory_unit_overflow_is_rejected() {
+        let mut config = Config::default();
+        config.scan.budgets.max_estimated_memory_mib = u64::MAX;
+
+        let error = config.validate().expect_err("overflow must be rejected");
+
+        assert!(error.to_string().contains("max_estimated_memory_mib"));
+    }
+
+    #[test]
+    fn scan_budget_time_unit_overflow_is_rejected() {
+        let mut config = Config::default();
+        config.scan.budgets.max_elapsed_seconds = u64::MAX;
+
+        let error = config.validate().expect_err("overflow must be rejected");
+
+        assert!(error.to_string().contains("max_elapsed_seconds"));
+    }
+
+    #[test]
+    fn scan_budget_limits_convert_persistable_boundary_units_without_narrowing_counts() {
+        const MIB: u64 = 1024 * 1024;
+        let budgets = ScanBudgetConfig {
+            max_entries: i64::MAX as u64,
+            max_elapsed_seconds: u64::MAX / 1000,
+            max_estimated_memory_mib: u64::MAX / MIB,
+            max_issue_details: i64::MAX as u64,
+        };
+
+        let limits = budgets.limits().expect("boundary limits convert");
+
+        assert_eq!(limits.entries, i64::MAX as u64);
+        assert_eq!(limits.elapsed_millis, (u64::MAX / 1000) * 1000);
+        assert_eq!(limits.estimated_memory_bytes, (u64::MAX / MIB) * MIB);
+        assert_eq!(limits.issue_details, i64::MAX as u64);
+    }
+
+    #[test]
+    fn scan_budget_counts_above_the_toml_integer_range_are_rejected() {
+        let mut config = Config::default();
+        config.scan.budgets.max_entries = u64::MAX;
+        let error = config
+            .validate()
+            .expect_err("entry count must be persistable");
+        assert!(error.to_string().contains("max_entries"));
+
+        config.scan.budgets.max_entries = 0;
+        config.scan.budgets.max_issue_details = u64::MAX;
+        let error = config
+            .validate()
+            .expect_err("issue detail count must be persistable");
+        assert!(error.to_string().contains("max_issue_details"));
+    }
+
+    #[test]
     fn documented_default_config_matches_runtime_defaults() {
         let documented: Config =
             toml::from_str(Config::default_file_content()).expect("default config parses");
 
         assert_eq!(documented, Config::default());
+    }
+
+    #[test]
+    fn config_schema_exposes_scan_budget_defaults() {
+        let schema = config_schema();
+        let serialized = serde_json::to_string(&schema).expect("serialize schema");
+
+        assert!(serialized.contains("budgets"));
+        assert!(serialized.contains("max_estimated_memory_mib"));
+        assert!(serialized.contains("max_issue_details"));
     }
 
     #[test]

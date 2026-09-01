@@ -1,7 +1,6 @@
 use std::{collections::BTreeSet, ops::Range, path::PathBuf};
 
 use cleanr_core::{CleanupItem, Confidence, EntryKind, ScanEntry};
-use cleanr_fs::ScanPhase;
 use cleanr_i18n::LanguagePackSource;
 use cleanr_tasks::restored_run_ids;
 use ratatui::{
@@ -19,6 +18,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{ConfirmChoice, Mode, View, Workbench},
+    effects::{ScanStage, ScanTaskProgress},
     theme::Theme,
 };
 

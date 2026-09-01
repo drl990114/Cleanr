@@ -744,6 +744,15 @@ fn validate_recoverable_plan(plan: &CleanupPlan) -> Result<()> {
     if plan.schema_version != CLEANUP_PLAN_SCHEMA_VERSION {
         anyhow::bail!("unsupported cleanup plan schema: {}", plan.schema_version);
     }
+    if plan
+        .source_scan
+        .as_ref()
+        .is_some_and(|source| !source.budget_exceeded.is_empty())
+    {
+        anyhow::bail!(
+            "cleanup plan came from a scan that exceeded a budget and is read-only; it cannot be executed"
+        );
+    }
     if plan.safety.default_action != PlannedAction::Trash
         || plan.safety.rollback_method != "system-trash+manifest"
     {
@@ -889,8 +898,10 @@ fn encode_os_string(value: &std::ffi::OsStr) -> String {
 mod tests {
     use super::*;
     use cleanr_core::{
-        Confidence, EntryKind, RuleTrust, SafetyPolicy, build_cleanup_plan,
-        build_cleanup_plan_with_policy,
+        AnalysisScanContext, CleanupPlanSourceScan, Confidence, EntryKind, RecommendationPolicy,
+        RecommendationState, ReportIntegrity, RuleTrust, SafetyPolicy, ScanBudgetExceeded,
+        ScanIssue, ScanIssueCode, UserSelection, build_analysis_report_with_scan_context,
+        build_cleanup_plan, build_cleanup_plan_from_analysis, build_cleanup_plan_with_policy,
     };
     use cleanr_core::{RuleHit, ScanEntry};
 
@@ -1143,6 +1154,106 @@ mod tests {
             .expect_err("cleanup without local authorization must be denied");
         assert!(error.to_string().contains("user authorization"));
         assert!(fake.trashed_paths().is_empty());
+    }
+
+    #[test]
+    fn cleanup_rejects_budget_exhausted_plan_before_manifest_or_trash() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("target");
+        fs::create_dir(&target).expect("create target");
+        let entries = vec![cleanup_entry(target, EntryKind::Directory, 0)];
+        let policy = SafetyPolicy::new(vec![], false);
+        let budgets = [ScanBudgetExceeded::EntryCount {
+            limit: 1,
+            observed: 2,
+        }];
+        let analysis = build_analysis_report_with_scan_context(
+            Utc::now(),
+            Utc::now(),
+            vec![temp.path().to_path_buf()],
+            &entries,
+            &[],
+            RecommendationPolicy::default(),
+            AnalysisScanContext {
+                budget_exceeded: &budgets,
+                safety_policy: Some(&policy),
+            },
+        )
+        .expect("analysis");
+        let mut plan = build_cleanup_plan_with_policy(
+            vec![temp.path().to_path_buf()],
+            vec![],
+            &entries,
+            &policy,
+        );
+        plan.source_scan = Some(CleanupPlanSourceScan {
+            analysis_id: analysis.analysis_id,
+            integrity: analysis.scan.integrity,
+            budget_exceeded: analysis.scan.budget_exceeded,
+        });
+        let fake = FakeTrashExecutor::default();
+        let authorization = CleanupAuthorization::explicit_user_confirmation();
+
+        let error = execute_cleanup_plan(&plan, &fake, temp.path(), Some(&authorization))
+            .expect_err("budget-exhausted plan must be denied");
+
+        assert!(error.to_string().contains("read-only"));
+        assert!(fake.trashed_paths().is_empty());
+        assert!(
+            list_execution_manifests(temp.path())
+                .expect("list manifests")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn cleanup_allows_explicit_selection_from_an_ordinary_partial_scan() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("target");
+        fs::create_dir(&target).expect("create target");
+        let entries = vec![cleanup_entry(target.clone(), EntryKind::Directory, 0)];
+        let policy = SafetyPolicy::new(vec![], false);
+        let analysis = build_analysis_report_with_scan_context(
+            Utc::now(),
+            Utc::now(),
+            vec![temp.path().to_path_buf()],
+            &entries,
+            &[ScanIssue {
+                code: ScanIssueCode::MetadataUnavailable,
+                path: Some(target.join("unreadable")),
+            }],
+            RecommendationPolicy::default(),
+            AnalysisScanContext {
+                budget_exceeded: &[],
+                safety_policy: Some(&policy),
+            },
+        )
+        .expect("ordinary partial analysis");
+        assert_eq!(analysis.scan.integrity, ReportIntegrity::Partial);
+        assert!(analysis.scan.budget_exceeded.is_empty());
+        assert_eq!(
+            analysis.candidates[0].recommendation.state,
+            RecommendationState::Review
+        );
+        let mut selection = UserSelection::default();
+        selection.select(analysis.candidates[0].id.clone());
+        let plan = build_cleanup_plan_from_analysis(
+            vec![temp.path().to_path_buf()],
+            vec![],
+            &entries,
+            &analysis,
+            &selection,
+            &policy,
+        )
+        .expect("ordinary partial analysis may be explicitly selected");
+        let fake = FakeTrashExecutor::default();
+        let authorization = CleanupAuthorization::explicit_user_confirmation();
+
+        let manifest = execute_cleanup_plan(&plan, &fake, temp.path(), Some(&authorization))
+            .expect("ordinary partial plan remains executable after explicit selection");
+
+        assert_eq!(manifest.summary.succeeded, 1);
+        assert_eq!(fake.trashed_paths(), vec![target]);
     }
 
     #[test]

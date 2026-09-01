@@ -67,6 +67,32 @@ jobs:
           done
           cargo run --locked -p cleanr-cli -- plugin validate "${plugin_dirs[@]}"
 
+  scan-platforms:
+    name: Scan tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.1
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run scan pipeline tests
+        run: >-
+          cargo test --locked --all-targets --all-features
+          -p cleanr-core -p cleanr-fs -p cleanr-tui
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest

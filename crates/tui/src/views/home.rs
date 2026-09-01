@@ -4,12 +4,7 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
     let content = fluid_content_rect(area, 160, 14);
 
     let candidate_count = app.plan.as_ref().map_or_else(
-        || {
-            app.entries
-                .iter()
-                .filter(|entry| !entry.rule_hits.is_empty())
-                .count()
-        },
+        || app.candidate_count_cached(),
         |plan| plan.summary.candidate_count,
     );
     let (selected_count, selected_size) = app.plan.as_ref().map_or((0, 0), |plan| {

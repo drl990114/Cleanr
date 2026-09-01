@@ -1,18 +1,22 @@
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use cleanr_config::{Config, default_config_path, default_state_dir};
 use cleanr_core::{
-    AnalysisReport, CleanupPlan, DecisionCode, GlobalScanEvidence, GlobalScanKind,
-    GlobalScanLocationEvidence, RecommendationPolicy, RecommendationState, SafetyPolicy,
-    ScanRequest, UserSelection, build_analysis_report_with_safety_policy,
-    build_cleanup_plan_from_analysis,
+    AnalysisReport, AnalysisScanContext, CleanupPlan, CleanupPlanBuildError, GlobalScanEvidence,
+    RecommendationPolicy, RecommendationState, SafetyPolicy, ScanRequest, UserSelection,
+    build_analysis_report_with_scan_context, build_cleanup_plan_from_analysis,
+    suppress_unrequested_global_candidates,
 };
-use cleanr_fs::{ResolvedScanRoots, ScanOptions, ScanReport, resolve_scan_roots, scan_paths};
+use cleanr_fs::{
+    ScanOptions, ScanReport, global_scan_evidence, resolve_scan_roots,
+    scan_resolved_paths_started_at,
+};
 use cleanr_rules::RuleRegistry;
 use cleanr_tasks::{
     CleanupAuthorization, ManifestRepository, SystemRestoreExecutor, TrashExecutor,
@@ -72,7 +76,11 @@ struct WorkflowScan {
 }
 
 pub fn scan(command: ScanCommand) -> Result<()> {
-    let scan = run_scan(command.config_path, command.request)?;
+    let scan = run_scan(
+        command.config_path,
+        command.request,
+        ScanPreparationMode::Evidence,
+    )?;
     if command.json {
         print_scan_json(&scan.report)?;
     } else {
@@ -91,13 +99,23 @@ pub fn scan(command: ScanCommand) -> Result<()> {
         if scan.report.summary.errors > 0 {
             println!("Scan errors: {}", scan.report.summary.errors);
         }
+        println!("Traversal workers used: {}", scan.report.workers_used);
+        if !scan.report.budget_exceeded.is_empty() {
+            println!(
+                "Scan budgets were reached; this partial result is read-only and cannot produce a cleanup plan."
+            );
+        }
     }
     Ok(())
 }
 
 /// Print a versioned evidence report. This command never creates a cleanup plan or mutates files.
 pub fn analyze(command: AnalyzeCommand) -> Result<()> {
-    let scan = run_scan(command.config_path, command.request)?;
+    let scan = run_scan(
+        command.config_path,
+        command.request,
+        ScanPreparationMode::Evidence,
+    )?;
     let safety = safety_policy(&scan.config, scan.config_path.clone());
     let report = build_analysis_report(&scan, recommendation_policy(&scan.config)?, &safety)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -105,13 +123,21 @@ pub fn analyze(command: AnalyzeCommand) -> Result<()> {
 }
 
 pub fn plan(command: PlanCommand) -> Result<()> {
-    let scan = run_scan(command.config_path, command.request)?;
+    let scan = run_scan(
+        command.config_path,
+        command.request,
+        ScanPreparationMode::Planning,
+    )?;
     let plan = build_plan(&scan, PlanSelection::Recommendations(command.selection))?;
     write_or_print_plan(&plan, command.output)
 }
 
 pub fn dry_run(command: DryRunCommand) -> Result<()> {
-    let scan = run_scan(command.config_path, command.request)?;
+    let scan = run_scan(
+        command.config_path,
+        command.request,
+        ScanPreparationMode::Planning,
+    )?;
     let plan = build_plan(&scan, PlanSelection::Recommendations(command.selection))?;
     if let Some(path) = command.output {
         write_cleanup_plan(&plan, &path)?;
@@ -155,6 +181,7 @@ pub fn clean(command: CleanCommand) -> Result<()> {
             command.plan_path.display()
         )
     })?;
+    ensure_plan_source_scan_is_executable(&expected_plan)?;
     if expected_plan.summary.selected_count == 0 {
         bail!("cleanup plan has no selected items");
     }
@@ -162,6 +189,7 @@ pub fn clean(command: CleanCommand) -> Result<()> {
     let scan = run_scan(
         command.config_path,
         ScanRequest::paths(expected_plan.scan_roots.clone()),
+        ScanPreparationMode::Planning,
     )?;
     let selected_paths = expected_plan
         .items
@@ -230,30 +258,48 @@ pub fn restore_run(run_id: &str, confirm: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_scan(config_path: Option<PathBuf>, request: ScanRequest) -> Result<WorkflowScan> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScanPreparationMode {
+    /// Preserve rule-derived candidates for read-only scan and analysis output, including partial
+    /// budget evidence.
+    Evidence,
+    /// Planning can never consume budget-limited evidence, so avoid rule annotation in that case.
+    Planning,
+}
+
+fn run_scan(
+    config_path: Option<PathBuf>,
+    request: ScanRequest,
+    preparation_mode: ScanPreparationMode,
+) -> Result<WorkflowScan> {
     let config_path_for_policy = config_path.clone().or_else(default_config_path);
     let config = load_config(config_path)?;
     let registry = RuleRegistry::load(&config)?;
+    let scan_started_at = Instant::now();
     let explicit_roots = request
         .paths
         .iter()
         .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
         .collect();
     let resolved = resolve_scan_roots(&request, &config.scan.global_kinds)?;
-    let roots = resolved.roots.clone();
     let options = ScanOptions {
         stay_on_filesystem: config.scan.stay_on_filesystem,
         ignore_dirs: config.scan.ignore_dirs.clone(),
         ignore_patterns: config.scan.ignore_patterns.clone(),
+        budgets: config.scan.budgets.limits()?,
+        ..ScanOptions::default()
     };
-    let mut report = if roots.is_empty() {
-        ScanReport::default()
-    } else {
-        scan_paths(&roots, &options)?
-    };
-    registry.annotate_entries_at(&mut report.entries, report.as_of);
+    let mut report = scan_resolved_paths_started_at(&resolved, &options, scan_started_at)?;
+    if preparation_mode == ScanPreparationMode::Evidence || report.budget_exceeded.is_empty() {
+        registry.annotate_entries_at(&mut report.entries, report.as_of);
+    }
     let roots = report.summary.roots.clone();
-    let global_scan = global_scan_evidence(&request, &config.scan.global_kinds, &resolved, &roots);
+    let global_scan = global_scan_evidence(
+        &request,
+        &config.scan.global_kinds,
+        &resolved,
+        &report.completed_roots,
+    );
     Ok(WorkflowScan {
         config,
         config_path: config_path_for_policy,
@@ -265,133 +311,26 @@ fn run_scan(config_path: Option<PathBuf>, request: ScanRequest) -> Result<Workfl
     })
 }
 
-fn global_scan_evidence(
-    request: &ScanRequest,
-    configured_global_kinds: &[GlobalScanKind],
-    resolved: &ResolvedScanRoots,
-    scan_roots: &[PathBuf],
-) -> GlobalScanEvidence {
-    if !request.include_global {
-        return GlobalScanEvidence::default();
-    }
-
-    let mut requested_kinds = if request.global_kinds.is_empty() {
-        configured_global_kinds.to_vec()
-    } else {
-        request.global_kinds.clone()
-    };
-    requested_kinds.sort();
-    requested_kinds.dedup();
-
-    let mut locations = resolved
-        .global_locations
-        .iter()
-        .filter_map(|location| {
-            let scan_root = scan_roots.iter().find(|root| {
-                location.path == root.as_path() || location.path.starts_with(root.as_path())
-            })?;
-            Some(GlobalScanLocationEvidence {
-                kind: location.kind,
-                label: location.label.clone(),
-                local_path: location.path.clone(),
-                scan_root: scan_root.clone(),
-            })
-        })
-        .collect::<Vec<_>>();
-    locations.sort_by(|left, right| {
-        left.kind
-            .cmp(&right.kind)
-            .then_with(|| left.label.cmp(&right.label))
-            .then_with(|| left.local_path.cmp(&right.local_path))
-            .then_with(|| left.scan_root.cmp(&right.scan_root))
-    });
-
-    GlobalScanEvidence {
-        requested_kinds,
-        locations,
-    }
-}
-
 fn build_analysis_report(
     scan: &WorkflowScan,
     policy: RecommendationPolicy,
     safety: &SafetyPolicy,
 ) -> Result<AnalysisReport> {
-    let mut report = build_analysis_report_with_safety_policy(
+    let mut report = build_analysis_report_with_scan_context(
         scan.report.as_of,
         Utc::now(),
         scan.roots.clone(),
         &scan.report.entries,
         &scan.report.issues,
         policy,
-        safety,
+        AnalysisScanContext {
+            budget_exceeded: &scan.report.budget_exceeded,
+            safety_policy: Some(safety),
+        },
     )?;
     report.scan.global = scan.global_scan.clone();
     suppress_unrequested_global_candidates(&mut report, &scan.explicit_roots);
     Ok(report)
-}
-
-fn suppress_unrequested_global_candidates(
-    report: &mut AnalysisReport,
-    explicit_roots: &[PathBuf],
-) {
-    let requested_kinds = report
-        .scan
-        .global
-        .requested_kinds
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    if requested_kinds.is_empty() {
-        return;
-    }
-
-    for candidate in &mut report.candidates {
-        if explicit_roots.iter().any(|root| {
-            candidate.local_path == *root || candidate.local_path.starts_with(root)
-        }) {
-            continue;
-        }
-        let max_depth = report
-            .scan
-            .global
-            .locations
-            .iter()
-            .filter(|location| {
-                candidate.local_path == location.local_path
-                    || candidate.local_path.starts_with(&location.local_path)
-            })
-            .map(|location| location.local_path.components().count())
-            .max();
-        let Some(max_depth) = max_depth else {
-            continue;
-        };
-        let belongs_to_requested_kind = report.scan.global.locations.iter().any(|location| {
-            location.local_path.components().count() == max_depth
-                && (candidate.local_path == location.local_path
-                    || candidate.local_path.starts_with(&location.local_path))
-                && requested_kinds.contains(&location.kind)
-        });
-        if belongs_to_requested_kind
-            || candidate.recommendation.state == RecommendationState::Excluded
-        {
-            continue;
-        }
-
-        candidate.recommendation.state = RecommendationState::Suppressed;
-        candidate.recommendation.initial_selected = false;
-        if !candidate
-            .recommendation
-            .codes
-            .contains(&DecisionCode::GlobalKindNotRequested)
-        {
-            candidate
-                .recommendation
-                .codes
-                .push(DecisionCode::GlobalKindNotRequested);
-            candidate.recommendation.codes.sort();
-        }
-    }
 }
 
 enum PlanSelection {
@@ -400,6 +339,9 @@ enum PlanSelection {
 }
 
 fn build_plan(scan: &WorkflowScan, requested_selection: PlanSelection) -> Result<CleanupPlan> {
+    if !scan.report.budget_exceeded.is_empty() {
+        return Err(CleanupPlanBuildError::ScanBudgetExceeded.into());
+    }
     let safety = safety_policy(&scan.config, scan.config_path.clone());
     let analysis = build_analysis_report(scan, recommendation_policy(&scan.config)?, &safety)?;
     let selection = match requested_selection {
@@ -408,14 +350,15 @@ fn build_plan(scan: &WorkflowScan, requested_selection: PlanSelection) -> Result
         }
         PlanSelection::ExactPaths(paths) => exact_selection(&analysis, &paths)?,
     };
-    Ok(build_cleanup_plan_from_analysis(
+    build_cleanup_plan_from_analysis(
         scan.roots.clone(),
         scan.registry.versions(),
         &scan.report.entries,
         &analysis,
         &selection,
         &safety,
-    ))
+    )
+    .context("failed to build cleanup plan from analysis")
 }
 
 fn selection_with_overrides(
@@ -516,6 +459,7 @@ fn ensure_plan_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> Resul
     let unchanged = expected.schema_version == current.schema_version
         && expected.scan_roots == current.scan_roots
         && expected.ruleset_versions == current.ruleset_versions
+        && source_scan_provenance_unchanged(expected, current)
         && expected.summary == current.summary
         && expected.items == current.items
         && expected.safety == current.safety;
@@ -525,6 +469,35 @@ fn ensure_plan_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> Resul
         );
     }
     Ok(())
+}
+
+fn ensure_plan_source_scan_is_executable(plan: &CleanupPlan) -> Result<()> {
+    if plan
+        .source_scan
+        .as_ref()
+        .is_some_and(|source| !source.budget_exceeded.is_empty())
+    {
+        bail!(
+            "cleanup plan came from a scan that exceeded a budget and is read-only; generate, review, and authorize a new complete plan"
+        );
+    }
+    Ok(())
+}
+
+fn source_scan_provenance_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> bool {
+    match (&expected.source_scan, &current.source_scan) {
+        (None, None) => true,
+        (Some(expected), Some(current)) => {
+            expected.integrity == current.integrity
+                && expected.budget_exceeded == current.budget_exceeded
+        }
+        // Plans written before source-scan provenance was added remain executable only when the
+        // fresh scan has no budget ledger. The current builder already refuses budget-limited
+        // analysis, while the rest of `ensure_plan_unchanged` still compares every plan item and
+        // safety field. A new plan losing provenance remains a downgrade and is rejected.
+        (None, Some(current)) => current.budget_exceeded.is_empty(),
+        (Some(_), None) => false,
+    }
 }
 
 fn recommendation_policy(config: &Config) -> Result<RecommendationPolicy> {
@@ -578,6 +551,9 @@ fn scan_json_value(report: &ScanReport) -> serde_json::Value {
     json!({
         "as_of": &report.as_of,
         "completeness": report.completeness(),
+        "workers_used": report.workers_used,
+        "completed_roots": &report.completed_roots,
+        "budget_exceeded": &report.budget_exceeded,
         "summary": report.summary,
         "entries": report.entries,
         "issues": &report.issues,
@@ -625,10 +601,10 @@ fn format_bytes(bytes: u64) -> String {
 mod tests {
     use super::*;
     use cleanr_core::{
-        Confidence, EntryKind, RuleHit, RuleMatchRole, RuleTrust, ScanEntry, ScanIssue,
-        ScanIssueCode,
+        Confidence, DecisionCode, EntryKind, GlobalScanKind, ReportIntegrity, RuleHit,
+        RuleMatchRole, RuleTrust, ScanBudgetExceeded, ScanEntry, ScanIssue, ScanIssueCode,
     };
-    use cleanr_fs::{GlobalScanRoot, ScanError};
+    use cleanr_fs::{GlobalScanRoot, ResolvedScanRoots, ScanError};
 
     #[test]
     fn scan_json_separates_structured_issues_from_local_diagnostics() {
@@ -641,6 +617,11 @@ mod tests {
                 path: Some(PathBuf::from("scope")),
                 message: "local diagnostic text".to_string(),
             }],
+            budget_exceeded: vec![ScanBudgetExceeded::IssueDetails {
+                limit: 1,
+                observed: 2,
+            }],
+            workers_used: 1,
             ..ScanReport::default()
         };
 
@@ -662,6 +643,8 @@ mod tests {
             }])
         );
         assert!(value["issues"][0].get("message").is_none());
+        assert_eq!(value["workers_used"], 1);
+        assert_eq!(value["budget_exceeded"][0]["kind"], "issue-details");
 
         let pathless_report = ScanReport {
             issues: vec![ScanIssue {
@@ -674,6 +657,42 @@ mod tests {
         let pathless_issue = &pathless_value["issues"][0];
         assert_eq!(pathless_issue["code"], "unknown");
         assert!(pathless_issue.get("path").is_none());
+    }
+
+    #[test]
+    fn budget_limited_plan_fails_without_creating_output() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        std::fs::write(temp.path().join("entry"), b"data")?;
+        let config_path = temp.path().join("config.toml");
+        let mut config = Config::default();
+        config.scan.budgets.max_entries = 1;
+        config.save_to(&config_path)?;
+        let output = temp.path().join("must-not-exist.json");
+
+        let error = plan(PlanCommand {
+            config_path: Some(config_path),
+            request: ScanRequest::paths(vec![temp.path().to_path_buf()]),
+            selection: SelectionOverrides::default(),
+            output: Some(output.clone()),
+        })
+        .expect_err("budget evidence must not produce a plan");
+
+        assert!(format!("{error:#}").contains("scan budget was exceeded"));
+        assert!(!output.exists());
+
+        let dry_run_output = temp.path().join("dry-run-must-not-exist.json");
+        let error = dry_run(DryRunCommand {
+            config_path: Some(temp.path().join("config.toml")),
+            request: ScanRequest::paths(vec![temp.path().to_path_buf()]),
+            selection: SelectionOverrides::default(),
+            json: false,
+            output: Some(dry_run_output.clone()),
+        })
+        .expect_err("budget evidence must not produce a dry-run plan");
+
+        assert!(format!("{error:#}").contains("scan budget was exceeded"));
+        assert!(!dry_run_output.exists());
+        Ok(())
     }
 
     #[test]
@@ -909,17 +928,104 @@ mod tests {
     }
 
     #[test]
-    fn authorized_plan_must_match_the_fresh_plan_except_for_creation_time() {
-        let expected = cleanr_core::build_cleanup_plan(vec![PathBuf::from("/repo")], vec![], &[]);
-        let mut current = expected.clone();
+    fn authorized_plan_must_match_content_and_scan_provenance() -> Result<()> {
+        let expected = empty_analysis_backed_plan()?;
+        let mut current = empty_analysis_backed_plan()?;
+        let expected_analysis_id = expected
+            .source_scan
+            .as_ref()
+            .context("expected plan should retain source scan provenance")?
+            .analysis_id
+            .clone();
+        let current_analysis_id = current
+            .source_scan
+            .as_ref()
+            .context("current plan should retain source scan provenance")?
+            .analysis_id
+            .clone();
+        assert_ne!(expected_analysis_id, current_analysis_id);
         current.created_at += chrono::Duration::seconds(1);
 
-        ensure_plan_unchanged(&expected, &current).expect("creation time is not plan content");
+        ensure_plan_unchanged(&expected, &current)?;
+
+        let mut legacy_expected = expected.clone();
+        legacy_expected.source_scan = None;
+        ensure_plan_unchanged(&legacy_expected, &current)?;
+
+        let mut budgeted_current_for_legacy = current.clone();
+        budgeted_current_for_legacy
+            .source_scan
+            .as_mut()
+            .context("current plan should retain source scan provenance")?
+            .budget_exceeded
+            .push(ScanBudgetExceeded::EntryCount {
+                limit: 100,
+                observed: 101,
+            });
+        assert!(ensure_plan_unchanged(&legacy_expected, &budgeted_current_for_legacy).is_err());
+
+        let mut missing_source = current.clone();
+        missing_source.source_scan = None;
+        assert!(ensure_plan_unchanged(&expected, &missing_source).is_err());
+
+        let mut changed_integrity = current.clone();
+        changed_integrity
+            .source_scan
+            .as_mut()
+            .context("current plan should retain source scan provenance")?
+            .integrity = ReportIntegrity::Partial;
+        assert!(ensure_plan_unchanged(&expected, &changed_integrity).is_err());
+
+        let mut changed_budget = current.clone();
+        changed_budget
+            .source_scan
+            .as_mut()
+            .context("current plan should retain source scan provenance")?
+            .budget_exceeded
+            .push(ScanBudgetExceeded::EntryCount {
+                limit: 100,
+                observed: 101,
+            });
+        assert!(ensure_plan_unchanged(&expected, &changed_budget).is_err());
 
         current.summary.selected_count = 1;
-        let error =
-            ensure_plan_unchanged(&expected, &current).expect_err("changed plan must be rejected");
+        let error = ensure_plan_unchanged(&expected, &current)
+            .err()
+            .context("changed plan must be rejected")?;
         assert!(error.to_string().contains("changed after authorization"));
+        Ok(())
+    }
+
+    #[test]
+    fn clean_rejects_budget_exhausted_plan_before_selection_or_rescan() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let mut plan = empty_analysis_backed_plan()?;
+        plan.source_scan
+            .as_mut()
+            .context("plan should retain source scan provenance")?
+            .budget_exceeded
+            .push(ScanBudgetExceeded::ElapsedTime {
+                limit_millis: 500,
+                observed_millis: 501,
+            });
+        assert_eq!(plan.summary.selected_count, 0);
+
+        let plan_path = temp.path().join("budget-exhausted-plan.json");
+        let plan_bytes = serde_json::to_vec(&plan)?;
+        std::fs::write(&plan_path, &plan_bytes)?;
+        let plan_sha256 = format!("{:x}", Sha256::digest(&plan_bytes));
+
+        let error = clean(CleanCommand {
+            config_path: Some(temp.path().join("must-not-be-read.toml")),
+            plan_path,
+            plan_sha256,
+            authorized_by_user: true,
+        })
+        .err()
+        .context("budget-exhausted plan must be rejected")?;
+
+        assert!(error.to_string().contains("scan that exceeded a budget"));
+        Ok(())
     }
 
     #[test]
@@ -1003,5 +1109,22 @@ mod tests {
             .to_string()
             .contains("both selected and deselected")
         );
+    }
+
+    fn empty_analysis_backed_plan() -> Result<CleanupPlan> {
+        let config = Config::default();
+        let scan = WorkflowScan {
+            config,
+            config_path: None,
+            registry: RuleRegistry::builtin()?,
+            roots: vec![PathBuf::from("/repo")],
+            explicit_roots: vec![PathBuf::from("/repo")],
+            global_scan: GlobalScanEvidence::default(),
+            report: ScanReport::default(),
+        };
+        build_plan(
+            &scan,
+            PlanSelection::Recommendations(SelectionOverrides::default()),
+        )
     }
 }
