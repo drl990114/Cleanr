@@ -1736,6 +1736,7 @@ fn push_developer_cache_roots(
 }
 
 fn push_browser_cache_roots(environment: &GlobalScanEnvironment, roots: &mut Vec<GlobalScanRoot>) {
+    #[cfg(all(unix, not(target_os = "ios"), not(target_os = "android")))]
     if let Some(home) = &environment.home_dir {
         #[cfg(target_os = "macos")]
         push_relative_global_roots(
@@ -2232,6 +2233,7 @@ mod tests {
         std::os::unix::fs::symlink(root.join("cache"), root.join("cache-link")).expect("symlink");
 
         let report = scan_paths(&[root.to_path_buf()], &ScanOptions::default()).expect("scan");
+        #[cfg(unix)]
         let link = report
             .entries
             .iter()
@@ -3008,7 +3010,8 @@ mod tests {
     fn global_scan_roots_use_environment_and_filter_nested_roots() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = temp.path().join("home");
-        let cache = home.join(".cache");
+        let data_local = home.join("AppData").join("Local");
+        let cache = data_local.join("D3DSCache");
         let pnpm = cache.join("pnpm");
         let downloads = home.join("Downloads");
         fs::create_dir_all(&pnpm).expect("pnpm cache");
@@ -3016,6 +3019,7 @@ mod tests {
         let environment = GlobalScanEnvironment {
             home_dir: Some(home.clone()),
             cache_dir: Some(cache.clone()),
+            data_local_dir: Some(data_local),
             download_dir: Some(downloads.clone()),
             ..GlobalScanEnvironment::default()
         };
@@ -3032,8 +3036,16 @@ mod tests {
         let pnpm = pnpm.canonicalize().expect("canonical pnpm");
         let downloads = downloads.canonicalize().expect("canonical downloads");
 
-        assert!(roots.iter().any(|root| root.path == cache));
-        assert!(roots.iter().any(|root| root.path == downloads));
+        assert!(
+            roots
+                .iter()
+                .any(|root| { root.path == cache && root.kind == GlobalScanKind::AppCaches })
+        );
+        assert!(
+            roots
+                .iter()
+                .any(|root| { root.path == downloads && root.kind == GlobalScanKind::Downloads })
+        );
         assert!(!roots.iter().any(|root| root.path == pnpm));
         assert!(!roots.iter().any(|root| root.path == home));
     }
@@ -3042,12 +3054,14 @@ mod tests {
     fn resolved_global_locations_survive_parent_root_deduplication() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = temp.path().join("home");
-        let cache = home.join(".cache");
+        let data_local = home.join("AppData").join("Local");
+        let cache = data_local.join("D3DSCache");
         let pnpm = cache.join("pnpm");
         fs::create_dir_all(&pnpm).expect("pnpm cache");
         let environment = GlobalScanEnvironment {
             home_dir: Some(home),
             cache_dir: Some(cache.clone()),
+            data_local_dir: Some(data_local),
             ..GlobalScanEnvironment::default()
         };
         let request = ScanRequest::global(vec![
@@ -3062,6 +3076,8 @@ mod tests {
 
         assert_eq!(resolved.roots, vec![cache.clone()]);
         assert_eq!(resolved.global_roots.len(), 1);
+        assert_eq!(resolved.global_roots[0].path, cache);
+        assert_eq!(resolved.global_roots[0].kind, GlobalScanKind::AppCaches);
         assert!(resolved.global_locations.iter().any(|location| {
             location.path == pnpm
                 && location.kind == GlobalScanKind::DeveloperCaches
@@ -3083,7 +3099,10 @@ mod tests {
             &environment,
         )
         .expect("resolve app cache root");
-        assert_eq!(app_only.roots, vec![cache]);
+        assert_eq!(app_only.roots, vec![cache.clone()]);
+        assert_eq!(app_only.global_roots.len(), 1);
+        assert_eq!(app_only.global_roots[0].path, cache);
+        assert_eq!(app_only.global_roots[0].kind, GlobalScanKind::AppCaches);
         assert!(app_only.global_locations.iter().any(|location| {
             location.path == pnpm && location.kind == GlobalScanKind::DeveloperCaches
         }));
