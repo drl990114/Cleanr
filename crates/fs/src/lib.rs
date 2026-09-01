@@ -1626,6 +1626,7 @@ fn push_global_root(
     });
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 fn push_relative_global_roots(
     roots: &mut Vec<GlobalScanRoot>,
     base: &Path,
