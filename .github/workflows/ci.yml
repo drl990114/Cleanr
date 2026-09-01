@@ -88,10 +88,14 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Run scan pipeline tests
-        run: >-
-          cargo test --locked --all-targets --all-features
-          -p cleanr-core -p cleanr-fs -p cleanr-tui
+      - name: Run core scan tests
+        run: cargo test --locked --all-targets --all-features -p cleanr-core
+
+      - name: Run filesystem scan tests
+        run: cargo test --locked --all-targets --all-features -p cleanr-fs
+
+      - name: Run TUI scan tests
+        run: cargo test --locked --all-targets --all-features -p cleanr-tui
 
   docs:
     name: Documentation
