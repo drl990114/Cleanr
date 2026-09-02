@@ -1342,7 +1342,7 @@ mod tests {
             modified_at: Some(as_of - Duration::days(100)),
             rule_hits: vec![],
         };
-        entry.rule_hits = registry.hits_for_at(&entry, as_of);
+        entry.rule_hits = registry.hits_for_at_on_platform(&entry, as_of, RulePlatform::Macos);
 
         let report = build_analysis_report(
             as_of,
@@ -1585,6 +1585,7 @@ mod tests {
     #[test]
     fn builtin_dev_covers_macos_global_caches_with_conservative_defaults() {
         let registry = RuleRegistry::builtin().expect("builtin rules load");
+        let as_of = Utc::now();
         let cases = [
             (
                 "/Users/me/Library/Caches/Homebrew",
@@ -1614,7 +1615,11 @@ mod tests {
 
         for (path, expected_rule, confidence, default_selected) in cases {
             let hit = registry
-                .hits_for(&test_entry(path, EntryKind::Directory))
+                .hits_for_at_on_platform(
+                    &test_entry(path, EntryKind::Directory),
+                    as_of,
+                    RulePlatform::Macos,
+                )
                 .into_iter()
                 .find(|hit| hit.rule_id == expected_rule)
                 .expect("macOS developer cache rule");
@@ -1736,6 +1741,7 @@ mod tests {
     #[test]
     fn builtin_system_covers_macos_routine_cleanup_without_preselecting_user_data() {
         let registry = RuleRegistry::builtin().expect("builtin rules load");
+        let as_of = Utc::now();
         let safe_cases = [
             (
                 "/Users/me/Library/Caches/com.apple.QuickLook.thumbnailcache",
@@ -1752,7 +1758,11 @@ mod tests {
         ];
         for (path, expected_rule) in safe_cases {
             let hit = registry
-                .hits_for(&test_entry(path, EntryKind::Directory))
+                .hits_for_at_on_platform(
+                    &test_entry(path, EntryKind::Directory),
+                    as_of,
+                    RulePlatform::Macos,
+                )
                 .into_iter()
                 .find(|hit| hit.rule_id == expected_rule)
                 .expect("safe macOS cleanup rule");
@@ -1766,7 +1776,7 @@ mod tests {
         );
         spotify.size_bytes = 20 * 1024 * 1024;
         let spotify_hit = registry
-            .hits_for(&spotify)
+            .hits_for_at_on_platform(&spotify, as_of, RulePlatform::Macos)
             .into_iter()
             .find(|hit| hit.rule_id == "macos-spotify-persistent-cache")
             .expect("Spotify review rule");
@@ -1784,7 +1794,11 @@ mod tests {
             ),
         ] {
             let hit = registry
-                .hits_for(&test_entry(path, EntryKind::File))
+                .hits_for_at_on_platform(
+                    &test_entry(path, EntryKind::File),
+                    as_of,
+                    RulePlatform::Macos,
+                )
                 .into_iter()
                 .find(|hit| hit.rule_id == expected_rule)
                 .expect("review-only macOS cleanup rule");
