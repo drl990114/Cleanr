@@ -452,37 +452,29 @@ fn trash_with_receipt(path: &Path) -> Result<RollbackReceipt> {
 
 #[cfg(target_os = "macos")]
 fn trash_with_receipt(path: &Path) -> Result<RollbackReceipt> {
-    use std::process::Command;
+    use objc2_foundation::{NSFileManager, NSURL};
 
     let absolute = absolute_path(path)?;
-    let script = "on run argv\n\
-        tell application \"Finder\"\n\
-        set trashedItem to delete POSIX file (item 1 of argv)\n\
-        set trashedAlias to trashedItem as alias\n\
-        return POSIX path of trashedAlias\n\
-        end tell\n\
-        end run";
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .arg(&absolute)
-        .output()
-        .context("failed to start Finder trash operation")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "failed to move {} to trash: {}",
-            absolute.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let trashed_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if trashed_path.is_empty() {
-        anyhow::bail!("Finder did not return the trashed item location");
-    }
+    let source_url = NSURL::from_file_path(&absolute)
+        .with_context(|| format!("failed to create a file URL for {}", absolute.display()))?;
+    let mut resulting_url = None;
+    NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&source_url, Some(&mut resulting_url))
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "failed to move {} to the macOS Trash: {error}",
+                absolute.display()
+            )
+        })?;
+    let trashed_path = resulting_url
+        .context("macOS did not return the trashed item location")?
+        .to_file_path()
+        .context("macOS returned an invalid trashed item location")?;
+
     Ok(RollbackReceipt {
         method: "system-trash".to_string(),
-        note: "Moved to the macOS Trash with the exact Finder trash location recorded.".to_string(),
-        locator: Some(format!("mac-path:{trashed_path}")),
+        note: "Moved to the macOS Trash with the exact system trash location recorded.".to_string(),
+        locator: Some(format!("mac-path:{}", trashed_path.display())),
     })
 }
 
@@ -1118,6 +1110,107 @@ mod tests {
                 .items
                 .iter()
                 .all(|item| item.status == ExecutionStatus::Trashed)
+        );
+    }
+
+    #[test]
+    fn cleanup_continues_after_an_individual_trash_failure() {
+        struct FailFirstTrashExecutor {
+            calls: Mutex<Vec<PathBuf>>,
+        }
+
+        impl CleanupExecutor for FailFirstTrashExecutor {
+            fn trash(&self, path: &Path) -> Result<RollbackReceipt> {
+                self.calls
+                    .lock()
+                    .expect("calls mutex")
+                    .push(path.to_path_buf());
+                if path.file_name().is_some_and(|name| name == "first.bin") {
+                    anyhow::bail!("simulated trash failure");
+                }
+                Ok(RollbackReceipt {
+                    method: "fake-trash".to_string(),
+                    note: "mixed-result test".to_string(),
+                    locator: Some(format!("fake:{}", path.display())),
+                })
+            }
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let first = temp.path().join("first.bin");
+        let second = temp.path().join("second.bin");
+        fs::write(&first, b"one").expect("first");
+        fs::write(&second, b"two").expect("second");
+        let plan = build_cleanup_plan(
+            vec![temp.path().to_path_buf()],
+            vec![],
+            &[
+                cleanup_entry(first.clone(), EntryKind::File, 3),
+                cleanup_entry(second.clone(), EntryKind::File, 3),
+            ],
+        );
+        let executor = FailFirstTrashExecutor {
+            calls: Mutex::new(Vec::new()),
+        };
+        let authorization = CleanupAuthorization::explicit_user_confirmation();
+
+        let manifest = execute_cleanup_plan(
+            &plan,
+            &executor,
+            temp.path().join("state"),
+            Some(&authorization),
+        )
+        .expect("execute");
+
+        assert_eq!(manifest.summary.attempted, 2);
+        assert_eq!(manifest.summary.succeeded, 1);
+        assert_eq!(manifest.summary.failed, 1);
+        assert_eq!(
+            executor.calls.lock().expect("calls mutex").as_slice(),
+            [first, second]
+        );
+        assert_eq!(manifest.items[0].status, ExecutionStatus::Failed);
+        assert_eq!(manifest.items[1].status, ExecutionStatus::Trashed);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_system_trash_round_trip_records_exact_locator() {
+        // Exercise a caller-selected volume while only trashing a test-owned directory.
+        let temp = std::env::var_os("CLEANR_MACOS_TRASH_TEST_PARENT").map_or_else(
+            || tempfile::tempdir().expect("tempdir"),
+            |parent| {
+                tempfile::Builder::new()
+                    .prefix(".cleanr-trash-round-trip-")
+                    .tempdir_in(parent)
+                    .expect("tempdir in requested parent")
+            },
+        );
+        let target = temp.path().join("旧 macOS 兼容 cache");
+        let nested_file = target.join("nested folder").join("artifact.bin");
+        fs::create_dir_all(nested_file.parent().expect("nested parent"))
+            .expect("create test directory");
+        fs::write(&nested_file, b"round trip").expect("seed file");
+
+        let receipt = trash_with_receipt(&target).expect("move test file to macOS Trash");
+        let trashed_path = receipt
+            .locator
+            .as_deref()
+            .and_then(|locator| locator.strip_prefix("mac-path:"))
+            .map(PathBuf::from)
+            .expect("exact macOS Trash locator");
+        let source_was_removed = !target.try_exists().expect("source existence");
+        let trash_item_existed = trashed_path.try_exists().expect("trash item existence");
+
+        restore_from_system_trash(&target, &receipt, Utc::now().timestamp())
+            .expect("restore test file from macOS Trash");
+
+        assert!(source_was_removed);
+        assert!(trash_item_existed);
+        assert!(target.is_dir());
+        assert_eq!(
+            fs::read(&nested_file).expect("restored contents"),
+            b"round trip"
         );
     }
 

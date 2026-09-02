@@ -97,6 +97,9 @@ jobs:
       - name: Run filesystem scan tests
         run: cargo test --locked --all-targets --all-features -p cleanr-fs
 
+      - name: Run cleanup task tests
+        run: cargo test --locked --all-targets --all-features -p cleanr-tasks
+
       - name: Run TUI scan tests
         run: cargo test --locked --all-targets --all-features -p cleanr-tui
 
