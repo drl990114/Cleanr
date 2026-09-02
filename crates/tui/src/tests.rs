@@ -144,6 +144,7 @@ fn test_rule_hit(rule_id: &str) -> RuleHit {
         default_selected: true,
         trust: RuleTrust::Builtin,
         match_role: cleanr_core::RuleMatchRole::Primary,
+        sources: Vec::new(),
     }
 }
 
@@ -763,6 +764,7 @@ fn completed_scan_atomically_commits_worker_resolved_scope() {
     let global_scan = cleanr_core::GlobalScanEvidence {
         requested_kinds: vec![GlobalScanKind::TempFiles],
         locations: Vec::new(),
+        os_managed: Vec::new(),
     };
     let (sender, receiver) = mpsc::channel();
     sender
@@ -803,6 +805,7 @@ fn structured_scan_failure_preserves_previous_scope() {
     let previous_global = cleanr_core::GlobalScanEvidence {
         requested_kinds: vec![GlobalScanKind::AppCaches],
         locations: Vec::new(),
+        os_managed: Vec::new(),
     };
     let (sender, receiver) = mpsc::channel();
     sender
@@ -951,6 +954,7 @@ fn tui_analysis_suppresses_candidates_from_unrequested_global_kinds() {
                 label: "pnpm cache".to_string(),
             },
         ],
+        os_managed: Vec::new(),
     };
 
     let mut app = app(scan_root.clone());

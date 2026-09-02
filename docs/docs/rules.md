@@ -22,6 +22,8 @@ Each rule match includes:
 | Risk note | What may break, slow down, or require a download afterward |
 | Default selection | Whether the rule asks to preselect the item |
 | Match role | `primary` for a specific rule, or `fallback` for broad evidence |
+| Platforms | Optional `macos`, `windows`, and/or `linux` restriction |
+| Sources | Revision-pinned projects used as adapted or audit-only evidence |
 
 When multiple rules match one entry, Cleanr retains every match as evidence.
 Rules with equivalent safety semantics resolve deterministically. A trusted
@@ -145,6 +147,26 @@ and
 No external cleaner database or executable is bundled. Platform-specific scan
 roots are registered only by the corresponding operating-system build; the
 shared `builtin-system` plugin supplies their declarative explanations.
+
+Additional reviewed coverage includes Windows browser and named Electron-app
+caches, user-level crash dumps as low-confidence diagnostics, Linux desktop
+thumbnail and selected Flatpak application caches, and platform-specific
+downloaded installers. Windows Update, macOS software updates, and Linux system
+package caches are reported as `os_managed`; they never become cleanup
+candidates or plan items.
+
+## Upstream source policy
+
+Built-in rules carry structured source metadata with a repository, full commit,
+license, and relationship. Permissively licensed sources may be translated with
+attribution. GPL and ShareAlike cleaner databases are `audited-against` only:
+they may reveal a coverage gap, but Cleanr independently verifies and writes the
+resulting rule instead of copying or bundling those databases. Run
+`node scripts/check-rule-sources.mjs` to validate the pinned source ledger.
+
+`platforms` prevents an otherwise valid path pattern from matching on a
+different operating system. Omitting it preserves the legacy cross-platform
+behavior.
 
 ## Enable or disable packs
 

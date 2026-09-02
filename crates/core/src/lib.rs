@@ -17,13 +17,13 @@ mod evidence;
 pub use evidence::{
     ANALYSIS_REPORT_SCHEMA_VERSION, ActivityEvidence, ActivitySource, ActivityStatus, AnalysisId,
     AnalysisReport, AnalysisScanContext, CandidateCoverage, CandidateEvidence, CandidateId,
-    DecisionCode, GlobalScanEvidence, GlobalScanLocationEvidence, MAX_RECOMMENDATION_AGE_DAYS,
-    OverlapEvidence, RecommendationDecision, RecommendationPolicy, RecommendationPolicyError,
-    RecommendationState, ReportIntegrity, RuleEvidence, RuleKey, RuleResolution,
-    RuleResolutionState, ScanBudgetExceeded, ScanBudgetLimits, ScanEvidence, ScanIssue,
-    ScanIssueCode, UserSelection, build_analysis_report, build_analysis_report_with_budget,
-    build_analysis_report_with_safety_policy, build_analysis_report_with_scan_context,
-    suppress_unrequested_global_candidates,
+    DecisionCode, GlobalManagedLocationEvidence, GlobalScanEvidence, GlobalScanLocationEvidence,
+    MAX_RECOMMENDATION_AGE_DAYS, OverlapEvidence, RecommendationDecision, RecommendationPolicy,
+    RecommendationPolicyError, RecommendationState, ReportIntegrity, RuleEvidence, RuleKey,
+    RuleResolution, RuleResolutionState, ScanBudgetExceeded, ScanBudgetLimits, ScanEvidence,
+    ScanIssue, ScanIssueCode, UserSelection, build_analysis_report,
+    build_analysis_report_with_budget, build_analysis_report_with_safety_policy,
+    build_analysis_report_with_scan_context, suppress_unrequested_global_candidates,
 };
 
 pub const CLEANUP_PLAN_SCHEMA_VERSION: &str = "cleanr.cleanup-plan.v1";
@@ -112,6 +112,50 @@ pub fn default_global_scan_kinds() -> Vec<GlobalScanKind> {
     GlobalScanKind::ALL.to_vec()
 }
 
+/// A constrained platform directory used as the anchor for plugin-provided scan locations.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScanLocationBase {
+    Home,
+    Cache,
+    DataLocal,
+    Data,
+    Temp,
+    Downloads,
+}
+
+/// Whether a known location may be traversed or is only reported as operating-system managed.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScanLocationMode {
+    #[default]
+    Scan,
+    OsManaged,
+}
+
+/// Declarative, path-relative global coverage contributed by a built-in or trusted plugin.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ScanLocationDefinition {
+    pub id: String,
+    pub label: String,
+    pub kind: GlobalScanKind,
+    pub platforms: Vec<RulePlatform>,
+    pub base: ScanLocationBase,
+    #[serde(default)]
+    pub relative_path: String,
+    #[serde(default)]
+    pub mode: ScanLocationMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ScanLocationPack {
+    pub id: String,
+    pub version: String,
+    pub locations: Vec<ScanLocationDefinition>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq)]
 #[serde(default)]
 pub struct ScanRequest {
@@ -154,6 +198,52 @@ pub enum RuleTrust {
     Builtin,
 }
 
+/// Operating systems a declarative cleanup rule may target.
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum RulePlatform {
+    Macos,
+    Windows,
+    Linux,
+}
+
+impl RulePlatform {
+    #[must_use]
+    pub const fn current() -> Option<Self> {
+        if cfg!(target_os = "macos") {
+            Some(Self::Macos)
+        } else if cfg!(target_os = "windows") {
+            Some(Self::Windows)
+        } else if cfg!(target_os = "linux") {
+            Some(Self::Linux)
+        } else {
+            None
+        }
+    }
+}
+
+/// How a Cleanr rule used an upstream open-source project during review.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuleSourceRelation {
+    Adapted,
+    AuditedAgainst,
+    IndependentlyVerified,
+}
+
+/// Non-sensitive, revision-pinned provenance for a cleanup rule.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuleSource {
+    pub id: String,
+    pub repository: String,
+    pub revision: String,
+    pub license: String,
+    pub relation: RuleSourceRelation,
+}
+
 /// Whether a matching rule is authoritative or only a broad fallback when no trusted primary
 /// rule matches the same candidate.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -187,6 +277,8 @@ pub struct RuleHit {
     pub trust: RuleTrust,
     #[serde(default)]
     pub match_role: RuleMatchRole,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<RuleSource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -268,6 +360,9 @@ impl Error for CleanupPlanBuildError {}
 pub struct RulesetVersion {
     pub id: String,
     pub version: String,
+    /// Immutable upstream inputs that materially shaped this ruleset version.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<RuleSource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -948,6 +1043,7 @@ mod tests {
                     default_selected: true,
                     trust: RuleTrust::Builtin,
                     match_role: RuleMatchRole::Primary,
+                    sources: Vec::new(),
                 }],
             },
             ScanEntry {
@@ -966,6 +1062,7 @@ mod tests {
                     default_selected: false,
                     trust: RuleTrust::Builtin,
                     match_role: RuleMatchRole::Primary,
+                    sources: Vec::new(),
                 }],
             },
         ];
@@ -991,6 +1088,7 @@ mod tests {
             default_selected: true,
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
         };
         let entries = [89_i64, 90, 91, 1]
             .into_iter()
@@ -1071,6 +1169,7 @@ mod tests {
                 default_selected: true,
                 trust: RuleTrust::Builtin,
                 match_role: RuleMatchRole::Primary,
+                sources: Vec::new(),
             }],
         }];
         let safety = SafetyPolicy::default();
@@ -1134,6 +1233,7 @@ mod tests {
             default_selected: true,
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
         };
         let entries = vec![
             ScanEntry {
@@ -1203,6 +1303,7 @@ mod tests {
             default_selected: true,
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
         };
         let make_entry = |rule_hits| ScanEntry {
             path: PathBuf::from("/repo/cache"),
@@ -1252,6 +1353,7 @@ mod tests {
             default_selected: true,
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
         };
         let entries = vec![
             ScanEntry {
@@ -1289,6 +1391,7 @@ mod tests {
             default_selected: true,
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
         };
         let modified_at = Utc::now();
         let newer_modified_at = modified_at + chrono::Duration::seconds(1);
@@ -1466,6 +1569,7 @@ mod tests {
                     default_selected: false,
                     trust: RuleTrust::Trusted,
                     match_role: RuleMatchRole::Primary,
+                    sources: Vec::new(),
                 }],
             },
             ScanEntry {
@@ -1484,6 +1588,7 @@ mod tests {
                     default_selected: true,
                     trust: RuleTrust::Trusted,
                     match_role: RuleMatchRole::Primary,
+                    sources: Vec::new(),
                 }],
             },
         ];
@@ -1522,6 +1627,7 @@ mod tests {
                 default_selected: true,
                 trust: RuleTrust::Trusted,
                 match_role: RuleMatchRole::Primary,
+                sources: Vec::new(),
             }],
         };
 
@@ -1546,6 +1652,7 @@ mod tests {
             default_selected,
             trust,
             match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
         };
         let entry = ScanEntry {
             path: PathBuf::from("/repo/cache"),

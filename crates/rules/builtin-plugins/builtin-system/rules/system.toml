@@ -4,6 +4,34 @@ version = "0.11.0"
 description = "Known user-level system cleanup candidates such as browser caches, app caches, logs, diagnostics, temporary files, and downloaded installers."
 categories = ["browser-cache", "application-cache", "temporary-files", "logs", "diagnostics", "downloads"]
 
+[[sources]]
+id = "dusty"
+repository = "https://github.com/yagcioglutoprak/dusty"
+revision = "acaa3f6a5e9b535892ce2301b0a57772a0ee430a"
+license = "MIT"
+relation = "adapted"
+
+[[sources]]
+id = "puremac"
+repository = "https://github.com/momenbasel/PureMac"
+revision = "376b2380b0bffe7d614258731a58732ed65d563b"
+license = "MIT"
+relation = "adapted"
+
+[[sources]]
+id = "bleachbit"
+repository = "https://github.com/bleachbit/bleachbit"
+revision = "ab0e4b94e29b8233adbe7ab010656e61b162c63d"
+license = "GPL-3.0-or-later"
+relation = "audited-against"
+
+[[sources]]
+id = "winapp2"
+repository = "https://github.com/MoscaDotTo/Winapp2"
+revision = "3c0156de665cc180edc76745e425412ccc4356ca"
+license = "CC-BY-SA-4.0"
+relation = "audited-against"
+
 # macOS targets were audited against the allowlists in the MIT-licensed
 # https://github.com/yagcioglutoprak/dusty source at commit
 # acaa3f6a5e9b535892ce2301b0a57772a0ee430a and the MIT-licensed
@@ -17,7 +45,7 @@ categories = ["browser-cache", "application-cache", "temporary-files", "logs", "
 # Winapp2 database at commit 3c0156de665cc180edc76745e425412ccc4356ca. Cleanr
 # does not import either rule database. Only stale regular files from the
 # current user's Temp and D3DSCache directories are included. Explorer
-# thumbnails, crash dumps, Windows Update and Delivery Optimization data,
+# thumbnails, system-owned crash dumps, Windows Update and Delivery Optimization data,
 # Prefetch, the Recycle Bin, the registry, and system-owned roots are excluded.
 
 [[rules]]
@@ -49,6 +77,8 @@ category = "browser-cache"
 match = { kind = "directory", path_glob = "**/{google-chrome,chromium,microsoft-edge}/**/{Cache,Code Cache,GPUCache,DawnCache,ShaderCache}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["linux"]
+source_refs = ["bleachbit"]
 action = "trash"
 reason = "Browser cache directories contain downloaded web resources that browsers recreate automatically."
 risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
@@ -71,6 +101,8 @@ category = "browser-cache"
 match = { kind = "directory", path_glob = "**/Microsoft Edge/**/{Cache,Code Cache,GPUCache,DawnCache,ShaderCache}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Microsoft Edge cache directories contain downloaded web resources that Edge recreates automatically."
 risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
@@ -93,6 +125,8 @@ category = "browser-cache"
 match = { kind = "directory", path_glob = "**/Library/Caches/{Google,Chromium,Microsoft Edge,Firefox,BraveSoftware,Arc,com.apple.Safari}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "These macOS Library/Caches roots contain rebuildable browser cache data, not browser profiles."
 risk_note = "Quit the owning browser first; cached web content and previews will need to be downloaded or regenerated."
@@ -115,6 +149,8 @@ category = "browser-cache"
 match = { kind = "directory", path_glob = "**/Library/Caches/Arc", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Arc's Library/Caches directory contains rebuildable browser cache data."
 risk_note = "This does not target Arc's browser profile or application-support data; quit Arc first and expect cached content to be downloaded again."
@@ -126,6 +162,8 @@ category = "browser-cache"
 match = { kind = "directory", path_glob = "**/com.apple.Safari/**", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Safari cache directories contain downloaded web resources that Safari recreates automatically."
 risk_note = "This targets Safari cache locations, not history, cookies, saved passwords, or browser profiles."
@@ -137,6 +175,8 @@ category = "application-cache"
 match = { kind = "directory", path_glob = "**/Library/Caches/com.apple.QuickLook.thumbnailcache", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Quick Look thumbnails are generated previews that macOS recreates on demand."
 risk_note = "Finder may temporarily show missing previews while macOS regenerates thumbnails."
@@ -148,6 +188,8 @@ category = "application-cache"
 match = { kind = "directory", path_glob = "**/Library/Application Support/{Slack,discord,Code,Cursor,Signal,obsidian,Notion}/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "These named cache directories contain generated desktop application resources, code, or GPU data."
 risk_note = "Quit the owning application first; its next launch may be slower while the cache is rebuilt."
@@ -159,6 +201,8 @@ category = "application-cache"
 match = { kind = "directory", path_glob = "**/Library/Containers/com.microsoft.teams2/Data/Library/Caches", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "The sandboxed Teams cache directory contains generated application cache data."
 risk_note = "Quit Teams first; the next launch may need to rebuild local cache data and fetch remote content."
@@ -170,6 +214,8 @@ category = "application-cache"
 match = { kind = "directory", path_glob = "**/Library/Application Support/zoom.us/AutoUpdater", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Zoom's AutoUpdater directory contains downloaded update installers that can be fetched again."
 risk_note = "Quit Zoom first; a future update may need to download its installer again."
@@ -181,6 +227,8 @@ category = "application-cache"
 match = { kind = "directory", path_glob = "**/Library/Application Support/Spotify/PersistentCache", min_size = 10485760 }
 confidence = "medium"
 default_selected = false
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Spotify stores downloaded media cache data in PersistentCache."
 risk_note = "Review before cleaning; cached or offline media may need to be downloaded again and can consume significant bandwidth."
@@ -192,6 +240,8 @@ category = "application-cache"
 match = { kind = "directory", path_glob = "**/Library/Caches/*", min_size = 10485760 }
 confidence = "medium"
 default_selected = false
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 match_role = "fallback"
 action = "trash"
 reason = "Application cache directories often contain rebuildable data, but ownership varies by app."
@@ -204,6 +254,8 @@ category = "logs"
 match = { kind = "file", path_glob = "**/Library/Logs/**", min_size = 10485760 }
 confidence = "medium"
 default_selected = false
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Large user-level log files can grow over time and are useful cleanup candidates after review."
 risk_note = "Logs may be needed for debugging, support, security investigation, or audit history."
@@ -215,6 +267,8 @@ category = "diagnostics"
 match = { kind = "file", path_glob = "**/Library/Logs/DiagnosticReports/**", min_size = 1048576 }
 confidence = "low"
 default_selected = false
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Diagnostic reports record application and system crashes and can accumulate over time."
 risk_note = "Inspect reports before cleaning; they may be needed to diagnose unresolved crashes or provide information to support teams."
@@ -226,6 +280,8 @@ category = "diagnostics"
 match = { kind = "file", path_glob = "**/Library/DiagnosticReports/**", min_size = 1048576 }
 confidence = "low"
 default_selected = false
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Diagnostic reports record application and system crashes and can accumulate over time."
 risk_note = "Inspect reports before cleaning; they may be needed to diagnose unresolved crashes or provide information to support teams."
@@ -237,10 +293,51 @@ category = "application-cache"
 match = { kind = "directory", path_glob = "**/.cache/*", min_size = 10485760 }
 confidence = "medium"
 default_selected = false
+platforms = ["linux"]
+source_refs = ["bleachbit"]
 match_role = "fallback"
 action = "trash"
 reason = "Application cache directories often contain rebuildable data, but ownership varies by app."
 risk_note = "Review before cleaning; some apps may keep useful offline data or local working state in cache folders."
+
+[[rules]]
+id = "linux-desktop-thumbnail-cache"
+label = "Linux desktop thumbnail cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/.cache/thumbnails", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["linux"]
+source_refs = ["bleachbit"]
+action = "trash"
+reason = "Desktop thumbnail caches contain generated image previews that are recreated on demand."
+risk_note = "File managers may temporarily show missing previews while thumbnails are regenerated."
+
+[[rules]]
+id = "linux-flatpak-application-cache"
+label = "Flatpak application cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/.var/app/*/cache", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+source_refs = ["bleachbit"]
+action = "trash"
+reason = "Flatpak applications use the cache subdirectory for generated or downloadable cache data."
+risk_note = "Review before cleaning; some applications may keep offline content or expensive-to-rebuild data in their cache."
+
+[[rules]]
+id = "windows-electron-app-cache"
+label = "Windows desktop application cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/AppData/{Local,Roaming}/{slack,Discord,Code,Cursor,Signal,obsidian,Notion}/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
+action = "trash"
+reason = "These named directories contain generated desktop application resource, code, or GPU caches."
+risk_note = "Quit the owning application first; the next launch may be slower while its cache is rebuilt."
 
 [[rules]]
 id = "windows-stale-directx-shader-cache-file"
@@ -249,6 +346,8 @@ category = "application-cache"
 match = { kind = "file", path_glob = "**/AppData/Local/D3DSCache/**", max_age_days = 30 }
 confidence = "high"
 default_selected = true
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
 action = "trash"
 reason = "This is a generated graphics shader cache file in the current user's Windows D3DSCache directory and it has not been modified for at least 30 days."
 risk_note = "Windows regenerates this cache as needed, so a later graphics application launch may spend time recompiling shaders; Cleanr does not stop applications, and a file Windows keeps locked remains in place as a failed item."
@@ -260,9 +359,24 @@ category = "temporary-files"
 match = { kind = "file", path_glob = "**/AppData/Local/Temp/**", max_age_days = 30 }
 confidence = "high"
 default_selected = true
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
 action = "trash"
 reason = "This is a regular file in the current user's Windows temporary directory and it has not been modified for at least 30 days."
 risk_note = "The Temp directory and its subdirectories are never selected; Cleanr does not stop applications, and a file Windows keeps locked remains in place as a failed item."
+
+[[rules]]
+id = "windows-user-crash-dump"
+label = "Windows user crash dump"
+category = "diagnostics"
+match = { kind = "file", path_glob = "**/AppData/Local/CrashDumps/*.dmp", min_size = 1048576 }
+confidence = "low"
+default_selected = false
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
+action = "trash"
+reason = "User-level crash dumps record failed application processes and may accumulate over time."
+risk_note = "Inspect before cleaning; crash dumps may be needed for debugging, support, or security investigation."
 
 [[rules]]
 id = "large-temporary-file"
@@ -305,6 +419,7 @@ category = "downloads"
 match = { kind = "file", extension = "dmg", path_glob = "**/Downloads/**", min_size = 1048576 }
 confidence = "low"
 default_selected = false
+platforms = ["macos"]
 action = "trash"
 reason = "Downloaded disk images are often removable after the application has been installed."
 risk_note = "This is user data; keep installers needed for offline reinstall, rollback, or archival."
@@ -316,6 +431,7 @@ category = "downloads"
 match = { kind = "file", extension = "pkg", path_glob = "**/Downloads/**", min_size = 1048576 }
 confidence = "low"
 default_selected = false
+platforms = ["macos"]
 action = "trash"
 reason = "Downloaded installer packages are often removable after installation."
 risk_note = "This is user data; keep installers needed for offline reinstall, rollback, or archival."
@@ -327,6 +443,7 @@ category = "downloads"
 match = { kind = "file", extension = "mpkg", path_glob = "**/Downloads/**", min_size = 1048576 }
 confidence = "low"
 default_selected = false
+platforms = ["macos"]
 action = "trash"
 reason = "Downloaded installer meta-packages are often removable after installation."
 risk_note = "This is user data; keep installers needed for offline reinstall, rollback, or archival."
@@ -341,3 +458,27 @@ default_selected = false
 action = "trash"
 reason = "Downloaded disk images are often removable after installation or use."
 risk_note = "This is user data; keep images needed for offline reinstall, virtual machines, recovery, or archival."
+
+[[rules]]
+id = "downloaded-windows-installer"
+label = "Downloaded Windows installer"
+category = "downloads"
+match = { kind = "file", path_glob = "**/Downloads/**", extension = "msi", min_size = 1048576 }
+confidence = "low"
+default_selected = false
+platforms = ["windows"]
+action = "trash"
+reason = "Downloaded installer packages are often removable after installation."
+risk_note = "This is user data; keep installers needed for offline reinstall, repair, rollback, or archival."
+
+[[rules]]
+id = "downloaded-linux-package"
+label = "Downloaded Linux package"
+category = "downloads"
+match = { kind = "file", path_glob = "**/Downloads/**", extension = "deb", min_size = 1048576 }
+confidence = "low"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "Downloaded distribution packages are often removable after installation."
+risk_note = "This is user data; keep packages needed for offline reinstall, rollback, or archival."

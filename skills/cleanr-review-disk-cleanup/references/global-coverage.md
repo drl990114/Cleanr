@@ -16,8 +16,8 @@ Use only these user-level categories:
 - `browser-caches`: supported browser cache locations. Review only candidates
   for rebuildable cache, code cache, or GPU cache data. Never select a profile,
   cookie, history, password, service worker, login token, or saved session.
-- `app-caches`: supported user-level application caches. Ask the user to quit
-  an affected app before selecting its cache.
+- `app-caches`: supported user-level application caches. Record the affected
+  applications so the final confirmation can require that they are closed.
 - `logs`: supported user-level logs. System journals and system-owned logs stay
   outside Cleanr's delegated workflow.
 - `temp-files`: supported user temporary locations. A scan root is never itself
@@ -47,12 +47,38 @@ cleanr analyze --global \
 Remove every category the user did not approve. Do not add `downloads` by
 default.
 
+## Apply platform defaults
+
+- On macOS, a routine review may include `browser-caches`, `app-caches`,
+  `logs`, and `temp-files`. Add `developer-caches` only when the user includes
+  Homebrew, package-manager, or Xcode caches. Exclude Trash, Mail, iOS backups,
+  Time Machine snapshots, browser service workers, and system-owned roots.
+- On Linux, add only the categories named by the user. Keep system journals,
+  system package-manager state, snapshots, Trash, and system-owned roots
+  outside delegated cleanup.
+- On Windows, keep a conservative routine to `app-caches` and `temp-files`.
+  Its automatically selectable system rules are limited to
+  `windows-stale-directx-shader-cache-file` and
+  `windows-stale-user-temporary-file`, which match stale regular files rather
+  than the containing directories. Ask separately before browser or developer
+  caches. Explorer thumbnail databases, system-owned crash dumps, Windows
+  Update, Delivery Optimization, Prefetch, Downloads, registry data, the
+  Recycle Bin, and system-owned roots stay outside the routine. Locked files
+  remain in place as recorded failures.
+
+Do not interrupt early to ask the user to quit an application. Add the affected
+applications to the final human-readable plan summary and make quitting them a
+condition of the single execution confirmation. Cleanr does not stop
+applications.
+
 ## Build the coverage ledger
 
-For global analysis, read `scan.global.requested_kinds` and
-`scan.global.locations`. Each location has a `kind`, human-readable `label`,
-`local_path`, and the parent-deduplicated `scan_root` that covered it. Keep raw
-paths local.
+For global analysis, read `scan.global.requested_kinds`,
+`scan.global.locations`, and `scan.global.os_managed`. Each location has a
+`kind`, human-readable `label`, `local_path`, and the parent-deduplicated
+`scan_root` that covered it. Each OS-managed entry has only an `id`, `kind`,
+and human-readable `label`: it deliberately contains no path and can never be
+a scan root or candidate. Keep raw paths local.
 
 Report one row for every approved Cleanr category and every requested
 OS-managed item. Use exactly one of these states:
@@ -80,7 +106,10 @@ Apply the states conservatively:
 5. Use `found-candidates` when the category has assigned candidates. Otherwise
    use `checked-empty` only when at least one named location exists and its
    coverage is complete; use `no-known-location` when none exists.
-6. List excluded, unrequested, and OS-managed items separately. Never describe
+6. Use `os-managed` only for entries explicitly present in
+   `scan.global.os_managed`; do not infer this state from a broad parent root or
+   invoke a native cleanup command to fill a coverage gap.
+7. List excluded, unrequested, and OS-managed items separately. Never describe
    them as cleaned or checked-empty.
 
 For each `found-candidates` row, summarize count, size, recommendation states,

@@ -4,4 +4,4 @@ name = "Cleanr system cleanup rules"
 version = "0.11.0"
 description = "Reviewable macOS, Windows, and cross-platform cleanup candidates from known user-level system locations."
 cleanr_version = ">=0.1.0"
-capabilities = ["rules"]
+capabilities = ["rules", "scan-locations"]

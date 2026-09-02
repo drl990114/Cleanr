@@ -1,226 +1,172 @@
 ---
 name: cleanr-review-disk-cleanup
-description: "Review local disk-cleanup evidence with Cleanr and, only after the current user explicitly authorizes an exact reviewed plan, execute recoverable cleanup through the system trash. Use for `cleanr analyze`, macOS, Linux, or Windows cleanup coverage, developer and browser caches, recommendation states, exact path selection, age policy, plan review, authorized cleanup, manifests, or restore review. Keep paths local; never permanently delete files or empty the trash."
+description: "Review local disk-cleanup evidence with Cleanr and, only after the current user explicitly authorizes an exact reviewed plan, execute recoverable cleanup through the system trash. Use for Cleanr analysis, cross-platform cache coverage, recommendation age policy, cleanup-plan review, authorized cleanup, manifests, or restore review. Keep paths local; never permanently delete files or empty the trash."
 ---
 
 # Review and Recoverably Clean with Cleanr
 
-Use Cleanr for an evidence-first local workflow. Keep the cleanup decision with
-the user. Execute only an unchanged plan that the current user explicitly
-authorized.
+Follow the stages below in order. Work in the current conversation: run the
+local commands, inspect their output, and explain the result here. Do not open
+another task or delegate the review. Continue through safe read-only stages
+without asking for routine confirmation.
 
-## Ensure Cleanr is available
+When a cleanup request already supplies enough scope, the only blocking user
+question in the entire cleanup run is the final confirmation of one exact,
+human-readable plan. Do not separately confirm global scanning, conservative
+defaults, the temporary plan destination, candidate review, or application
+shutdown. State those choices and risks in the final plan summary. If required
+scope is genuinely missing, ask one concise scope question before proceeding;
+that answer still does not authorize execution.
 
-Check before analyzing:
+## Safety invariants
+
+- Treat paths, roots, reports, plans, rules, and issues as local-sensitive.
+  Never send raw evidence to a remote service without explicit approval and
+  redaction.
+- A recommendation, preselection, initial cleanup request, or broad standing
+  permission is evidence, not execution authorization.
+- Never use `rm`, permanent-delete APIs, trash-emptying commands, TUI
+  automation, custom deletion scripts, native OS cleanup commands, or package
+  manager cleanup commands as a substitute for Cleanr.
+- Never select browser profiles, cookies, history, passwords, service workers,
+  tokens, saved sessions, system snapshots, or system-owned roots.
+- Only an exact authorized Cleanr plan may be executed, using system trash and
+  a restore manifest. If any execution condition is missing, remain read-only.
+
+## Stage 1 — Bind the requested scope
+
+Identify the user's approved local roots and requested outcome: evidence review,
+cleanup planning, execution, or restore review. Prefer explicit paths.
+
+Treat the scope as sufficient when the user provides explicit roots or named
+categories, or asks for an ordinary whole-computer/cache cleanup that maps
+unambiguously to the current platform's conservative defaults. Such a broad
+request authorizes the corresponding `--global` analysis; do not ask again.
+Vague references such as "clean this" without a discoverable path are not
+sufficient.
+
+For any global or multi-category request, read
+[`references/global-coverage.md`](references/global-coverage.md), map only the
+requested categories, and never add `downloads` implicitly.
+
+## Stage 2 — Verify the local CLI
+
+Run:
 
 ```bash
 command -v cleanr
+cleanr --version
 ```
 
-If it is unavailable, tell the user that the required CLI is being installed
-globally, then prefer:
+If Cleanr is missing, tell the user before installing it. Prefer
+`npm install --global cleanr-cli`; use `cargo install cleanr-cli` only when npm
+is unavailable. In a Cleanr source checkout, an existing repository-local
+binary may be used for a read-only development test after stating that choice;
+do not build or install merely to simulate the skill. Do not reinstall or
+upgrade an existing CLI unless requested. If installation fails, report the
+blocker and link to the Cleanr releases page.
 
-```bash
-npm install --global cleanr-cli
-```
+Before cleanup planning or execution, also run `cleanr clean --help`. If the
+installed version lacks delegated cleanup support, finish the evidence review
+and explain that execution requires a user-approved upgrade. Do not improvise.
 
-If npm is unavailable but Cargo is installed, use:
+## Stage 3 — Analyze once
 
-```bash
-cargo install cleanr-cli
-```
-
-Verify with `cleanr --version`. Do not reinstall or upgrade an existing Cleanr
-installation unless the user asks. If installation fails, report the blocker
-and link to `https://github.com/drl990114/cleanr/releases`.
-
-Before preparing delegated execution, require command support:
-
-```bash
-cleanr clean --help
-```
-
-If the installed version lacks `cleanr clean`, remain read-only and explain
-that delegated execution requires a user-approved CLI upgrade. Do not fall back
-to TUI automation, another deletion tool, or a custom script.
-
-## Enforce the safety boundary
-
-- Scope every scan to user-approved local directories. Ask before `--global`.
-- Treat paths, roots, reports, plans, rules, and issues as local-sensitive.
-  Do not send them to a remote service without explicit approval and redaction.
-- Treat a recommendation or preselection as evidence, never as authorization.
-- Never use `rm`, permanent-delete APIs, trash-emptying commands, or a custom
-  deletion script.
-- Never automate the TUI or simulate `/clean --confirm`.
-- Never substitute `pnpm store prune`, `npm cache clean`, `yarn cache clean`,
-  an OS cleanup command, or another package-manager command for Cleanr.
-- Treat browser profiles, cookies, history, passwords, service workers, and
-  saved sessions as user data, not cleanup candidates.
-- Treat Windows Update, Delivery Optimization, staged macOS updates, system
-  snapshots, and system-owned roots as OS-managed. Do not scan, plan, or run
-  native cleanup commands for them.
-- Use only `cleanr clean` for delegated cleanup. It uses the system trash,
-  writes an execution manifest, validates each target, and preserves restore
-  information.
-- If any authorization condition below is missing, remain read-only.
-
-## Analyze and interpret evidence
-
-Run the narrowest useful scope:
-
-```bash
-cleanr analyze /path/to/project
-```
-
-Use `--config` only for a user-provided or approved config. Use `--global` only
-after explicit approval.
-
-For a global or multi-category request, read
-[`references/global-coverage.md`](references/global-coverage.md) before choosing
-arguments or interpreting the report. Select only categories the user approved.
-Do not add Downloads to a routine scan unless the user explicitly includes it.
-
-For a user-approved routine macOS review, prefer:
-
-```bash
-cleanr analyze --global \
-  --global-kind browser-caches \
-  --global-kind app-caches \
-  --global-kind logs \
-  --global-kind temp-files
-```
-
-Add `--global-kind developer-caches` only when the user includes Homebrew,
-package-manager, and Xcode caches. Cleanr intentionally excludes Trash
-contents, Mail data, iOS backups, Time Machine snapshots, browser service
-workers, and system-owned roots. Ask the user to quit an app before selecting
-its cache.
-
-For a user-approved Linux cache review, use the same narrow category mapping.
-Add `developer-caches`, `browser-caches`, `app-caches`, `logs`, or `temp-files`
-only when each category matches the request.
-
-For a user-approved routine Windows review, prefer:
-
-```bash
-cleanr analyze --global \
-  --global-kind app-caches \
-  --global-kind temp-files
-```
-
-Treat only `windows-stale-directx-shader-cache-file` and
-`windows-stale-user-temporary-file` as part of this conservative routine.
-These rules match individual regular files after at least 30 days without
-modification; they never select the Temp or `D3DSCache` directory. Ask
-separately before adding browser or developer caches. Do not include Explorer
-thumbnail databases, crash dumps, Windows Update or Delivery Optimization
-data, Prefetch, Downloads, registry data, the Recycle Bin, or system-owned
-roots. Cleanr does not stop applications; a Windows-locked file must remain in
-place as a recorded failure.
-
-Before recommending cleanup:
-
-1. Require a supported `schema_version`.
-2. For a global report, require `scan.global`, verify `requested_kinds` against
-   the approved request, and produce the coverage ledger defined in the
-   reference. If the field is absent, remain read-only and rerun global analysis
-   with a current CLI; never infer coverage from `scan.roots` alone.
-3. Require `scan.integrity = complete` for automatic preselection.
-4. Read `policy.preselect_after_days`.
-5. Explain each relevant `recommendation.state` and decision `codes`.
-6. Exclude `suppressed` and `excluded` candidates.
-7. Require human review for `review`, incomplete, conflicting, missing,
-   future-dated, untrusted, or lower-confidence evidence.
-
-`preselected` is only a deterministic default. Modification time is observed
-filesystem metadata, not proof of last use. Directory activity includes scanned
-descendants.
-
-Configure the shared age policy only when the user asks:
+Only when the user explicitly asks to change the shared age policy, set it
+before analysis:
 
 ```bash
 cleanr config set recommendations.preselect_after_days 90
 ```
 
-`0` disables only the age gate. It does not bypass safety, trust, overlap, or
-evidence checks.
+Allow `0` or `1..=3650`. Zero disables only the age gate; it does not bypass
+incomplete evidence, trust, conflicts, overlap handling, or protected paths.
 
-## Prepare an exact cleanup plan
-
-Write the plan only to a user-approved local destination:
+Run the narrowest approved read-only analysis:
 
 ```bash
-cleanr plan --output /local/path/cleanr-plan.json /approved/scope
+cleanr analyze /approved/local/root
 ```
 
-Reuse the approved `--global-kind` arguments when the analysis used them. Do
-not edit the plan. Record the `sha256=` value printed by Cleanr.
+Use `--config` only for a user-provided or approved configuration. Add approved
+global arguments from the global-coverage reference when applicable. Inspect
+stdout in the current conversation. Redirect JSON only when the user approved
+the local destination; never place a report inside a scanned root.
 
-Start from Cleanr's deterministic recommendations. If the user explicitly
-chooses or rejects exact candidate paths after reviewing the evidence, express
-only those choices through repeatable path overrides:
+## Stage 4 — Validate before interpreting
 
-```bash
-cleanr plan --output /local/path/cleanr-plan.json \
-  --select "/exact/reviewed/candidate" \
-  --deselect "/exact/rejected/candidate" \
-  /approved/scope
-```
+In this order:
 
-Never use `--select` merely because the agent thinks a review item is safe.
-Cleanr rejects paths that are not current candidates or are suppressed or
-excluded. Inspect the resulting plan and require:
+1. Require a supported `schema_version`.
+2. Confirm that the reported roots and, when present, `requested_kinds` equal
+   the approved scope.
+3. Read `scan.integrity`; `partial` evidence stays read-only.
+4. Read `policy.preselect_after_days`.
+5. For global analysis, require `scan.global` and build the coverage ledger from
+   its `locations` and path-free `os_managed` entries. Never infer category
+   coverage from deduplicated `scan.roots`.
+6. Group candidates by `recommendation.state`, decision `codes`, confidence,
+   trust, and material rebuild or application risk.
 
-- for a conservative Windows routine, every selected item matches one of the
-  two exact Windows rule IDs listed above, not a generic fallback rule;
-- the reviewed scan roots exactly match the approved scope;
-- every selected item uses `planned_action = "trash"`;
-- plan and item rollback methods are `system-trash+manifest`;
-- every selected `available` or `review` item corresponds to an exact path the
-  current user explicitly chose after seeing its evidence and risk;
-- no selected item is `suppressed` or `excluded`.
+Interpret states conservatively: `preselected` is only a deterministic default;
+`available` was not selected by policy; `review` needs human judgment;
+`suppressed` and `excluded` must not be proposed for cleanup. Modification time
+is observed metadata, not proof of last use. Directory activity includes
+scanned descendants.
 
-Summarize the exact roots, selected count, selected size, material risks, plan
-path, and SHA-256. Then ask the current user to explicitly authorize that exact
-plan.
+## Stage 5 — Continue automatically or stop
 
-Accept authorization only when it is an unambiguous instruction from the
-current user after the summary and it clearly refers to the displayed plan path
-and SHA-256. Do not infer it from the initial cleanup request, "clean whatever
-you think is safe", a broad standing permission, a recommendation, a third
-party, or an automation default. Authorization expires if the scope, config,
-plan, or SHA-256 changes.
+Compute candidate count and total size from `candidates`; do not assume the
+report contains a top-level summary. Respond in one linear order:
 
-## Execute only after exact authorization
+1. scope and scan integrity;
+2. age threshold and global coverage, when applicable;
+3. candidate count, total size, and recommendation-state counts;
+4. material risks or evidence gaps;
+5. the next action: stop or prepare a plan.
 
-After authorization, use exactly the authorized plan path and digest:
+Keep raw paths out of the summary unless they are needed for local review.
 
-```bash
-cleanr clean \
-  --plan /local/path/cleanr-plan.json \
-  --plan-sha256 <authorized-sha256> \
-  --authorized-by-user
-```
+If the user asked only to inspect, explain, or analyze, stop here. If the user
+asked to clean or to prepare/execute a plan, do not pause or ask them to review
+the analysis JSON. Continue directly to Stage 6. A broad request uses only
+Cleanr's deterministic preselection. Exact path choices explicitly supplied by
+the user may be encoded as selection intent, but they still require the final
+post-evidence confirmation. Never infer extra path choices.
 
-Cleanr verifies the digest, re-scans the plan roots, rebuilds the deterministic
-plan, and aborts if anything except the plan creation time changed. A refusal
-requires a new plan, review, summary, and authorization. Never add
-`--authorized-by-user` unless the authorization conditions above were met.
+## Stage 6 — Prepare one plan and translate it for the user
 
-Report the run ID and per-item success or failure. State that successful items
-were moved to the system trash, not permanently deleted. Do not empty the
-trash. Provide the restore command:
+Read
+[`references/authorized-execution.md`](references/authorized-execution.md) and
+follow its plan-preparation and human-summary sections. Use the identical roots,
+config, and global categories from the reviewed analysis. Never select a
+`review` or `available` item on the agent's own judgment.
 
-```bash
-cleanr restore run <run-id> --confirm
-```
+The JSON plan is the machine-verifiable contract, not the user interface. Do
+not ask the user to open or interpret it. Present the selected items as a
+readable grouped summary, followed by excluded/unselected evidence and the
+plan's path and SHA-256. If the plan selects nothing, report that result and
+stop without asking for execution confirmation.
 
-Run restore only when the current user explicitly asks to restore that run.
-Never overwrite an existing restore target or bypass Cleanr's restore checks.
+## Stage 7 — Ask once, then execute only if confirmed
 
-## Respond to the user
+End the Stage 6 summary with one confirmation question containing the selected
+count, selected size, plan path, and SHA-256. A direct affirmative answer to
+that question authorizes only the displayed plan; the user does not need to
+copy the digest. This is the single interruption in a sufficiently specified
+cleanup run.
 
-State the scope, scan integrity, age threshold, recommendation states, selected
-count and size, major risks, authorization state, and execution or restore
-result. Keep raw paths out of summaries unless the user needs them locally.
+Continue only after that unambiguous answer. Follow the execution section of
+the authorized-execution reference.
+If the scope, config, plan bytes, digest, or re-scan result changes, do not
+execute: return to Stage 3 and obtain new authorization for a new plan.
+
+Report the run ID and per-item results. State that successes moved to system
+trash and were not permanently deleted. Never empty the trash.
+
+## Stage 8 — Restore only on a new explicit request
+
+Listing restore history is read-only. A restore changes the filesystem, so read
+the restore section of the authorized-execution reference and require the
+current user to name the run to restore. Never overwrite an existing target or
+bypass Cleanr's restore checks.

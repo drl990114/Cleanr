@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "kondo",
+      "repository": "https://github.com/tbillington/kondo",
+      "revision": "1d351ca80b3d3adfad9bbe7db872c27359190210",
+      "license": "MIT",
+      "relation": "adapted",
+      "distribution": "attributed-rule-translation"
+    },
+    {
+      "id": "dusty",
+      "repository": "https://github.com/yagcioglutoprak/dusty",
+      "revision": "acaa3f6a5e9b535892ce2301b0a57772a0ee430a",
+      "license": "MIT",
+      "relation": "adapted",
+      "distribution": "attributed-rule-translation"
+    },
+    {
+      "id": "puremac",
+      "repository": "https://github.com/momenbasel/PureMac",
+      "revision": "376b2380b0bffe7d614258731a58732ed65d563b",
+      "license": "MIT",
+      "relation": "adapted",
+      "distribution": "attributed-rule-translation"
+    },
+    {
+      "id": "bleachbit",
+      "repository": "https://github.com/bleachbit/bleachbit",
+      "revision": "ab0e4b94e29b8233adbe7ab010656e61b162c63d",
+      "license": "GPL-3.0-or-later",
+      "relation": "audited-against",
+      "distribution": "reference-only"
+    },
+    {
+      "id": "winapp2",
+      "repository": "https://github.com/MoscaDotTo/Winapp2",
+      "revision": "3c0156de665cc180edc76745e425412ccc4356ca",
+      "license": "CC-BY-SA-4.0",
+      "relation": "audited-against",
+      "distribution": "reference-only"
+    }
+  ]
+}

@@ -19,6 +19,8 @@ Cleanr 不会只看目录名就判断它可以移除。扫描条目会与带版�
 | 风险说明 | 清理后可能出现的问题、耗时或网络下载 |
 | 默认选择 | 规则是否请求预选该条目 |
 | 匹配角色 | 具体规则使用 `primary`，宽泛证据规则使用 `fallback` |
+| 平台 | 可选的 `macos`、`windows` 和/或 `linux` 限制 |
+| 来源 | 固定到 revision、用于转化或只读审计的开源项目 |
 
 同一个条目被多条规则匹配时，Cleanr 会保留全部命中作为证据。安全语义等价的规则
 会以确定性方式解析；可信的具体 `primary` 规则可以在选择决策中遮蔽宽泛的
@@ -108,8 +110,9 @@ Windows 白名单刻意只包含普通文件。Windows 专属规则要求文件�
 
 Cleanr 不会停止应用。如果 Windows 锁定了某个候选文件，移入回收站会失败，原文件
 保持不变。Explorer 缩略图数据库需要成熟清理器重启 Explorer 才能释放，因此不会
-纳入。崩溃转储、Windows Update 与传递优化数据、Prefetch、回收站、注册表数据、
-Downloads 和系统所有的根目录也不属于这个保守的 Windows 常规范围。
+纳入。用户级崩溃转储只以低置信度诊断项供人工审阅；系统所有的崩溃转储、Windows
+Update 与传递优化数据、Prefetch、回收站、注册表数据和系统所有的根目录不会进入
+清理计划。
 
 Windows 路径参考了
 [BleachBit](https://github.com/bleachbit/bleachbit/tree/ab0e4b94e29b8233adbe7ab010656e61b162c63d)
@@ -121,6 +124,20 @@ Windows 路径参考了
 [可重建 DirectX 与缩略图缓存](https://techcommunity.microsoft.com/blog/filecab/creating-remediation-actions-for-system-insights/428234)
 的说明独立收窄。Cleanr 不会打包外部清理规则数据库或可执行文件。平台专属扫描根
 只会在对应操作系统构建中注册，共享的 `builtin-system` 插件负责提供声明式解释。
+
+新增覆盖还包括 Windows 浏览器与明确命名的 Electron 应用缓存、Linux 桌面缩略图和
+部分 Flatpak 应用缓存，以及平台专属下载的安装包。Windows Update、macOS 软件更新
+和 Linux 系统包缓存会报告为 `os_managed`，绝不会成为清理候选项或计划条目。
+
+## 上游来源策略
+
+内置规则会记录仓库、完整 commit、许可证与引用关系。宽松许可证来源可以在保留归属
+后转化；GPL 和 ShareAlike 清理数据库只能标记为 `audited-against`：它们可以帮助发现
+覆盖缺口，但 Cleanr 必须独立验证并重新编写规则，不复制或打包其数据库。运行
+`node scripts/check-rule-sources.mjs` 可以校验固定的来源台账。
+
+`platforms` 会阻止本来合法的路径模式在其他操作系统上误匹配；省略该字段时保持旧版
+跨平台行为。
 
 ## 启用或禁用规则包
 

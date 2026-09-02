@@ -4,6 +4,27 @@ version = "0.11.0"
 description = "Generated dependencies, build artifacts, and review-required data for developer projects."
 categories = ["developer-cache", "build-cache", "package-cache"]
 
+[[sources]]
+id = "kondo"
+repository = "https://github.com/tbillington/kondo"
+revision = "1d351ca80b3d3adfad9bbe7db872c27359190210"
+license = "MIT"
+relation = "adapted"
+
+[[sources]]
+id = "dusty"
+repository = "https://github.com/yagcioglutoprak/dusty"
+revision = "acaa3f6a5e9b535892ce2301b0a57772a0ee430a"
+license = "MIT"
+relation = "adapted"
+
+[[sources]]
+id = "puremac"
+repository = "https://github.com/momenbasel/PureMac"
+revision = "376b2380b0bffe7d614258731a58732ed65d563b"
+license = "MIT"
+relation = "adapted"
+
 # Cross-stack project artifact paths were audited against the MIT-licensed
 # https://github.com/tbillington/kondo source at commit
 # 1d351ca80b3d3adfad9bbe7db872c27359190210. Confidence, selection, and risk
@@ -23,6 +44,7 @@ category = "developer-cache"
 match = { dir_name = "node_modules", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+source_refs = ["kondo"]
 action = "trash"
 reason = "node_modules is a generated dependency directory that package managers can recreate."
 risk_note = "Project dependencies will need to be reinstalled before the project can run again."
@@ -606,6 +628,8 @@ category = "package-cache"
 match = { path_glob = "**/Library/Caches/{Yarn,pip,uv}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Package-manager download caches can be recreated from their registries."
 risk_note = "Future dependency installs may need network access and take longer."
@@ -628,9 +652,47 @@ category = "package-cache"
 match = { dir_name = "npm-cache", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["windows"]
 action = "trash"
 reason = "The npm cache contains downloaded package data that npm can recreate."
 risk_note = "Future npm installs may need network access."
+
+[[rules]]
+id = "windows-pnpm-store"
+label = "pnpm content-addressable store"
+category = "package-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/pnpm/store", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["windows"]
+action = "trash"
+reason = "The pnpm store contains downloaded package content that pnpm can recreate."
+risk_note = "Future pnpm installs may need network access and take longer."
+
+[[rules]]
+id = "nuget-package-cache"
+label = "NuGet global package cache"
+category = "package-cache"
+match = { kind = "directory", path_glob = "**/.nuget/packages", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "windows", "linux"]
+action = "trash"
+reason = "The NuGet global packages folder normally contains downloaded and extracted package content."
+risk_note = "Review before cleaning because restoring packages may require network access or package sources that are no longer available."
+
+[[rules]]
+id = "bun-package-cache"
+label = "Bun package cache"
+category = "package-cache"
+match = { kind = "directory", path_glob = "**/.bun/install/cache", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["macos", "linux"]
+source_refs = ["dusty", "puremac"]
+action = "trash"
+reason = "Bun's install cache contains downloaded packages that Bun can fetch again."
+risk_note = "Future Bun installs may require network access and take longer."
 
 [[rules]]
 id = "gradle-cache"
@@ -672,6 +734,8 @@ category = "build-cache"
 match = { path_glob = "**/Library/Developer/Xcode/DerivedData", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Xcode DerivedData contains generated indexes and build products."
 risk_note = "Xcode will rebuild indexes and products, which may take time."
@@ -683,6 +747,8 @@ category = "package-cache"
 match = { kind = "directory", path_glob = "**/Library/Caches/{Homebrew,CocoaPods,org.swift.swiftpm,deno,Cypress,composer}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "These package-manager and developer-tool caches contain downloads or generated metadata that their owning tools can recreate."
 risk_note = "Future installs or tool runs may require network access and take longer."
@@ -691,9 +757,11 @@ risk_note = "Future installs or tool runs may require network access and take lo
 id = "macos-home-directory-tool-cache"
 label = "macOS home-directory developer cache"
 category = "package-cache"
-match = { kind = "directory", path_glob = "**/{.bun/install/cache,.pub-cache,.yarn/cache}", min_size = 1048576 }
+match = { kind = "directory", path_glob = "**/{.pub-cache,.yarn/cache}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "These developer-tool directories contain downloaded packages that their owning tools can recreate."
 risk_note = "Future installs or builds may require network access and take longer."
@@ -705,6 +773,8 @@ category = "build-cache"
 match = { kind = "directory", path_glob = "**/Library/Caches/go-build", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "The Go build cache contains generated compiler artifacts."
 risk_note = "The next Go build may take longer while artifacts are rebuilt."
@@ -716,6 +786,8 @@ category = "build-cache"
 match = { kind = "directory", path_glob = "**/Library/Developer/CoreSimulator/Caches", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "CoreSimulator caches contain generated simulator support data."
 risk_note = "Quit Xcode and Simulator first; simulator startup may be slower while cache data is rebuilt."
@@ -727,6 +799,8 @@ category = "build-cache"
 match = { kind = "directory", path_glob = "**/Library/Caches/com.apple.dt.Xcode", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Xcode's Library/Caches directory contains generated IDE cache data."
 risk_note = "Quit Xcode first; its next launch and indexing pass may take longer."
@@ -738,6 +812,8 @@ category = "build-cache"
 match = { kind = "directory", path_glob = "**/Library/Developer/Xcode/UserData/Previews", min_size = 1048576 }
 confidence = "high"
 default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Xcode preview data contains generated SwiftUI preview build products."
 risk_note = "Quit Xcode first; previews will be rebuilt and may take longer to render initially."
@@ -749,6 +825,8 @@ category = "developer-cache"
 match = { kind = "directory", path_glob = "**/Library/Developer/Xcode/{iOS,watchOS,tvOS} DeviceSupport/*", min_size = 1048576 }
 confidence = "medium"
 default_selected = false
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Xcode downloads device support symbols for each connected operating-system version."
 risk_note = "Review before cleaning; symbols may be needed to inspect or symbolicate existing device crash reports and can require a large download to restore."
@@ -760,6 +838,8 @@ category = "developer-cache"
 match = { kind = "directory", path_glob = "**/Library/Developer/XCTestDevices/*", min_size = 1048576 }
 confidence = "medium"
 default_selected = false
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "XCTestDevices contains simulator clones and local state created by Xcode test runs."
 risk_note = "Review before cleaning and quit Xcode; test devices and their state will need to be recreated."
@@ -771,6 +851,8 @@ category = "developer-cache"
 match = { kind = "directory", extension = "xcarchive", path_glob = "**/Library/Developer/Xcode/Archives/**", min_size = 1048576 }
 confidence = "low"
 default_selected = false
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "An Xcode archive contains a retained application build and can consume substantial disk space."
 risk_note = "Archives may contain irreplaceable builds and dSYMs needed to redistribute or symbolicate released applications; inspect individual archives before cleaning."

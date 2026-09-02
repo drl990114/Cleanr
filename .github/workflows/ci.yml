@@ -52,6 +52,7 @@ jobs:
           cargo run --locked -p cleanr-cli -- plugin schema manifest >/dev/null
           cargo run --locked -p cleanr-cli -- plugin schema index >/dev/null
           cargo run --locked -p cleanr-cli -- plugin schema rules >/dev/null
+          cargo run --locked -p cleanr-cli -- plugin schema locations >/dev/null
           cargo run --locked -p cleanr-cli -- plugin schema language >/dev/null
           cargo run --locked -p cleanr-cli -- plugin schema config >/dev/null
 
@@ -61,11 +62,13 @@ jobs:
           plugin_dirs=(
             crates/rules/builtin-plugins/builtin-dev
             crates/rules/builtin-plugins/builtin-general
+            crates/rules/builtin-plugins/builtin-system
           )
           for dir in plugins/*; do
             [ -f "$dir/plugin.toml" ] && plugin_dirs+=("$dir")
           done
           cargo run --locked -p cleanr-cli -- plugin validate "${plugin_dirs[@]}"
+          node scripts/check-rule-sources.mjs
 
   scan-platforms:
     name: Scan tests (${{ matrix.os }})

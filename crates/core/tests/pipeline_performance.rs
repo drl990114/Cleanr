@@ -26,6 +26,7 @@ fn analysis_and_plan_pipeline() {
     let versions = vec![RulesetVersion {
         id: "synthetic".to_string(),
         version: "1".to_string(),
+        sources: Vec::new(),
     }];
 
     let mut analysis_samples = Vec::with_capacity(rounds);
@@ -131,6 +132,7 @@ fn synthetic_entries(root: &std::path::Path, requested_entries: usize) -> Vec<Sc
                 default_selected: true,
                 trust: RuleTrust::Builtin,
                 match_role: RuleMatchRole::Primary,
+                sources: Vec::new(),
             }],
         });
         for file_idx in 0..FILES_PER_CANDIDATE {

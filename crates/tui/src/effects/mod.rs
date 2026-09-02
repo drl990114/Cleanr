@@ -19,7 +19,7 @@ use cleanr_core::{
 };
 use cleanr_fs::{
     ResolvedScanRoots, ScanOptions, ScanPhase, ScanProgress, ScanReport, global_scan_evidence,
-    resolve_scan_roots, scan_resolved_paths_with_progress_cancellable_started_at,
+    resolve_scan_roots_with_locations, scan_resolved_paths_with_progress_cancellable_started_at,
 };
 use cleanr_i18n::I18n;
 use cleanr_plugin_api::discover_bundles;
@@ -211,8 +211,12 @@ fn run_scan_worker(
         ensure_scan_active(cancellation)?;
         explicit_roots.push(path.canonicalize().unwrap_or_else(|_| path.clone()));
     }
-    let resolved = resolve_scan_roots(&request, &configured_global_kinds)
-        .map_err(|error| scan_failure(error, cancellation))?;
+    let resolved = resolve_scan_roots_with_locations(
+        &request,
+        &configured_global_kinds,
+        preparation.registry.scan_locations(),
+    )
+    .map_err(|error| scan_failure(error, cancellation))?;
     ensure_scan_active(cancellation)?;
     if resolved.roots.is_empty() {
         return Err(ScanFailure::NoGlobalRoots);

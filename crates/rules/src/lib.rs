@@ -3,14 +3,15 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
 use cleanr_config::Config;
 use cleanr_core::{
-    Confidence, EntryKind, RuleHit, RuleMatchRole, RuleTrust, RulesetVersion, ScanEntry,
+    Confidence, EntryKind, RuleHit, RuleMatchRole, RulePlatform, RuleSource, RuleTrust,
+    RulesetVersion, ScanEntry, ScanLocationDefinition, ScanLocationMode, ScanLocationPack,
 };
 use cleanr_plugin_api::{
     PluginCapability, PluginDiagnostic, PluginDiscovery, PluginManifest, PluginSource, TrustLevel,
@@ -29,6 +30,8 @@ pub struct RulePack {
     pub version: String,
     pub description: String,
     pub categories: Vec<String>,
+    #[serde(default)]
+    pub sources: Vec<RuleSource>,
     pub rules: Vec<RuleDefinition>,
 }
 
@@ -47,6 +50,10 @@ pub struct RuleDefinition {
     pub action: RuleAction,
     pub reason: String,
     pub risk_note: String,
+    #[serde(default)]
+    pub platforms: Vec<RulePlatform>,
+    #[serde(default)]
+    pub source_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq)]
@@ -121,6 +128,7 @@ struct DirectoryChildren {
 #[derive(Debug, Clone)]
 pub struct RuleRegistry {
     packs: Vec<LoadedRulePack>,
+    scan_locations: Vec<ScanLocationDefinition>,
     diagnostics: Vec<PluginDiagnostic>,
     dir_name_index: BTreeMap<String, Vec<(usize, usize)>>,
     file_name_index: BTreeMap<String, Vec<(usize, usize)>>,
@@ -150,6 +158,23 @@ impl RulePack {
             bail!("rule pack {} contains no rules", self.id);
         }
         let mut rule_ids = BTreeSet::new();
+        let mut source_ids = BTreeSet::new();
+        for source in &self.sources {
+            if source.id.trim().is_empty()
+                || source.repository.trim().is_empty()
+                || source.revision.trim().is_empty()
+                || source.license.trim().is_empty()
+            {
+                bail!("rule pack {} has incomplete source provenance", self.id);
+            }
+            if !source_ids.insert(source.id.as_str()) {
+                bail!(
+                    "rule pack {} contains duplicate source id {}",
+                    self.id,
+                    source.id
+                );
+            }
+        }
         for rule in &self.rules {
             if rule.id.trim().is_empty() {
                 bail!("rule pack {} contains a rule with an empty id", self.id);
@@ -174,6 +199,35 @@ impl RulePack {
                     self.id,
                     rule.id
                 );
+            }
+            if rule
+                .platforms
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != rule.platforms.len()
+            {
+                bail!("rule {}:{} contains duplicate platforms", self.id, rule.id);
+            }
+            let mut referenced_sources = BTreeSet::new();
+            for source_ref in &rule.source_refs {
+                if !referenced_sources.insert(source_ref.as_str()) {
+                    bail!(
+                        "rule {}:{} contains duplicate source reference {}",
+                        self.id,
+                        rule.id,
+                        source_ref
+                    );
+                }
+                if !source_ids.contains(source_ref.as_str()) {
+                    bail!(
+                        "rule {}:{} references unknown source {}",
+                        self.id,
+                        rule.id,
+                        source_ref
+                    );
+                }
             }
             if !self
                 .categories
@@ -263,6 +317,89 @@ impl ProjectMatcher {
     }
 }
 
+pub fn scan_location_pack_from_toml(raw: &str) -> Result<ScanLocationPack> {
+    let pack: ScanLocationPack =
+        toml::from_str(raw).context("failed to parse scan location pack TOML")?;
+    validate_scan_location_pack(&pack)?;
+    Ok(pack)
+}
+
+#[must_use]
+pub fn scan_location_pack_schema() -> serde_json::Value {
+    serde_json::to_value(schema_for!(ScanLocationPack)).expect("scan location schema")
+}
+
+fn validate_scan_location_pack(pack: &ScanLocationPack) -> Result<()> {
+    if pack.id.trim().is_empty() {
+        bail!("scan location pack id cannot be empty");
+    }
+    Version::parse(&pack.version)
+        .with_context(|| format!("scan location pack {} has an invalid version", pack.id))?;
+    if pack.locations.is_empty() {
+        bail!("scan location pack {} contains no locations", pack.id);
+    }
+    let mut ids = BTreeSet::new();
+    for location in &pack.locations {
+        if location.id.trim().is_empty() || location.label.trim().is_empty() {
+            bail!("scan location pack {} has an incomplete location", pack.id);
+        }
+        if !ids.insert(location.id.as_str()) {
+            bail!(
+                "scan location pack {} contains duplicate location id {}",
+                pack.id,
+                location.id
+            );
+        }
+        if location.platforms.is_empty() {
+            bail!("scan location {} declares no platforms", location.id);
+        }
+        if location
+            .platforms
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .len()
+            != location.platforms.len()
+        {
+            bail!("scan location {} contains duplicate platforms", location.id);
+        }
+        let relative = Path::new(&location.relative_path);
+        if location.mode == ScanLocationMode::Scan && location.relative_path.trim().is_empty() {
+            bail!(
+                "scan location {} requires a non-empty relative_path",
+                location.id
+            );
+        }
+        if location.relative_path.contains(['\\', ':']) {
+            bail!(
+                "scan location {} relative_path must use portable forward-slash components",
+                location.id
+            );
+        }
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            bail!(
+                "scan location {} relative_path must contain only normal relative components",
+                location.id
+            );
+        }
+        if location
+            .relative_path
+            .bytes()
+            .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']' | b'{' | b'}'))
+        {
+            bail!(
+                "scan location {} relative_path cannot contain globs",
+                location.id
+            );
+        }
+    }
+    Ok(())
+}
+
 impl CompiledProjectMatcher {
     fn compile(project: &ProjectMatcher) -> Result<Self> {
         Ok(Self {
@@ -341,9 +478,17 @@ impl ScanContext {
 impl RuleRegistry {
     pub fn builtin() -> Result<Self> {
         let mut registry = Self::empty();
-        registry.add_builtin_plugin(BUILTIN_DEV_MANIFEST, &[BUILTIN_DEV_RULES])?;
-        registry.add_builtin_plugin(BUILTIN_GENERAL_MANIFEST, &[BUILTIN_GENERAL_RULES])?;
-        registry.add_builtin_plugin(BUILTIN_SYSTEM_MANIFEST, &[BUILTIN_SYSTEM_RULES])?;
+        registry.add_builtin_plugin(
+            BUILTIN_DEV_MANIFEST,
+            &[BUILTIN_DEV_RULES],
+            &[BUILTIN_DEV_LOCATIONS],
+        )?;
+        registry.add_builtin_plugin(BUILTIN_GENERAL_MANIFEST, &[BUILTIN_GENERAL_RULES], &[])?;
+        registry.add_builtin_plugin(
+            BUILTIN_SYSTEM_MANIFEST,
+            &[BUILTIN_SYSTEM_RULES],
+            &[BUILTIN_SYSTEM_LOCATIONS],
+        )?;
         Ok(registry)
     }
 
@@ -382,42 +527,50 @@ impl RuleRegistry {
                 .capabilities
                 .contains(&PluginCapability::Rules)
             {
-                continue;
-            }
-            let rules_dir = bundle.root.join("rules");
-            let paths = match sorted_dir_entries(&rules_dir) {
-                Ok(paths) => paths,
-                Err(error) => {
+                // A bundle may contribute only trusted scan locations.
+            } else {
+                let rules_dir = bundle.root.join("rules");
+                let paths = match sorted_dir_entries(&rules_dir) {
+                    Ok(paths) => paths,
+                    Err(error) => {
+                        registry.diagnostics.push(PluginDiagnostic::warning(
+                            "plugin-rules-directory-missing",
+                            error.to_string(),
+                            Some(rules_dir.clone()),
+                        ));
+                        Vec::new()
+                    }
+                };
+                let paths = paths
+                    .into_iter()
+                    .filter(|path| is_toml_file(path))
+                    .collect::<Vec<_>>();
+                if paths.is_empty() {
                     registry.diagnostics.push(PluginDiagnostic::warning(
-                        "plugin-rules-directory-missing",
-                        error.to_string(),
+                        "plugin-rules-empty",
+                        format!(
+                            "plugin {} declares rules but contains no rule packs",
+                            bundle.manifest.id
+                        ),
                         Some(rules_dir),
                     ));
-                    continue;
                 }
-            };
-            let paths = paths
-                .into_iter()
-                .filter(|path| is_toml_file(path))
-                .collect::<Vec<_>>();
-            if paths.is_empty() {
-                registry.diagnostics.push(PluginDiagnostic::warning(
-                    "plugin-rules-empty",
-                    format!(
-                        "plugin {} declares rules but contains no rule packs",
-                        bundle.manifest.id
-                    ),
-                    Some(rules_dir),
-                ));
-                continue;
+                for path in paths {
+                    registry.load_user_pack(
+                        &path,
+                        bundle.trust,
+                        Some(bundle.manifest.id.clone()),
+                        PluginSource::Bundle(bundle.root.clone()),
+                    );
+                }
             }
-            for path in paths {
-                registry.load_user_pack(
-                    &path,
-                    bundle.trust,
-                    Some(bundle.manifest.id.clone()),
-                    PluginSource::Bundle(bundle.root.clone()),
-                );
+
+            if bundle
+                .manifest
+                .capabilities
+                .contains(&PluginCapability::ScanLocations)
+            {
+                registry.load_scan_location_directory(bundle);
             }
         }
 
@@ -465,12 +618,18 @@ impl RuleRegistry {
     }
 
     #[must_use]
+    pub fn scan_locations(&self) -> &[ScanLocationDefinition] {
+        &self.scan_locations
+    }
+
+    #[must_use]
     pub fn versions(&self) -> Vec<RulesetVersion> {
         self.packs
             .iter()
             .map(|pack| RulesetVersion {
                 id: pack.definition.id.clone(),
                 version: pack.definition.version.clone(),
+                sources: pack.definition.sources.clone(),
             })
             .collect()
     }
@@ -489,7 +648,12 @@ impl RuleRegistry {
             &self.project_root_dir_filter,
         );
         for entry in entries {
-            entry.rule_hits = self.hits_for_at_with_context(entry, as_of, Some(&context));
+            entry.rule_hits = self.hits_for_at_with_context(
+                entry,
+                as_of,
+                Some(&context),
+                RulePlatform::current(),
+            );
         }
     }
 
@@ -505,7 +669,17 @@ impl RuleRegistry {
     /// Match entry-local rules using a caller-provided reference time.
     #[must_use]
     pub fn hits_for_at(&self, entry: &ScanEntry, as_of: DateTime<Utc>) -> Vec<RuleHit> {
-        self.hits_for_at_with_context(entry, as_of, None)
+        self.hits_for_at_with_context(entry, as_of, None, RulePlatform::current())
+    }
+
+    #[cfg(test)]
+    fn hits_for_at_on_platform(
+        &self,
+        entry: &ScanEntry,
+        as_of: DateTime<Utc>,
+        platform: RulePlatform,
+    ) -> Vec<RuleHit> {
+        self.hits_for_at_with_context(entry, as_of, None, Some(platform))
     }
 
     fn hits_for_at_with_context(
@@ -513,6 +687,7 @@ impl RuleRegistry {
         entry: &ScanEntry,
         as_of: DateTime<Utc>,
         context: Option<&ScanContext>,
+        platform: Option<RulePlatform>,
     ) -> Vec<RuleHit> {
         let mut candidates = Vec::with_capacity(self.generic_rules.len() + 4);
         candidates.extend(self.generic_rules.iter().copied());
@@ -564,6 +739,11 @@ impl RuleRegistry {
                 let pack = self.packs.get(pack_index)?;
                 let rule = pack.definition.rules.get(rule_index)?;
                 let compiled = pack.compiled_rules.get(rule_index)?;
+                if !rule.platforms.is_empty()
+                    && !platform.is_some_and(|platform| rule.platforms.contains(&platform))
+                {
+                    return None;
+                }
                 matches_rule(
                     entry,
                     rule,
@@ -583,6 +763,17 @@ impl RuleRegistry {
                     risk_note: rule.risk_note.clone(),
                     default_selected: rule.default_selected,
                     match_role: rule.match_role,
+                    sources: rule
+                        .source_refs
+                        .iter()
+                        .filter_map(|source_ref| {
+                            pack.definition
+                                .sources
+                                .iter()
+                                .find(|source| source.id == *source_ref)
+                                .cloned()
+                        })
+                        .collect(),
                     trust: match pack.trust {
                         TrustLevel::Builtin => RuleTrust::Builtin,
                         TrustLevel::Trusted => RuleTrust::Trusted,
@@ -626,6 +817,7 @@ impl RuleRegistry {
     fn empty() -> Self {
         Self {
             packs: Vec::new(),
+            scan_locations: Vec::new(),
             diagnostics: Vec::new(),
             dir_name_index: BTreeMap::new(),
             file_name_index: BTreeMap::new(),
@@ -696,7 +888,12 @@ impl RuleRegistry {
         Ok(())
     }
 
-    fn add_builtin_plugin(&mut self, manifest_raw: &str, rules: &[&str]) -> Result<()> {
+    fn add_builtin_plugin(
+        &mut self,
+        manifest_raw: &str,
+        rules: &[&str],
+        location_packs: &[&str],
+    ) -> Result<()> {
         let manifest = PluginManifest::from_toml(manifest_raw, env!("CARGO_PKG_VERSION"))?;
         if !manifest.capabilities.contains(&PluginCapability::Rules) {
             bail!("built-in plugin {} does not provide rules", manifest.id);
@@ -709,7 +906,100 @@ impl RuleRegistry {
                 Some(manifest.id.clone()),
             )?;
         }
+        if !location_packs.is_empty()
+            && !manifest
+                .capabilities
+                .contains(&PluginCapability::ScanLocations)
+        {
+            bail!(
+                "built-in plugin {} has scan locations without the capability",
+                manifest.id
+            );
+        }
+        for raw in location_packs {
+            for location in scan_location_pack_from_toml(raw)?.locations {
+                if self
+                    .scan_locations
+                    .iter()
+                    .any(|existing| existing.id == location.id)
+                {
+                    bail!("duplicate built-in scan location id {}", location.id);
+                }
+                self.scan_locations.push(location);
+            }
+        }
+        self.scan_locations
+            .sort_by(|left, right| left.id.cmp(&right.id));
         Ok(())
+    }
+
+    fn load_scan_location_directory(&mut self, bundle: &cleanr_plugin_api::PluginBundle) {
+        let directory = bundle.root.join("locations");
+        if bundle.trust == TrustLevel::Untrusted {
+            self.diagnostics.push(PluginDiagnostic::warning(
+                "untrusted-scan-locations-disabled",
+                format!(
+                    "plugin {} declares scan locations, but it is not trusted",
+                    bundle.manifest.id
+                ),
+                Some(directory),
+            ));
+            return;
+        }
+        let paths = match sorted_dir_entries(&directory) {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.diagnostics.push(PluginDiagnostic::warning(
+                    "plugin-scan-locations-directory-missing",
+                    error.to_string(),
+                    Some(directory),
+                ));
+                return;
+            }
+        };
+        let mut loaded_any = false;
+        for path in paths.into_iter().filter(|path| is_toml_file(path)) {
+            loaded_any = true;
+            let result = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))
+                .and_then(|raw| scan_location_pack_from_toml(&raw));
+            match result {
+                Ok(pack) => {
+                    for location in pack.locations {
+                        if self
+                            .scan_locations
+                            .iter()
+                            .any(|existing| existing.id == location.id)
+                        {
+                            self.diagnostics.push(PluginDiagnostic::warning(
+                                "duplicate-scan-location-id",
+                                format!("duplicate scan location id {}", location.id),
+                                Some(path.clone()),
+                            ));
+                        } else {
+                            self.scan_locations.push(location);
+                        }
+                    }
+                }
+                Err(error) => self.diagnostics.push(PluginDiagnostic::warning(
+                    "invalid-scan-location-pack",
+                    error.to_string(),
+                    Some(path),
+                )),
+            }
+        }
+        if !loaded_any {
+            self.diagnostics.push(PluginDiagnostic::warning(
+                "plugin-scan-locations-empty",
+                format!(
+                    "plugin {} declares scan locations but contains no location packs",
+                    bundle.manifest.id
+                ),
+                Some(directory),
+            ));
+        }
+        self.scan_locations
+            .sort_by(|left, right| left.id.cmp(&right.id));
     }
 
     fn load_user_pack(
@@ -989,6 +1279,8 @@ pub fn rule_pack_schema() -> serde_json::Value {
 
 const BUILTIN_DEV_MANIFEST: &str = include_str!("../builtin-plugins/builtin-dev/plugin.toml");
 const BUILTIN_DEV_RULES: &str = include_str!("../builtin-plugins/builtin-dev/rules/dev.toml");
+const BUILTIN_DEV_LOCATIONS: &str =
+    include_str!("../builtin-plugins/builtin-dev/locations/global.toml");
 const BUILTIN_GENERAL_MANIFEST: &str =
     include_str!("../builtin-plugins/builtin-general/plugin.toml");
 const BUILTIN_GENERAL_RULES: &str =
@@ -996,6 +1288,8 @@ const BUILTIN_GENERAL_RULES: &str =
 const BUILTIN_SYSTEM_MANIFEST: &str = include_str!("../builtin-plugins/builtin-system/plugin.toml");
 const BUILTIN_SYSTEM_RULES: &str =
     include_str!("../builtin-plugins/builtin-system/rules/system.toml");
+const BUILTIN_SYSTEM_LOCATIONS: &str =
+    include_str!("../builtin-plugins/builtin-system/locations/global.toml");
 
 #[cfg(test)]
 mod tests {
@@ -1509,7 +1803,8 @@ mod tests {
         );
         temporary.size_bytes = 20 * 1024 * 1024;
         temporary.modified_at = Some(as_of - Duration::days(31));
-        temporary.rule_hits = registry.hits_for_at(&temporary, as_of);
+        temporary.rule_hits =
+            registry.hits_for_at_on_platform(&temporary, as_of, RulePlatform::Windows);
 
         let temporary_hit = temporary
             .rule_hits
@@ -1546,7 +1841,7 @@ mod tests {
         );
         shader.modified_at = Some(as_of - Duration::days(31));
         let shader_hit = registry
-            .hits_for_at(&shader, as_of)
+            .hits_for_at_on_platform(&shader, as_of, RulePlatform::Windows)
             .into_iter()
             .find(|hit| hit.rule_id == "windows-stale-directx-shader-cache-file")
             .expect("stale DirectX shader cache file");
@@ -1560,7 +1855,7 @@ mod tests {
         fresh_temporary.modified_at = Some(as_of - Duration::days(29));
         assert!(
             registry
-                .hits_for_at(&fresh_temporary, as_of)
+                .hits_for_at_on_platform(&fresh_temporary, as_of, RulePlatform::Windows)
                 .into_iter()
                 .all(|hit| hit.rule_id != "windows-stale-user-temporary-file")
         );
@@ -1576,7 +1871,6 @@ mod tests {
         );
 
         for excluded in [
-            "/Users/me/AppData/Local/CrashDumps/app.dmp",
             "/Users/me/AppData/Local/Microsoft/Windows/Explorer/thumbcache_256.db",
             "/Windows/SoftwareDistribution/Download/update.cab",
             "/Windows/Prefetch/APP.EXE-12345678.pf",
@@ -1588,6 +1882,21 @@ mod tests {
                 "{excluded} must not be a Windows cleanup candidate"
             );
         }
+
+        let crash_dump = registry
+            .hits_for_at_on_platform(
+                &test_entry(
+                    "/Users/me/AppData/Local/CrashDumps/app.dmp",
+                    EntryKind::File,
+                ),
+                as_of,
+                RulePlatform::Windows,
+            )
+            .into_iter()
+            .find(|hit| hit.rule_id == "windows-user-crash-dump")
+            .expect("user crash dump review rule");
+        assert_eq!(crash_dump.confidence, Confidence::Low);
+        assert!(!crash_dump.default_selected);
     }
 
     #[test]
@@ -2055,6 +2364,127 @@ command = "cleanr-dynamic-example"
             diagnostic.code == "dynamic-candidates-runtime-disabled"
                 && diagnostic.message.contains("dynamic.example")
         }));
+    }
+
+    #[test]
+    fn platform_scoped_rules_retain_pinned_source_evidence() {
+        let registry = RuleRegistry::builtin().expect("builtin registry");
+        let entry = test_entry(
+            "/Users/test/Library/Caches/com.apple.QuickLook.thumbnailcache",
+            EntryKind::Directory,
+        );
+        let as_of = Utc::now();
+
+        let macos = registry.hits_for_at_on_platform(&entry, as_of, RulePlatform::Macos);
+        let windows = registry.hits_for_at_on_platform(&entry, as_of, RulePlatform::Windows);
+
+        let quicklook = macos
+            .iter()
+            .find(|hit| hit.rule_id == "macos-quicklook-thumbnail-cache")
+            .expect("macOS rule");
+        assert_eq!(
+            quicklook
+                .sources
+                .iter()
+                .map(|source| source.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["dusty", "puremac"]
+        );
+        assert!(
+            windows
+                .iter()
+                .all(|hit| hit.rule_id != "macos-quicklook-thumbnail-cache")
+        );
+        let system_version = registry
+            .versions()
+            .into_iter()
+            .find(|version| version.id == "builtin-system")
+            .expect("system ruleset provenance");
+        assert!(
+            system_version
+                .sources
+                .iter()
+                .any(|source| source.id == "winapp2")
+        );
+    }
+
+    #[test]
+    fn scan_location_packs_reject_escaping_or_globbed_paths() {
+        for relative_path in ["../secrets", "cache/*", "C:/Temp", r"C:\\Temp", ""] {
+            let raw = format!(
+                r#"
+id = "unsafe"
+version = "1.0.0"
+
+[[locations]]
+id = "unsafe"
+label = "Unsafe"
+kind = "app-caches"
+platforms = ["linux"]
+base = "home"
+relative_path = "{relative_path}"
+"#
+            );
+            assert!(scan_location_pack_from_toml(&raw).is_err());
+        }
+    }
+
+    #[test]
+    fn only_trusted_plugins_can_expand_global_scan_locations() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::create_dir(temp.path().join("locations")).expect("locations");
+        fs::write(
+            temp.path().join("plugin.toml"),
+            r#"
+api_version = "1"
+id = "example.locations"
+name = "Example locations"
+version = "1.0.0"
+capabilities = ["scan-locations"]
+"#,
+        )
+        .expect("manifest");
+        fs::write(
+            temp.path().join("locations/global.toml"),
+            r#"
+id = "example-locations"
+version = "1.0.0"
+
+[[locations]]
+id = "example-cache"
+label = "Example cache"
+kind = "app-caches"
+platforms = ["macos", "windows", "linux"]
+base = "cache"
+relative_path = "example"
+"#,
+        )
+        .expect("locations");
+
+        let mut config = Config::default();
+        config.plugins.dirs = vec![temp.path().to_path_buf()];
+        let untrusted = RuleRegistry::load(&config).expect("untrusted registry");
+        assert!(
+            untrusted
+                .scan_locations()
+                .iter()
+                .all(|item| item.id != "example-cache")
+        );
+        assert!(
+            untrusted
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| { diagnostic.code == "untrusted-scan-locations-disabled" })
+        );
+
+        config.plugins.trusted = vec!["example.locations".to_string()];
+        let trusted = RuleRegistry::load(&config).expect("trusted registry");
+        assert!(
+            trusted
+                .scan_locations()
+                .iter()
+                .any(|item| item.id == "example-cache")
+        );
     }
 
     fn test_entry(path: &str, kind: EntryKind) -> ScanEntry {

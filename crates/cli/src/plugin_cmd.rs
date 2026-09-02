@@ -137,6 +137,7 @@ pub fn print_schema(kind: &str) -> Result<()> {
         "manifest" => cleanr_plugin_api::plugin_manifest_schema(),
         "index" => cleanr_plugin_api::plugin_index_schema(),
         "rules" => cleanr_rules::rule_pack_schema(),
+        "locations" => cleanr_rules::scan_location_pack_schema(),
         "language" | "translations" => cleanr_i18n::language_pack_schema(),
         "config" => cleanr_config::config_schema(),
         _ => bail!("unknown schema kind: {kind}"),
@@ -648,6 +649,13 @@ fn validate_path(path: &Path) -> Result<()> {
                 .with_context(|| format!("failed to read {}", path.display()))?;
             if path.file_name().and_then(|name| name.to_str()) == Some("plugin.toml") {
                 PluginManifest::from_toml(&raw, env!("CARGO_PKG_VERSION"))?;
+            } else if path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                == Some("locations")
+            {
+                cleanr_rules::scan_location_pack_from_toml(&raw)?;
             } else {
                 cleanr_rules::RulePack::from_toml(&raw)?;
             }
@@ -673,6 +681,12 @@ fn validate_bundle(root: &Path) -> Result<()> {
 
     if manifest.capabilities.contains(&PluginCapability::Rules) {
         validate_rule_directory(&root.join("rules"))?;
+    }
+    if manifest
+        .capabilities
+        .contains(&PluginCapability::ScanLocations)
+    {
+        validate_scan_location_directory(&root.join("locations"))?;
     }
     if manifest
         .capabilities
@@ -725,6 +739,29 @@ fn validate_rule_directory(directory: &Path) -> Result<()> {
                 pack.id,
                 directory.display()
             );
+        }
+    }
+    Ok(())
+}
+
+fn validate_scan_location_directory(directory: &Path) -> Result<()> {
+    let paths = sorted_dir_entries(directory)?
+        .into_iter()
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("toml"))
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        bail!("scan-locations capability requires at least one location pack");
+    }
+    let mut ids = BTreeSet::new();
+    for path in paths {
+        let raw = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let pack = cleanr_rules::scan_location_pack_from_toml(&raw)
+            .with_context(|| format!("failed to validate {}", path.display()))?;
+        for location in pack.locations {
+            if !ids.insert(location.id.clone()) {
+                bail!("duplicate scan location id {}", location.id);
+            }
         }
     }
     Ok(())
@@ -1105,6 +1142,7 @@ fn format_capabilities(capabilities: &BTreeSet<PluginCapability>) -> String {
         .iter()
         .map(|capability| match capability {
             PluginCapability::Rules => "rules",
+            PluginCapability::ScanLocations => "scan-locations",
             PluginCapability::Translations => "translations",
             PluginCapability::DynamicCandidates => "dynamic-candidates",
         })
@@ -1363,6 +1401,20 @@ risk_note = "rebuild"
                 .expect_err("missing translations")
                 .to_string()
                 .contains("at least one locale")
+        );
+
+        let locations = tempfile::tempdir().expect("locations tempdir");
+        fs::write(
+            locations.path().join("plugin.toml"),
+            manifest(r#""scan-locations""#),
+        )
+        .expect("manifest");
+        fs::create_dir(locations.path().join("locations")).expect("locations");
+        assert!(
+            validate_path(locations.path())
+                .expect_err("missing scan locations")
+                .to_string()
+                .contains("at least one location pack")
         );
     }
 

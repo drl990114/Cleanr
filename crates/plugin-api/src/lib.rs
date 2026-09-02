@@ -21,6 +21,7 @@ pub const INSTALLED_PLUGIN_METADATA_FILE: &str = ".cleanr-plugin.json";
 #[serde(rename_all = "kebab-case")]
 pub enum PluginCapability {
     Rules,
+    ScanLocations,
     Translations,
     DynamicCandidates,
 }

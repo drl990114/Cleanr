@@ -1,0 +1,74 @@
+id = "builtin-dev-global-locations"
+version = "0.11.0"
+
+[[locations]]
+id = "linux-pnpm-cache"
+label = "pnpm cache"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "pnpm"
+
+[[locations]]
+id = "linux-yarn-cache"
+label = "Yarn cache"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "yarn"
+
+[[locations]]
+id = "linux-pip-cache"
+label = "pip cache"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "pip"
+
+[[locations]]
+id = "linux-uv-cache"
+label = "uv cache"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "uv"
+
+[[locations]]
+id = "linux-go-build-cache"
+label = "Go build cache"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "go-build"
+
+[[locations]]
+id = "windows-pnpm-store"
+label = "pnpm store"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "pnpm/store"
+
+[[locations]]
+id = "windows-npm-cache"
+label = "npm cache"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "npm-cache"
+
+[[locations]]
+id = "cross-platform-nuget-cache"
+label = "NuGet package cache"
+kind = "developer-caches"
+platforms = ["macos", "windows", "linux"]
+base = "home"
+relative_path = ".nuget/packages"
+
+[[locations]]
+id = "cross-platform-bun-cache"
+label = "Bun package cache"
+kind = "developer-caches"
+platforms = ["macos", "linux"]
+base = "home"
+relative_path = ".bun/install/cache"

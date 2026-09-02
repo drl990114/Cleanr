@@ -9,6 +9,11 @@ Cleanr 插件是带版本的 bundle。默认模型是声明式的：插件通过
 和翻译，因此 Cleanr 可以在加载前完成校验。插件也可以声明 `dynamic-candidates`
 hook，但 hook 执行是单独的受信任能力，不会因为普通安装自动启用。
 
+插件也可以声明 `scan-locations`。这些位置必须相对于 `home`、`cache`、
+`data-local`、`data`、`temp` 或 `downloads` 等受限基准目录，不能使用绝对路径、
+父目录跳转或 glob。只有内置或显式信任的插件可以激活扫描位置；不可信位置只产生
+诊断并被忽略。
+
 ## 包管理
 
 从官方静态索引安装：
@@ -69,6 +74,7 @@ cleanr plugin unlink example.caches
 cleanr plugin schema manifest > plugin.schema.json
 cleanr plugin schema index > plugin-index.schema.json
 cleanr plugin schema rules > rules.schema.json
+cleanr plugin schema locations > locations.schema.json
 cleanr plugin schema language > language.schema.json
 cleanr plugin schema config > config.schema.json
 ```
@@ -107,6 +113,8 @@ npm 包或 crates 也可以通过静态 HTTP URL 托管同样的 `plugins/` 目�
 ```text
 example-caches/
 ├── plugin.toml
+├── locations/
+│   └── global.toml
 └── rules/
     └── caches.toml
 ```
@@ -118,10 +126,26 @@ name = "Example cache rules"
 version = "1.0.0"
 description = "Cleanup rules for Example Tool caches."
 cleanr_version = ">=0.1.0"
-capabilities = ["rules"]
+capabilities = ["rules", "scan-locations"]
 categories = ["developer"]
 keywords = ["cache"]
 ```
+
+```toml title="locations/global.toml"
+id = "example-global-locations"
+version = "1.0.0"
+
+[[locations]]
+id = "example-linux-cache"
+label = "Example Tool cache"
+kind = "app-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "example-tool"
+```
+
+对于需要解释、但 Cleanr 不应遍历或加入计划的系统维护项，使用
+`mode = "os-managed"`。
 
 ## 信任和 Hook
 

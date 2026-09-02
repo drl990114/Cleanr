@@ -17,9 +17,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use cleanr_core::{
-    EntryKind, GlobalScanEvidence, GlobalScanKind, GlobalScanLocationEvidence, ReportIntegrity,
-    ScanBudgetExceeded, ScanBudgetLimits, ScanEntry, ScanIssue, ScanIssueCode, ScanRequest,
-    ScanSummary,
+    EntryKind, GlobalManagedLocationEvidence, GlobalScanEvidence, GlobalScanKind,
+    GlobalScanLocationEvidence, ReportIntegrity, RulePlatform, ScanBudgetExceeded,
+    ScanBudgetLimits, ScanEntry, ScanIssue, ScanIssueCode, ScanLocationBase,
+    ScanLocationDefinition, ScanLocationMode, ScanRequest, ScanSummary,
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::{
@@ -128,6 +129,7 @@ pub struct ResolvedScanRoots {
     pub roots: Vec<PathBuf>,
     pub global_roots: Vec<GlobalScanRoot>,
     pub global_locations: Vec<GlobalScanRoot>,
+    pub os_managed: Vec<GlobalManagedLocationEvidence>,
 }
 
 #[derive(Debug, Clone)]
@@ -208,31 +210,90 @@ pub fn resolve_scan_roots(
     )
 }
 
+pub fn resolve_scan_roots_with_locations(
+    request: &ScanRequest,
+    configured_global_kinds: &[GlobalScanKind],
+    locations: &[ScanLocationDefinition],
+) -> Result<ResolvedScanRoots> {
+    resolve_scan_roots_with_env_and_locations(
+        request,
+        configured_global_kinds,
+        &GlobalScanEnvironment::current(),
+        locations,
+        RulePlatform::current(),
+    )
+}
+
 pub fn resolve_scan_roots_with_env(
     request: &ScanRequest,
     configured_global_kinds: &[GlobalScanKind],
     environment: &GlobalScanEnvironment,
 ) -> Result<ResolvedScanRoots> {
+    resolve_scan_roots_with_env_and_locations(
+        request,
+        configured_global_kinds,
+        environment,
+        &[],
+        RulePlatform::current(),
+    )
+}
+
+pub fn resolve_scan_roots_with_env_and_locations(
+    request: &ScanRequest,
+    configured_global_kinds: &[GlobalScanKind],
+    environment: &GlobalScanEnvironment,
+    locations: &[ScanLocationDefinition],
+    platform: Option<RulePlatform>,
+) -> Result<ResolvedScanRoots> {
     let mut roots = request.paths.clone();
     let mut global_roots = Vec::new();
     let mut global_locations = Vec::new();
+    let mut os_managed = Vec::new();
     if request.include_global {
         let global_kinds = if request.global_kinds.is_empty() {
             configured_global_kinds
         } else {
             &request.global_kinds
         };
-        let requested_locations = discover_global_scan_locations(global_kinds, environment);
+        let requested_locations = discover_global_scan_locations_with_definitions(
+            global_kinds,
+            environment,
+            locations,
+            platform,
+        );
         global_roots = normalize_global_roots(requested_locations, environment);
-        global_locations = discover_global_scan_locations(&GlobalScanKind::ALL, environment)
-            .into_iter()
-            .filter(|location| {
-                global_roots
-                    .iter()
-                    .any(|root| location.path == root.path || location.path.starts_with(&root.path))
+        global_locations = discover_global_scan_locations_with_definitions(
+            &GlobalScanKind::ALL,
+            environment,
+            locations,
+            platform,
+        )
+        .into_iter()
+        .filter(|location| {
+            global_roots
+                .iter()
+                .any(|root| location.path == root.path || location.path.starts_with(&root.path))
+        })
+        .collect();
+        roots.extend(global_roots.iter().map(|root| root.path.clone()));
+        os_managed = locations
+            .iter()
+            .filter(|definition| {
+                definition.mode == ScanLocationMode::OsManaged
+                    && wants(global_kinds, definition.kind)
+                    && platform.is_some_and(|platform| definition.platforms.contains(&platform))
+            })
+            .map(|definition| GlobalManagedLocationEvidence {
+                id: definition.id.clone(),
+                kind: definition.kind,
+                label: definition.label.clone(),
             })
             .collect();
-        roots.extend(global_roots.iter().map(|root| root.path.clone()));
+        os_managed.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.id.cmp(&right.id))
+        });
     }
 
     if roots.is_empty() && !request.include_global {
@@ -243,6 +304,7 @@ pub fn resolve_scan_roots_with_env(
         roots: normalize_roots(roots),
         global_roots,
         global_locations,
+        os_managed,
     })
 }
 
@@ -294,6 +356,7 @@ pub fn global_scan_evidence(
     GlobalScanEvidence {
         requested_kinds,
         locations,
+        os_managed: resolved.os_managed.clone(),
     }
 }
 
@@ -313,6 +376,20 @@ pub fn discover_global_scan_roots(
 pub fn discover_global_scan_locations(
     kinds: &[GlobalScanKind],
     environment: &GlobalScanEnvironment,
+) -> Vec<GlobalScanRoot> {
+    discover_global_scan_locations_with_definitions(
+        kinds,
+        environment,
+        &[],
+        RulePlatform::current(),
+    )
+}
+
+fn discover_global_scan_locations_with_definitions(
+    kinds: &[GlobalScanKind],
+    environment: &GlobalScanEnvironment,
+    definitions: &[ScanLocationDefinition],
+    platform: Option<RulePlatform>,
 ) -> Vec<GlobalScanRoot> {
     let mut roots = Vec::new();
     if wants(kinds, GlobalScanKind::DeveloperCaches) {
@@ -351,6 +428,30 @@ pub fn discover_global_scan_locations(
                 GlobalScanKind::Downloads,
                 "Downloads",
             );
+        }
+    }
+    for definition in definitions {
+        if definition.mode != ScanLocationMode::Scan
+            || !wants(kinds, definition.kind)
+            || !platform.is_some_and(|platform| definition.platforms.contains(&platform))
+        {
+            continue;
+        }
+        let base = match definition.base {
+            ScanLocationBase::Home => environment.home_dir.as_ref(),
+            ScanLocationBase::Cache => environment.cache_dir.as_ref(),
+            ScanLocationBase::DataLocal => environment.data_local_dir.as_ref(),
+            ScanLocationBase::Data => environment.data_dir.as_ref(),
+            ScanLocationBase::Temp => environment.temp_dir.as_ref(),
+            ScanLocationBase::Downloads => environment.download_dir.as_ref(),
+        };
+        if let Some(base) = base {
+            let path = if definition.relative_path.is_empty() {
+                base.clone()
+            } else {
+                base.join(&definition.relative_path)
+            };
+            push_global_root(&mut roots, &path, definition.kind, definition.label.clone());
         }
     }
     normalize_global_locations(roots, environment)
@@ -3230,6 +3331,73 @@ mod tests {
     }
 
     #[test]
+    fn trusted_location_definitions_are_platform_scoped_and_report_os_managed_items() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cache = temp.path().join("cache");
+        fs::create_dir_all(cache.join("example")).expect("cache location");
+        let environment = GlobalScanEnvironment {
+            cache_dir: Some(cache.clone()),
+            ..GlobalScanEnvironment::default()
+        };
+        let definitions = vec![
+            ScanLocationDefinition {
+                id: "example-cache".to_string(),
+                label: "Example cache".to_string(),
+                kind: GlobalScanKind::AppCaches,
+                platforms: vec![RulePlatform::Linux],
+                base: ScanLocationBase::Cache,
+                relative_path: "example".to_string(),
+                mode: ScanLocationMode::Scan,
+            },
+            ScanLocationDefinition {
+                id: "system-maintenance".to_string(),
+                label: "System maintenance".to_string(),
+                kind: GlobalScanKind::AppCaches,
+                platforms: vec![RulePlatform::Linux],
+                base: ScanLocationBase::Data,
+                relative_path: String::new(),
+                mode: ScanLocationMode::OsManaged,
+            },
+        ];
+        let request = ScanRequest::global(vec![GlobalScanKind::AppCaches]);
+
+        let resolved = resolve_scan_roots_with_env_and_locations(
+            &request,
+            &[],
+            &environment,
+            &definitions,
+            Some(RulePlatform::Linux),
+        )
+        .expect("resolve locations");
+        let evidence = global_scan_evidence(&request, &[], &resolved, &resolved.roots);
+
+        assert!(!resolved.roots.is_empty());
+        assert!(
+            evidence
+                .locations
+                .iter()
+                .any(|item| item.label == "Example cache")
+        );
+        assert_eq!(evidence.os_managed[0].id, "system-maintenance");
+
+        let windows = resolve_scan_roots_with_env_and_locations(
+            &request,
+            &[],
+            &environment,
+            &definitions,
+            Some(RulePlatform::Windows),
+        )
+        .expect("resolve other platform");
+        assert!(windows.os_managed.is_empty());
+        assert!(
+            windows
+                .global_locations
+                .iter()
+                .all(|item| item.label != "Example cache")
+        );
+    }
+
+    #[test]
     fn global_scan_evidence_is_deterministic_and_uses_completed_roots() {
         let scan_root = PathBuf::from("scan-root");
         let app_cache = scan_root.join("app-cache");
@@ -3261,6 +3429,7 @@ mod tests {
                     label: "Application cache".to_string(),
                 },
             ],
+            os_managed: Vec::new(),
         };
 
         let evidence = global_scan_evidence(
@@ -3295,6 +3464,7 @@ mod tests {
                 kind: GlobalScanKind::AppCaches,
                 label: "Application cache".to_string(),
             }],
+            os_managed: Vec::new(),
         };
 
         assert_eq!(

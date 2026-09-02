@@ -922,6 +922,7 @@ mod tests {
                 default_selected: true,
                 trust: RuleTrust::Builtin,
                 match_role: cleanr_core::RuleMatchRole::Primary,
+                sources: Vec::new(),
             }],
         }
     }
@@ -973,6 +974,7 @@ mod tests {
                 default_selected: true,
                 trust: cleanr_core::RuleTrust::Builtin,
                 match_role: cleanr_core::RuleMatchRole::Primary,
+                sources: Vec::new(),
             }],
         };
         let plan = build_cleanup_plan(vec![temp.path().to_path_buf()], vec![], &[entry]);
@@ -1139,6 +1141,7 @@ mod tests {
                 default_selected: true,
                 trust: cleanr_core::RuleTrust::Builtin,
                 match_role: cleanr_core::RuleMatchRole::Primary,
+                sources: Vec::new(),
             }],
         };
         let policy = cleanr_core::SafetyPolicy::new(vec![], false);

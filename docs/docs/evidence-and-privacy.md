@@ -101,6 +101,8 @@ threshold boundary. It includes:
 - scan roots, integrity state, and structured scan issues;
 - for global analysis, the requested global categories and every existing named
   location with its category, label, local path, and covering scan root;
+- path-free `os_managed` entries for known system-owned work that Cleanr names
+  for coverage but never scans or promotes into a plan;
 - each candidate's opaque report-scoped ID, local path, size, kind, and
   rollback method;
 - modification-time evidence, coverage, rule matches, and overlap resolution;
@@ -122,8 +124,8 @@ location row alone does not prove every descendant was read. When scan integrity
 requested category with no location means Cleanr found no known existing location for that
 category; it does not mean the computer is clean. The bundled agent skill converts this evidence into
 `found-candidates`, `checked-empty`, `no-known-location`, or `partial`, and uses
-`os-managed` for requested system-update or other system-owned work that Cleanr
-must not execute.
+`os-managed` only for entries explicitly present in the report's path-free
+ledger. Cleanr never scans or executes those entries.
 
 ## Recommended external-agent workflow
 

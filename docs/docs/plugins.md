@@ -11,6 +11,12 @@ them before loading. A plugin may also declare `dynamic-candidates` hooks, but
 hook execution is a separate trusted capability and is not enabled by ordinary
 installation.
 
+Plugins may also declare `scan-locations`. These are constrained, relative
+locations anchored to `home`, `cache`, `data-local`, `data`, `temp`, or
+`downloads`. They cannot contain absolute paths, parent traversal, or globs.
+Only built-in or explicitly trusted plugins may activate them; untrusted
+locations are diagnosed and ignored.
+
 ## Package Manager
 
 Install from the official static index:
@@ -73,6 +79,7 @@ Generate editor schemas:
 cleanr plugin schema manifest > plugin.schema.json
 cleanr plugin schema index > plugin-index.schema.json
 cleanr plugin schema rules > rules.schema.json
+cleanr plugin schema locations > locations.schema.json
 cleanr plugin schema language > language.schema.json
 cleanr plugin schema config > config.schema.json
 ```
@@ -114,6 +121,8 @@ index format instead of registry-specific archives.
 ```text
 example-caches/
 ├── plugin.toml
+├── locations/
+│   └── global.toml
 └── rules/
     └── caches.toml
 ```
@@ -125,7 +134,7 @@ name = "Example cache rules"
 version = "1.0.0"
 description = "Cleanup rules for Example Tool caches."
 cleanr_version = ">=0.1.0"
-capabilities = ["rules"]
+capabilities = ["rules", "scan-locations"]
 categories = ["developer"]
 keywords = ["cache"]
 ```
@@ -148,6 +157,22 @@ action = "trash"
 reason = "Example Tool recreates this cache automatically."
 risk_note = "The next Example Tool run may be slower."
 ```
+
+```toml title="locations/global.toml"
+id = "example-global-locations"
+version = "1.0.0"
+
+[[locations]]
+id = "example-linux-cache"
+label = "Example Tool cache"
+kind = "app-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "example-tool"
+```
+
+Use `mode = "os-managed"` for path-free coverage that Cleanr should explain
+but never traverse or place in a cleanup plan.
 
 ## Trust and Hooks
 

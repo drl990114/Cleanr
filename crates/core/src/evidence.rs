@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    Confidence, EntryKind, GlobalScanKind, RuleHit, RuleMatchRole, RuleTrust, SafetyPolicy,
-    ScanEntry, merge_path_forest,
+    Confidence, EntryKind, GlobalScanKind, RuleHit, RuleMatchRole, RuleSource, RuleTrust,
+    SafetyPolicy, ScanEntry, merge_path_forest,
 };
 
 /// The schema identifier for the read-only local analysis contract.
@@ -290,6 +290,8 @@ pub struct RuleEvidence {
     pub match_role: RuleMatchRole,
     pub reason: String,
     pub risk_note: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<RuleSource>,
 }
 
 /// How matching rules were resolved for recommendation purposes.
@@ -436,6 +438,14 @@ pub struct GlobalScanLocationEvidence {
     pub scan_root: PathBuf,
 }
 
+/// A path-free item intentionally delegated to an operating-system maintenance workflow.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GlobalManagedLocationEvidence {
+    pub id: String,
+    pub kind: GlobalScanKind,
+    pub label: String,
+}
+
 /// Requested global categories and existing named locations reached by completed covering roots.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GlobalScanEvidence {
@@ -443,11 +453,13 @@ pub struct GlobalScanEvidence {
     pub requested_kinds: Vec<GlobalScanKind>,
     #[serde(default)]
     pub locations: Vec<GlobalScanLocationEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub os_managed: Vec<GlobalManagedLocationEvidence>,
 }
 
 impl GlobalScanEvidence {
     fn is_empty(&self) -> bool {
-        self.requested_kinds.is_empty() && self.locations.is_empty()
+        self.requested_kinds.is_empty() && self.locations.is_empty() && self.os_managed.is_empty()
     }
 }
 
@@ -986,6 +998,7 @@ fn rule_evidence(hit: &RuleHit) -> RuleEvidence {
         match_role: hit.match_role,
         reason: hit.reason.clone(),
         risk_note: hit.risk_note.clone(),
+        sources: hit.sources.clone(),
     }
 }
 
@@ -1283,6 +1296,7 @@ mod tests {
             default_selected,
             trust,
             match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
         }
     }
 
@@ -1348,6 +1362,7 @@ mod tests {
                 local_path: PathBuf::from("/repo/.pnpm-store"),
                 scan_root: PathBuf::from("/repo"),
             }],
+            os_managed: Vec::new(),
         };
         let mut value = serde_json::to_value(report).expect("serialize report");
         value["scan"]
@@ -1710,6 +1725,7 @@ mod tests {
                     scan_root: cache_root,
                 },
             ],
+            os_managed: Vec::new(),
         };
         assert_eq!(
             report.candidates[0].recommendation.state,

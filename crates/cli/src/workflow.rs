@@ -14,7 +14,7 @@ use cleanr_core::{
     suppress_unrequested_global_candidates,
 };
 use cleanr_fs::{
-    ScanOptions, ScanReport, global_scan_evidence, resolve_scan_roots,
+    ScanOptions, ScanReport, global_scan_evidence, resolve_scan_roots_with_locations,
     scan_resolved_paths_started_at,
 };
 use cleanr_rules::RuleRegistry;
@@ -281,7 +281,11 @@ fn run_scan(
         .iter()
         .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
         .collect();
-    let resolved = resolve_scan_roots(&request, &config.scan.global_kinds)?;
+    let resolved = resolve_scan_roots_with_locations(
+        &request,
+        &config.scan.global_kinds,
+        registry.scan_locations(),
+    )?;
     let options = ScanOptions {
         stay_on_filesystem: config.scan.stay_on_filesystem,
         ignore_dirs: config.scan.ignore_dirs.clone(),
@@ -724,6 +728,7 @@ mod tests {
                     label: "pnpm cache".to_string(),
                 },
             ],
+            os_managed: Vec::new(),
         };
         let global_scan = global_scan_evidence(&request, &[], &resolved, &resolved.roots);
         let mut reversed_request = request.clone();
@@ -802,6 +807,7 @@ mod tests {
                     label: "pnpm cache".to_string(),
                 },
             ],
+            os_managed: Vec::new(),
         };
         let global_scan = global_scan_evidence(&request, &[], &resolved, &resolved.roots);
         let as_of = Utc::now();
@@ -831,6 +837,7 @@ mod tests {
                         default_selected: true,
                         trust: RuleTrust::Builtin,
                         match_role: RuleMatchRole::Primary,
+                        sources: Vec::new(),
                     }],
                 }],
                 ..ScanReport::default()
@@ -1054,6 +1061,7 @@ mod tests {
             default_selected,
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
         };
         let entries = vec![
             ScanEntry {

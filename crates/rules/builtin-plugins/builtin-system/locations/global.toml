@@ -1,0 +1,165 @@
+id = "builtin-system-global-locations"
+version = "0.11.0"
+
+[[locations]]
+id = "windows-chrome-cache-root"
+label = "Chrome cache"
+kind = "browser-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "Google/Chrome/User Data"
+
+[[locations]]
+id = "windows-edge-cache-root"
+label = "Microsoft Edge cache"
+kind = "browser-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "Microsoft/Edge/User Data"
+
+[[locations]]
+id = "windows-brave-cache-root"
+label = "Brave cache"
+kind = "browser-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "BraveSoftware/Brave-Browser/User Data"
+
+[[locations]]
+id = "windows-firefox-cache-root"
+label = "Firefox cache"
+kind = "browser-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "Mozilla/Firefox/Profiles"
+
+[[locations]]
+id = "windows-slack-cache"
+label = "Slack cache"
+kind = "app-caches"
+platforms = ["windows"]
+base = "data"
+relative_path = "Slack"
+
+[[locations]]
+id = "windows-discord-cache"
+label = "Discord cache"
+kind = "app-caches"
+platforms = ["windows"]
+base = "data"
+relative_path = "discord"
+
+[[locations]]
+id = "windows-vscode-cache"
+label = "Visual Studio Code cache"
+kind = "app-caches"
+platforms = ["windows"]
+base = "data"
+relative_path = "Code"
+
+[[locations]]
+id = "windows-cursor-cache"
+label = "Cursor cache"
+kind = "app-caches"
+platforms = ["windows"]
+base = "data"
+relative_path = "Cursor"
+
+[[locations]]
+id = "windows-notion-cache"
+label = "Notion cache"
+kind = "app-caches"
+platforms = ["windows"]
+base = "data"
+relative_path = "Notion"
+
+[[locations]]
+id = "windows-signal-cache"
+label = "Signal cache"
+kind = "app-caches"
+platforms = ["windows"]
+base = "data"
+relative_path = "Signal"
+
+[[locations]]
+id = "windows-user-crash-dumps"
+label = "Windows user crash dumps"
+kind = "logs"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "CrashDumps"
+
+[[locations]]
+id = "linux-desktop-thumbnails"
+label = "Desktop thumbnail cache"
+kind = "app-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "thumbnails"
+
+[[locations]]
+id = "linux-brave-cache-root"
+label = "Brave cache"
+kind = "browser-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "BraveSoftware/Brave-Browser"
+
+[[locations]]
+id = "linux-firefox-cache-root"
+label = "Firefox cache"
+kind = "browser-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "mozilla/firefox"
+
+[[locations]]
+id = "linux-flatpak-slack-cache"
+label = "Flatpak Slack cache"
+kind = "app-caches"
+platforms = ["linux"]
+base = "home"
+relative_path = ".var/app/com.slack.Slack"
+
+[[locations]]
+id = "linux-flatpak-discord-cache"
+label = "Flatpak Discord cache"
+kind = "app-caches"
+platforms = ["linux"]
+base = "home"
+relative_path = ".var/app/com.discordapp.Discord"
+
+[[locations]]
+id = "linux-flatpak-vscode-cache"
+label = "Flatpak Visual Studio Code cache"
+kind = "app-caches"
+platforms = ["linux"]
+base = "home"
+relative_path = ".var/app/com.visualstudio.code"
+
+[[locations]]
+id = "macos-updates"
+label = "macOS software updates"
+kind = "temp-files"
+platforms = ["macos"]
+base = "data"
+relative_path = ""
+mode = "os-managed"
+
+[[locations]]
+id = "windows-update"
+label = "Windows Update and Delivery Optimization"
+kind = "temp-files"
+platforms = ["windows"]
+base = "data-local"
+relative_path = ""
+mode = "os-managed"
+
+[[locations]]
+id = "linux-system-package-cache"
+label = "System package manager caches"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "data"
+relative_path = ""
+mode = "os-managed"
