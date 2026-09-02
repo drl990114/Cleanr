@@ -45,7 +45,7 @@ need() {
 
 is_release_file() {
   case "$1" in
-    Cargo.toml|Cargo.lock|npm/cleanr/package.json|crates/*/Cargo.toml|plugins/index.json|plugins/*/plugin.toml|plugins/*/rules/*.toml|plugins/*/locales/*.yml|plugins/*/locales/*.yaml|crates/rules/builtin-plugins/*/plugin.toml|crates/rules/builtin-plugins/*/rules/*.toml|crates/rules/builtin-plugins/*/locales/*.yml|crates/rules/builtin-plugins/*/locales/*.yaml)
+    Cargo.toml|Cargo.lock|npm/cleanr/package.json|crates/*/Cargo.toml|plugins/index.json|plugins/*/plugin.toml|plugins/*/rules/*.toml|plugins/*/locations/*.toml|plugins/*/locales/*.yml|plugins/*/locales/*.yaml|crates/rules/builtin-plugins/*/plugin.toml|crates/rules/builtin-plugins/*/rules/*.toml|crates/rules/builtin-plugins/*/locations/*.toml|crates/rules/builtin-plugins/*/locales/*.yml|crates/rules/builtin-plugins/*/locales/*.yaml)
       return 0
       ;;
     *)

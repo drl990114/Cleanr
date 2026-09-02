@@ -67,6 +67,7 @@ jobs:
             [ -f "$dir/plugin.toml" ] && plugin_dirs+=("$dir")
           done
           cargo run --locked -p cleanr-cli -- plugin validate "${plugin_dirs[@]}"
+          node scripts/check-rule-sources.mjs
 
   build-binaries:
     name: Build ${{ matrix.target }}

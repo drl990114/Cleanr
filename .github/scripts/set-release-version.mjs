@@ -86,7 +86,7 @@ function pluginFiles() {
       if (existsSync(manifest)) {
         output.push(manifest);
       }
-      for (const child of ["rules", "locales"]) {
+      for (const child of ["rules", "locations", "locales"]) {
         const dir = join(bundleDir, child);
         if (!existsSync(dir)) {
           continue;
