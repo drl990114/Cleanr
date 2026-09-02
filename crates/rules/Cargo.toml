@@ -11,9 +11,9 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-cleanr-config = { version = "0.11.0", path = "../config" }
-cleanr-core = { version = "0.11.0", path = "../core" }
-cleanr-plugin-api = { version = "0.11.0", path = "../plugin-api" }
+cleanr-config = { version = "0.12.0", path = "../config" }
+cleanr-core = { version = "0.12.0", path = "../core" }
+cleanr-plugin-api = { version = "0.12.0", path = "../plugin-api" }
 globset.workspace = true
 schemars.workspace = true
 semver.workspace = true
