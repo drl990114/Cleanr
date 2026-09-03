@@ -3,6 +3,7 @@
 mod cleanup;
 mod platform;
 mod restore;
+mod runtime;
 mod storage;
 mod workflow;
 
@@ -49,9 +50,10 @@ mod tests {
     use cleanr_core::{
         AnalysisScanContext, CleanupAuthorizationSource, CleanupPlanSourceScan, Confidence,
         EXECUTION_SCHEMA_VERSION, EntryKind, ExecutionAuthorization, ExecutionItem,
-        ExecutionManifest, ExecutionStatus, ExecutionSummary, PlannedAction,
-        RESTORE_SCHEMA_VERSION, RecommendationPolicy, RecommendationState, ReportIntegrity,
-        RestoreManifest, RestoreStatus, RestoreSummary, RollbackReceipt, RuleTrust, SafetyPolicy,
+        ExecutionManifest, ExecutionStatus, ExecutionSummary, GlobalScanEvidence, GlobalScanKind,
+        GlobalScanLocationEvidence, PlannedAction, RESTORE_SCHEMA_VERSION, RecommendationPolicy,
+        RecommendationState, ReportIntegrity, RestoreManifest, RestoreStatus, RestoreSummary,
+        RollbackReceipt, RuleKey, RuleTrust, RuntimeGuardEvidence, RuntimeGuardState, SafetyPolicy,
         ScanBudgetExceeded, ScanIssue, ScanIssueCode, UserSelection,
         build_analysis_report_with_scan_context, build_cleanup_plan,
         build_cleanup_plan_from_analysis, build_cleanup_plan_with_policy,
@@ -79,6 +81,7 @@ mod tests {
                 trust: RuleTrust::Builtin,
                 match_role: cleanr_core::RuleMatchRole::Primary,
                 sources: Vec::new(),
+                runtime_guard: None,
             }],
         }
     }
@@ -131,6 +134,7 @@ mod tests {
                 trust: cleanr_core::RuleTrust::Builtin,
                 match_role: cleanr_core::RuleMatchRole::Primary,
                 sources: Vec::new(),
+                runtime_guard: None,
             }],
         };
         let plan = build_cleanup_plan(vec![temp.path().to_path_buf()], vec![], &[entry]);
@@ -151,6 +155,208 @@ mod tests {
         assert_eq!(
             list_execution_manifests(temp.path()).expect("list").len(),
             1
+        );
+    }
+
+    #[test]
+    fn exact_named_global_root_can_be_trashed_only_with_matching_scope_evidence() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("named-cache");
+        fs::create_dir(&target).expect("create target");
+        let as_of = Utc::now();
+        let mut entry = cleanup_entry(target.clone(), EntryKind::Directory, 0);
+        entry.modified_at = target
+            .metadata()
+            .expect("target metadata")
+            .modified()
+            .ok()
+            .map(DateTime::<Utc>::from);
+        let global = GlobalScanEvidence {
+            requested_kinds: vec![GlobalScanKind::DeveloperCaches],
+            locations: vec![GlobalScanLocationEvidence {
+                kind: GlobalScanKind::DeveloperCaches,
+                label: "Named cache".into(),
+                local_path: target.clone(),
+                scan_root: target.clone(),
+            }],
+            os_managed: Vec::new(),
+        };
+        let policy = SafetyPolicy::new(vec![], false);
+        let analysis = build_analysis_report_with_scan_context(
+            as_of,
+            as_of,
+            vec![target.clone()],
+            std::slice::from_ref(&entry),
+            &[],
+            RecommendationPolicy::new(0).expect("disabled age gate"),
+            AnalysisScanContext {
+                safety_policy: Some(&policy),
+                global: Some(&global),
+                explicit_roots: &[],
+                ..AnalysisScanContext::default()
+            },
+        )
+        .expect("analysis");
+        let selection = UserSelection::from_recommendations(&analysis);
+        let plan = build_workflow_plan(
+            vec![target.clone()],
+            vec![],
+            std::slice::from_ref(&entry),
+            &analysis,
+            &selection,
+            &policy,
+            &[],
+            &global,
+        )
+        .expect("plan");
+        let fake = FakeTrashExecutor::default();
+        let authorization = CleanupAuthorization::explicit_user_confirmation();
+
+        let manifest = execute_cleanup_plan(
+            &plan,
+            &fake,
+            temp.path().join("state"),
+            Some(&authorization),
+        )
+        .expect("execute exact named global root");
+        assert_eq!(
+            manifest.summary.succeeded, 1,
+            "{:?}",
+            manifest.items[0].error
+        );
+        assert_eq!(fake.trashed_paths(), vec![target.clone()]);
+
+        let mut unscoped = plan.clone();
+        unscoped.source_scan.as_mut().expect("source scan").scope = None;
+        let error = execute_cleanup_plan(
+            &unscoped,
+            &FakeTrashExecutor::default(),
+            temp.path().join("unscoped-state"),
+            Some(&authorization),
+        )
+        .expect_err("unscoped named root must be rejected");
+        assert!(error.to_string().contains("global scan root"));
+
+        let path_detour = temp.path().join("path-detour");
+        fs::create_dir(&path_detour).expect("path detour");
+        let alternate_spelling = path_detour
+            .join("..")
+            .join(target.file_name().expect("target name"));
+        let mut explicitly_scoped = plan;
+        explicitly_scoped
+            .source_scan
+            .as_mut()
+            .and_then(|source| source.scope.as_mut())
+            .expect("scan scope")
+            .explicit_roots = vec![alternate_spelling];
+        let error = execute_cleanup_plan(
+            &explicitly_scoped,
+            &FakeTrashExecutor::default(),
+            temp.path().join("explicit-state"),
+            Some(&authorization),
+        )
+        .expect_err("an alternate spelling of an explicit root must still be rejected");
+        assert!(error.to_string().contains("global scan root"));
+    }
+
+    #[test]
+    fn runtime_guard_state_is_bound_into_the_reviewed_plan() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("guarded-cache");
+        fs::create_dir(&target).expect("create target");
+        let as_of = Utc::now();
+        let mut entry = cleanup_entry(target.clone(), EntryKind::Directory, 0);
+        entry.modified_at = target
+            .metadata()
+            .expect("target metadata")
+            .modified()
+            .ok()
+            .map(DateTime::<Utc>::from);
+        entry.rule_hits[0].runtime_guard = Some(RuntimeGuardEvidence {
+            rule: RuleKey {
+                rule_pack_id: entry.rule_hits[0].rule_pack_id.clone(),
+                rule_id: entry.rule_hits[0].rule_id.clone(),
+            },
+            process_names: vec!["cleanr-test-process-name-that-does-not-exist".into()],
+            state: RuntimeGuardState::Idle,
+        });
+        let policy = SafetyPolicy::new(vec![], false);
+        let analysis = build_analysis_report_with_scan_context(
+            as_of,
+            as_of,
+            vec![temp.path().to_path_buf()],
+            std::slice::from_ref(&entry),
+            &[],
+            RecommendationPolicy::new(0).expect("disabled age gate"),
+            AnalysisScanContext {
+                safety_policy: Some(&policy),
+                ..AnalysisScanContext::default()
+            },
+        )
+        .expect("analysis");
+        let selection = UserSelection::from_recommendations(&analysis);
+        let plan = build_cleanup_plan_from_analysis(
+            vec![temp.path().to_path_buf()],
+            vec![],
+            std::slice::from_ref(&entry),
+            &analysis,
+            &selection,
+            &policy,
+        )
+        .expect("plan");
+        let authorization = CleanupAuthorization::explicit_user_confirmation();
+        let fake = FakeTrashExecutor::default();
+        execute_cleanup_plan(
+            &plan,
+            &fake,
+            temp.path().join("idle-state"),
+            Some(&authorization),
+        )
+        .expect("verified-idle plan");
+        assert_eq!(fake.trashed_paths(), vec![target]);
+
+        let mut missing_guard_plan = plan.clone();
+        missing_guard_plan.items[0]
+            .evidence
+            .as_mut()
+            .expect("item evidence")
+            .runtime_guards
+            .clear();
+        let error = execute_cleanup_plan(
+            &missing_guard_plan,
+            &FakeTrashExecutor::default(),
+            temp.path().join("missing-guard-state"),
+            Some(&authorization),
+        )
+        .expect_err("runtime guard evidence cannot be removed from a plan");
+        assert!(error.to_string().contains("inconsistent runtime guard"));
+
+        let mut active_plan = plan;
+        active_plan.items[0]
+            .evidence
+            .as_mut()
+            .expect("item evidence")
+            .runtime_guards[0]
+            .state = RuntimeGuardState::Active;
+        active_plan.items[0]
+            .evidence
+            .as_mut()
+            .expect("item evidence")
+            .matched_rules[0]
+            .runtime_guard
+            .as_mut()
+            .expect("matched rule guard")
+            .state = RuntimeGuardState::Active;
+        let error = execute_cleanup_plan(
+            &active_plan,
+            &FakeTrashExecutor::default(),
+            temp.path().join("active-state"),
+            Some(&authorization),
+        )
+        .expect_err("active state must invalidate plan");
+        assert!(
+            error.to_string().contains("verified-idle"),
+            "unexpected error: {error:#}"
         );
     }
 
@@ -399,6 +605,7 @@ mod tests {
                 trust: cleanr_core::RuleTrust::Builtin,
                 match_role: cleanr_core::RuleMatchRole::Primary,
                 sources: Vec::new(),
+                runtime_guard: None,
             }],
         };
         let policy = cleanr_core::SafetyPolicy::new(vec![], false);

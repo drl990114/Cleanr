@@ -18,7 +18,8 @@ pub use model::{
     EXECUTION_SCHEMA_VERSION, EntryKind, GlobalScanKind, PlanSafety, PlanSummary, PlannedAction,
     RESTORE_SCHEMA_VERSION, RuleHit, RuleMatchRole, RulePlatform, RuleSource, RuleSourceRelation,
     RuleTrust, RulesetVersion, ScanEntry, ScanLocationBase, ScanLocationDefinition,
-    ScanLocationMode, ScanLocationPack, ScanRequest, ScanSummary, default_global_scan_kinds,
+    ScanLocationExpansion, ScanLocationMode, ScanLocationPack, ScanRequest, ScanSummary,
+    default_global_scan_kinds,
 };
 
 pub use evidence::{
@@ -27,10 +28,11 @@ pub use evidence::{
     DecisionCode, GlobalManagedLocationEvidence, GlobalScanEvidence, GlobalScanLocationEvidence,
     MAX_RECOMMENDATION_AGE_DAYS, OverlapEvidence, RecommendationDecision, RecommendationPolicy,
     RecommendationPolicyError, RecommendationState, ReportIntegrity, RuleEvidence, RuleKey,
-    RuleResolution, RuleResolutionState, ScanBudgetExceeded, ScanBudgetLimits, ScanEvidence,
-    ScanIssue, ScanIssueCode, UserSelection, build_analysis_report,
-    build_analysis_report_with_budget, build_analysis_report_with_safety_policy,
-    build_analysis_report_with_scan_context, suppress_unrequested_global_candidates,
+    RuleResolution, RuleResolutionState, RuntimeGuardEvidence, RuntimeGuardState,
+    ScanBudgetExceeded, ScanBudgetLimits, ScanEvidence, ScanIssue, ScanIssueCode, UserSelection,
+    build_analysis_report, build_analysis_report_with_budget,
+    build_analysis_report_with_safety_policy, build_analysis_report_with_scan_context,
+    suppress_unrequested_global_candidates,
 };
 
 pub use manifests::{
@@ -76,6 +78,7 @@ mod tests {
                     trust: RuleTrust::Builtin,
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
+                    runtime_guard: None,
                 }],
             },
             ScanEntry {
@@ -95,6 +98,7 @@ mod tests {
                     trust: RuleTrust::Builtin,
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
+                    runtime_guard: None,
                 }],
             },
         ];
@@ -121,6 +125,7 @@ mod tests {
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let entries = [89_i64, 90, 91, 1]
             .into_iter()
@@ -212,6 +217,7 @@ mod tests {
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let entries = [1_i64, 100]
             .into_iter()
@@ -278,6 +284,7 @@ mod tests {
                 trust: RuleTrust::Builtin,
                 match_role: RuleMatchRole::Primary,
                 sources: Vec::new(),
+                runtime_guard: None,
             }],
         }];
         let safety = SafetyPolicy::default();
@@ -339,6 +346,7 @@ mod tests {
                 trust: RuleTrust::Builtin,
                 match_role: RuleMatchRole::Primary,
                 sources: Vec::new(),
+                runtime_guard: None,
             }],
         }];
         let safety = SafetyPolicy::default();
@@ -403,6 +411,7 @@ mod tests {
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let entries = vec![
             ScanEntry {
@@ -473,6 +482,7 @@ mod tests {
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let make_entry = |rule_hits| ScanEntry {
             path: PathBuf::from("/repo/cache"),
@@ -523,6 +533,7 @@ mod tests {
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let entries = vec![
             ScanEntry {
@@ -561,6 +572,7 @@ mod tests {
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let modified_at = Utc::now();
         let newer_modified_at = modified_at + chrono::Duration::seconds(1);
@@ -739,6 +751,7 @@ mod tests {
                     trust: RuleTrust::Trusted,
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
+                    runtime_guard: None,
                 }],
             },
             ScanEntry {
@@ -758,6 +771,7 @@ mod tests {
                     trust: RuleTrust::Trusted,
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
+                    runtime_guard: None,
                 }],
             },
         ];
@@ -801,6 +815,7 @@ mod tests {
                     trust: RuleTrust::Trusted,
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
+                    runtime_guard: None,
                 }],
             };
 
@@ -831,6 +846,7 @@ mod tests {
             trust,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let entry = ScanEntry {
             path: PathBuf::from("/repo/cache"),

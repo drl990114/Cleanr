@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -60,7 +61,7 @@ impl ManifestRepository {
 
     pub fn list_executions(&self) -> Result<Vec<ExecutionManifest>> {
         let mut manifests = list_json_manifests::<ExecutionManifest>(&self.runs_dir())?;
-        manifests.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        manifests.sort_by_key(|manifest| Reverse(manifest.created_at));
         Ok(manifests)
     }
 
@@ -81,7 +82,7 @@ impl ManifestRepository {
 
     pub fn list_restores(&self) -> Result<Vec<RestoreManifest>> {
         let mut manifests = list_json_manifests::<RestoreManifest>(&self.restores_dir())?;
-        manifests.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        manifests.sort_by_key(|manifest| Reverse(manifest.created_at));
         Ok(manifests)
     }
 

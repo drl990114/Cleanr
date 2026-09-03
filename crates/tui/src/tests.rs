@@ -174,6 +174,7 @@ fn test_rule_hit(rule_id: &str) -> RuleHit {
         trust: RuleTrust::Builtin,
         match_role: cleanr_core::RuleMatchRole::Primary,
         sources: Vec::new(),
+        runtime_guard: None,
     }
 }
 
@@ -1025,6 +1026,7 @@ fn tui_analysis_suppresses_candidates_from_unrequested_global_kinds() {
             },
         ],
         os_managed: Vec::new(),
+        issues: Vec::new(),
     };
 
     let mut app = app(scan_root.clone());

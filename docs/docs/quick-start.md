@@ -22,7 +22,7 @@ operating system and CPU.
 
 ### Cargo
 
-Requires Rust 1.94 or later:
+Requires Rust 1.98 or later:
 
 ```bash
 cargo install cleanr-cli

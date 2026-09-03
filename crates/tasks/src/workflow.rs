@@ -27,7 +27,10 @@ use cleanr_fs::{
 use cleanr_rules::RuleRegistry;
 use sha2::{Digest, Sha256};
 
-use crate::{CleanupAuthorization, TrashExecutor, execute_cleanup_plan, validate_recoverable_plan};
+use crate::{
+    CleanupAuthorization, TrashExecutor, execute_cleanup_plan,
+    runtime::capture_and_resolve_runtime_guards, validate_recoverable_plan,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScanPreparationMode {
@@ -324,6 +327,7 @@ pub fn run_scan_workflow(
         input
             .registry
             .annotate_entries_at(&mut report.entries, report.as_of);
+        capture_and_resolve_runtime_guards(&mut report.entries);
         ensure_scan_active(cancellation)?;
     }
 

@@ -1,6 +1,6 @@
 id = "builtin-system"
 name = "Built-in system cleanup locations"
-version = "0.13.0"
+version = "0.13.1"
 description = "Known user-level system cleanup candidates such as browser caches, app caches, logs, diagnostics, temporary files, and downloaded installers."
 categories = ["browser-cache", "application-cache", "temporary-files", "logs", "diagnostics", "downloads"]
 
@@ -43,10 +43,12 @@ relation = "audited-against"
 # Windows targets were independently narrowed from the GPL-3.0 BleachBit source
 # at commit ab0e4b94e29b8233adbe7ab010656e61b162c63d and the CC-BY-SA-4.0
 # Winapp2 database at commit 3c0156de665cc180edc76745e425412ccc4356ca. Cleanr
-# does not import either rule database. Only stale regular files from the
-# current user's Temp and D3DSCache directories are included. Explorer
-# thumbnails, system-owned crash dumps, Windows Update and Delivery Optimization data,
-# Prefetch, the Recycle Bin, the registry, and system-owned roots are excluded.
+# does not import either rule database. Named browser and desktop-application
+# caches stay constrained to exact user-profile leaves; the additional generic
+# Windows targets are only stale regular files from the current user's Temp and
+# D3DSCache directories. Explorer thumbnails, system-owned crash dumps, Windows
+# Update and Delivery Optimization data, Prefetch, the Recycle Bin, the registry,
+# and system-owned roots are excluded.
 
 [[rules]]
 id = "chrome-cache-directory"
@@ -58,6 +60,7 @@ default_selected = true
 action = "trash"
 reason = "Chrome cache directories contain downloaded web resources that Chrome recreates automatically."
 risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
+runtime_guard = { process_names = ["Google Chrome", "chrome"] }
 
 [[rules]]
 id = "chromium-cache-directory"
@@ -69,19 +72,49 @@ default_selected = true
 action = "trash"
 reason = "Chromium cache directories contain downloaded web resources that Chromium recreates automatically."
 risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
+runtime_guard = { process_names = ["Chromium"] }
 
 [[rules]]
-id = "linux-chromium-cache-directory"
-label = "Linux Chromium cache directory"
+id = "linux-chrome-cache-directory"
+label = "Linux Chrome cache directory"
 category = "browser-cache"
-match = { kind = "directory", path_glob = "**/{google-chrome,chromium,microsoft-edge}/**/{Cache,Code Cache,GPUCache,DawnCache,ShaderCache}", min_size = 1048576 }
+match = { kind = "directory", path_glob = "**/google-chrome/**/{Cache,Code Cache,GPUCache,DawnCache,ShaderCache}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
 platforms = ["linux"]
 source_refs = ["bleachbit"]
 action = "trash"
-reason = "Browser cache directories contain downloaded web resources that browsers recreate automatically."
+reason = "Chrome cache directories contain downloaded web resources that Chrome recreates automatically."
 risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
+runtime_guard = { process_names = ["google-chrome", "chrome"] }
+
+[[rules]]
+id = "linux-chromium-cache-directory"
+label = "Linux Chromium cache directory"
+category = "browser-cache"
+match = { kind = "directory", path_glob = "**/chromium/**/{Cache,Code Cache,GPUCache,DawnCache,ShaderCache}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["linux"]
+source_refs = ["bleachbit"]
+action = "trash"
+reason = "Chromium cache directories contain downloaded web resources that Chromium recreates automatically."
+risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
+runtime_guard = { process_names = ["chromium"] }
+
+[[rules]]
+id = "linux-edge-cache-directory"
+label = "Linux Microsoft Edge cache directory"
+category = "browser-cache"
+match = { kind = "directory", path_glob = "**/microsoft-edge/**/{Cache,Code Cache,GPUCache,DawnCache,ShaderCache}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["linux"]
+source_refs = ["bleachbit"]
+action = "trash"
+reason = "Microsoft Edge cache directories contain downloaded web resources that Edge recreates automatically."
+risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
+runtime_guard = { process_names = ["microsoft-edge", "msedge"] }
 
 [[rules]]
 id = "edge-cache-directory"
@@ -93,6 +126,7 @@ default_selected = true
 action = "trash"
 reason = "Microsoft Edge cache directories contain downloaded web resources that Edge recreates automatically."
 risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
+runtime_guard = { process_names = ["Microsoft Edge", "msedge"] }
 
 [[rules]]
 id = "macos-edge-cache-directory"
@@ -106,6 +140,7 @@ source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Microsoft Edge cache directories contain downloaded web resources that Edge recreates automatically."
 risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
+runtime_guard = { process_names = ["Microsoft Edge", "msedge"] }
 
 [[rules]]
 id = "firefox-cache-directory"
@@ -117,19 +152,21 @@ default_selected = true
 action = "trash"
 reason = "Firefox cache directories contain downloaded web resources that Firefox recreates automatically."
 risk_note = "This does not target browser profiles, history, cookies, or saved sessions; the next browser launch may need to redownload cached content."
+runtime_guard = { process_names = ["Firefox"] }
 
 [[rules]]
 id = "macos-browser-cache-root"
 label = "macOS browser cache root"
 category = "browser-cache"
 match = { kind = "directory", path_glob = "**/Library/Caches/{Google,Chromium,Microsoft Edge,Firefox,BraveSoftware,Arc,com.apple.Safari}", min_size = 1048576 }
-confidence = "high"
-default_selected = true
+confidence = "medium"
+default_selected = false
 platforms = ["macos"]
 source_refs = ["dusty", "puremac"]
+match_role = "fallback"
 action = "trash"
 reason = "These macOS Library/Caches roots contain rebuildable browser cache data, not browser profiles."
-risk_note = "Quit the owning browser first; cached web content and previews will need to be downloaded or regenerated."
+risk_note = "Review the owning application and quit it first; this broad cache root may contain expensive-to-recreate browser data."
 
 [[rules]]
 id = "brave-cache-directory"
@@ -141,6 +178,19 @@ default_selected = true
 action = "trash"
 reason = "Brave cache directories contain downloaded web resources that Brave recreates automatically."
 risk_note = "This does not target browser profiles, history, cookies, or saved sessions; quit Brave first and expect cached content to be downloaded again."
+runtime_guard = { process_names = ["Brave Browser", "brave", "brave-browser"] }
+
+[[rules]]
+id = "vivaldi-cache-directory"
+label = "Vivaldi cache directory"
+category = "browser-cache"
+match = { kind = "directory", path_glob = "**/{Vivaldi,vivaldi}/**/{Cache,Code Cache,GPUCache,DawnCache,ShaderCache}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+action = "trash"
+reason = "Vivaldi cache directories contain downloaded web resources that Vivaldi recreates automatically."
+risk_note = "This does not target browser profiles, history, cookies, or saved sessions; quit Vivaldi first and expect cached content to be downloaded again."
+runtime_guard = { process_names = ["Vivaldi"] }
 
 [[rules]]
 id = "arc-cache-directory"
@@ -154,6 +204,7 @@ source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Arc's Library/Caches directory contains rebuildable browser cache data."
 risk_note = "This does not target Arc's browser profile or application-support data; quit Arc first and expect cached content to be downloaded again."
+runtime_guard = { process_names = ["Arc"] }
 
 [[rules]]
 id = "safari-cache-directory"
@@ -167,6 +218,7 @@ source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Safari cache directories contain downloaded web resources that Safari recreates automatically."
 risk_note = "This targets Safari cache locations, not history, cookies, saved passwords, or browser profiles."
+runtime_guard = { process_names = ["Safari"] }
 
 [[rules]]
 id = "macos-quicklook-thumbnail-cache"
@@ -182,17 +234,102 @@ reason = "Quick Look thumbnails are generated previews that macOS recreates on d
 risk_note = "Finder may temporarily show missing previews while macOS regenerates thumbnails."
 
 [[rules]]
-id = "macos-electron-app-cache"
-label = "macOS desktop application cache"
+id = "macos-slack-cache"
+label = "Slack cache"
 category = "application-cache"
-match = { kind = "directory", path_glob = "**/Library/Application Support/{Slack,discord,Code,Cursor,Signal,obsidian,Notion}/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+match = { kind = "directory", path_glob = "**/Library/Application Support/Slack/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
 platforms = ["macos"]
 source_refs = ["dusty", "puremac"]
 action = "trash"
-reason = "These named cache directories contain generated desktop application resources, code, or GPU data."
-risk_note = "Quit the owning application first; its next launch may be slower while the cache is rebuilt."
+reason = "These named directories contain generated Slack resource, code, or GPU cache data."
+risk_note = "Quit Slack first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Slack"] }
+
+[[rules]]
+id = "macos-discord-cache"
+label = "Discord cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/Library/Application Support/discord/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
+action = "trash"
+reason = "These named directories contain generated Discord resource, code, or GPU cache data."
+risk_note = "Quit Discord first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Discord"] }
+
+[[rules]]
+id = "macos-vscode-cache"
+label = "Visual Studio Code cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/Library/Application Support/Code/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
+action = "trash"
+reason = "These named directories contain generated Visual Studio Code resource, code, or GPU cache data."
+risk_note = "Quit Visual Studio Code first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Code", "Visual Studio Code"] }
+
+[[rules]]
+id = "macos-cursor-cache"
+label = "Cursor cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/Library/Application Support/Cursor/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
+action = "trash"
+reason = "These named directories contain generated Cursor resource, code, or GPU cache data."
+risk_note = "Quit Cursor first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Cursor"] }
+
+[[rules]]
+id = "macos-signal-cache"
+label = "Signal cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/Library/Application Support/Signal/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
+action = "trash"
+reason = "These named directories contain generated Signal resource, code, or GPU cache data."
+risk_note = "Quit Signal first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Signal"] }
+
+[[rules]]
+id = "macos-obsidian-cache"
+label = "Obsidian cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/Library/Application Support/obsidian/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
+action = "trash"
+reason = "These named directories contain generated Obsidian resource, code, or GPU cache data."
+risk_note = "Quit Obsidian first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Obsidian"] }
+
+[[rules]]
+id = "macos-notion-cache"
+label = "Notion cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/Library/Application Support/Notion/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["macos"]
+source_refs = ["dusty", "puremac"]
+action = "trash"
+reason = "These named directories contain generated Notion resource, code, or GPU cache data."
+risk_note = "Quit Notion first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Notion"] }
 
 [[rules]]
 id = "macos-teams-cache"
@@ -206,6 +343,7 @@ source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "The sandboxed Teams cache directory contains generated application cache data."
 risk_note = "Quit Teams first; the next launch may need to rebuild local cache data and fetch remote content."
+runtime_guard = { process_names = ["Microsoft Teams", "ms-teams"] }
 
 [[rules]]
 id = "macos-zoom-update-cache"
@@ -219,6 +357,7 @@ source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Zoom's AutoUpdater directory contains downloaded update installers that can be fetched again."
 risk_note = "Quit Zoom first; a future update may need to download its installer again."
+runtime_guard = { process_names = ["zoom.us", "Zoom"] }
 
 [[rules]]
 id = "macos-spotify-persistent-cache"
@@ -232,6 +371,7 @@ source_refs = ["dusty", "puremac"]
 action = "trash"
 reason = "Spotify stores downloaded media cache data in PersistentCache."
 risk_note = "Review before cleaning; cached or offline media may need to be downloaded again and can consume significant bandwidth."
+runtime_guard = { process_names = ["Spotify"] }
 
 [[rules]]
 id = "macos-application-cache-directory"
@@ -246,6 +386,18 @@ match_role = "fallback"
 action = "trash"
 reason = "Application cache directories often contain rebuildable data, but ownership varies by app."
 risk_note = "Review before cleaning; some apps may keep useful offline data or local working state in cache folders."
+
+[[rules]]
+id = "cache-directory-tag"
+label = "Application-declared cache directory"
+category = "application-cache"
+match = { kind = "directory", cache_tagged = true, min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+match_role = "fallback"
+action = "trash"
+reason = "The directory contains the standard cache-directory ownership tag indicating that its contents are disposable cache data."
+risk_note = "The tag is only a cache hint; review ownership and recreation cost before selecting the directory."
 
 [[rules]]
 id = "macos-large-log"
@@ -327,17 +479,102 @@ reason = "Flatpak applications use the cache subdirectory for generated or downl
 risk_note = "Review before cleaning; some applications may keep offline content or expensive-to-rebuild data in their cache."
 
 [[rules]]
-id = "windows-electron-app-cache"
-label = "Windows desktop application cache"
+id = "windows-slack-cache"
+label = "Slack cache"
 category = "application-cache"
-match = { kind = "directory", path_glob = "**/AppData/{Local,Roaming}/{slack,Discord,Code,Cursor,Signal,obsidian,Notion}/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+match = { kind = "directory", path_glob = "**/AppData/{Local,Roaming}/{Slack,slack}/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
 platforms = ["windows"]
 source_refs = ["bleachbit", "winapp2"]
 action = "trash"
-reason = "These named directories contain generated desktop application resource, code, or GPU caches."
-risk_note = "Quit the owning application first; the next launch may be slower while its cache is rebuilt."
+reason = "These named directories contain generated Slack resource, code, or GPU cache data."
+risk_note = "Quit Slack first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["slack"] }
+
+[[rules]]
+id = "windows-discord-cache"
+label = "Discord cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/AppData/{Local,Roaming}/{Discord,discord}/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
+action = "trash"
+reason = "These named directories contain generated Discord resource, code, or GPU cache data."
+risk_note = "Quit Discord first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Discord"] }
+
+[[rules]]
+id = "windows-vscode-cache"
+label = "Visual Studio Code cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/AppData/{Local,Roaming}/Code/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
+action = "trash"
+reason = "These named directories contain generated Visual Studio Code resource, code, or GPU cache data."
+risk_note = "Quit Visual Studio Code first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Code", "Visual Studio Code"] }
+
+[[rules]]
+id = "windows-cursor-cache"
+label = "Cursor cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/AppData/{Local,Roaming}/Cursor/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
+action = "trash"
+reason = "These named directories contain generated Cursor resource, code, or GPU cache data."
+risk_note = "Quit Cursor first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Cursor"] }
+
+[[rules]]
+id = "windows-signal-cache"
+label = "Signal cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/AppData/{Local,Roaming}/Signal/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
+action = "trash"
+reason = "These named directories contain generated Signal resource, code, or GPU cache data."
+risk_note = "Quit Signal first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Signal"] }
+
+[[rules]]
+id = "windows-obsidian-cache"
+label = "Obsidian cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/AppData/{Local,Roaming}/{Obsidian,obsidian}/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
+action = "trash"
+reason = "These named directories contain generated Obsidian resource, code, or GPU cache data."
+risk_note = "Quit Obsidian first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Obsidian"] }
+
+[[rules]]
+id = "windows-notion-cache"
+label = "Notion cache"
+category = "application-cache"
+match = { kind = "directory", path_glob = "**/AppData/{Local,Roaming}/Notion/{Cache,Code Cache,GPUCache,CachedData}", min_size = 1048576 }
+confidence = "high"
+default_selected = true
+platforms = ["windows"]
+source_refs = ["bleachbit", "winapp2"]
+action = "trash"
+reason = "These named directories contain generated Notion resource, code, or GPU cache data."
+risk_note = "Quit Notion first; its next launch may be slower while the cache is rebuilt."
+runtime_guard = { process_names = ["Notion"] }
 
 [[rules]]
 id = "windows-stale-directx-shader-cache-file"

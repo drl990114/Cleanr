@@ -52,6 +52,7 @@ An item is preselected only when all of the following are true:
 - the rule comes from Cleanr itself or an explicitly trusted plugin;
 - its observed modification age satisfies the effective threshold;
 - its scan evidence is complete and not future-dated.
+- every declared owning-process guard is verified idle.
 
 Everything can still be deselected before cleanup. General downloads, logs,
 broad temporary-file matches, medium-confidence items, and untrusted plugin
@@ -118,10 +119,12 @@ the recorded roots, rebuilds the plan with that exact selection, and compares
 the selected execution projection with the authorized file. Any scope, rule,
 recommendation policy, selection, safety, or selected-target filesystem drift
 aborts cleanup and requires a new review and authorization. Candidate changes
-outside the selected targets do not invalidate the plan. Successful items still
-go only to system trash, with an execution manifest and restore locator. The
-manifest records whether authorization came from local TUI confirmation or
-explicit user delegation.
+outside the selected targets do not invalidate the plan. Declared process guards
+are checked once before journaling and again immediately before each guarded
+item; active or unknown state fails closed. Successful items still go only to
+system trash, with an execution manifest and restore locator. The manifest
+records whether authorization came from local TUI confirmation or explicit user
+delegation.
 
 Setting `cleanup.require_confirm = false` removes the interactive confirmation
 dialog for a direct local `/clean` request. It does not turn `analyze` into an

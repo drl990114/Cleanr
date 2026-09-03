@@ -116,6 +116,23 @@ pub enum ScanLocationMode {
     OsManaged,
 }
 
+/// A bounded way to resolve cache leaves below direct children of a known location.
+///
+/// The anchor remains a fixed relative path. Globs may match one child name only, and every
+/// suffix is another fixed relative path below that child.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ScanLocationExpansion {
+    pub child_globs: Vec<String>,
+    pub suffixes: Vec<String>,
+    #[serde(default = "default_scan_location_max_matches")]
+    pub max_matches: u16,
+}
+
+const fn default_scan_location_max_matches() -> u16 {
+    64
+}
+
 /// Declarative, path-relative global coverage contributed by a built-in or trusted plugin.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -129,6 +146,8 @@ pub struct ScanLocationDefinition {
     pub relative_path: String,
     #[serde(default)]
     pub mode: ScanLocationMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expansion: Option<ScanLocationExpansion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -265,6 +284,8 @@ pub struct RuleHit {
     pub match_role: RuleMatchRole,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<RuleSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_guard: Option<crate::evidence::RuntimeGuardEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -457,6 +478,11 @@ pub struct CleanupItemEvidence {
     pub matched_rules: Vec<RuleEvidence>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shadowed_rules: Vec<RuleKey>,
+    /// This item is itself a bounded, named global location rather than an arbitrary scan root.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub known_global_location: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_guards: Vec<crate::evidence::RuntimeGuardEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

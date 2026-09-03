@@ -28,7 +28,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.94.1
+          toolchain: 1.98.0
           components: rustfmt, clippy
 
       - name: Cache Rust build artifacts
@@ -111,7 +111,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.94.1
+          toolchain: 1.98.0
           targets: ${{ matrix.target }}
 
       - name: Install cross
@@ -202,7 +202,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.94.1
+          toolchain: 1.98.0
 
       - name: Authenticate with crates.io using OIDC
         if: vars.CRATES_IO_TRUSTED_PUBLISHING == 'true'

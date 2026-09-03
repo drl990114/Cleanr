@@ -123,6 +123,8 @@ threshold boundary. It includes:
 - each candidate's opaque report-scoped ID, local path, size, kind, and
   rollback method;
 - modification-time evidence, coverage, rule matches, and overlap resolution;
+- whether a candidate is an exact named global location, plus any declared
+  owning-process guard and its observed state;
 - a deterministic recommendation state and decision codes explaining both a
   recommendation and a non-selection.
 
@@ -164,7 +166,8 @@ ledger. Cleanr never scans or executes those entries.
 6. The agent runs `cleanr clean` with the plan path, reviewed SHA-256, and
    `--authorized-by-user`.
 7. Cleanr verifies the digest, re-scans and compares the selected execution
-   projection plus safety provenance, validates every target, moves successful
+   projection plus safety provenance, verifies declared owning processes before
+   the run and again per guarded item, validates every target, moves successful
    items to system trash, and records the manifest. Unselected candidate drift
    does not invalidate the reviewed actions.
 

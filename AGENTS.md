@@ -22,7 +22,7 @@ final cleanup decision under human control.
 
 ## Tech Stack
 
-- Rust 1.94.1, edition 2024, organized as a Cargo workspace.
+- Rust 1.98.0, edition 2024, organized as a Cargo workspace.
 - Ratatui and Crossterm for the terminal user interface.
 - Serde-based versioned formats for analysis reports, configuration, plugins,
   schemas, and cleanup manifests.

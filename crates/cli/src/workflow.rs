@@ -532,6 +532,7 @@ mod tests {
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let mut config = Config::default();
         config.recommendations.preselect_after_days = 180;
@@ -672,6 +673,7 @@ mod tests {
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let entries = vec![
             ScanEntry {
@@ -773,6 +775,7 @@ mod tests {
                 },
             ],
             os_managed: Vec::new(),
+            issues: Vec::new(),
         };
         let global_scan = global_scan_evidence(&request, &[], &resolved, &resolved.roots);
         let mut reversed_request = request.clone();
@@ -852,6 +855,7 @@ mod tests {
                 },
             ],
             os_managed: Vec::new(),
+            issues: Vec::new(),
         };
         let global_scan = global_scan_evidence(&request, &[], &resolved, &resolved.roots);
         let as_of = Utc::now();
@@ -886,6 +890,7 @@ mod tests {
                         trust: RuleTrust::Builtin,
                         match_role: RuleMatchRole::Primary,
                         sources: Vec::new(),
+                        runtime_guard: None,
                     }],
                 }],
                 ..ScanReport::default()
@@ -1309,6 +1314,7 @@ mod tests {
             trust: RuleTrust::Builtin,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         };
         let entries = vec![
             ScanEntry {

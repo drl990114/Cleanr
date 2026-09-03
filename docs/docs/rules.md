@@ -24,6 +24,7 @@ Each rule match includes:
 | Match role | `primary` for a specific rule, or `fallback` for broad evidence |
 | Platforms | Optional `macos`, `windows`, and/or `linux` restriction |
 | Sources | Revision-pinned projects used as adapted or audit-only evidence |
+| Runtime guard | Optional owning process names and the observed `idle`, `active`, or `unknown` state |
 
 When multiple rules match one entry, Cleanr retains every match as evidence.
 Rules with equivalent safety semantics resolve deterministically. A trusted
@@ -47,6 +48,11 @@ trusted source can preselect an item.
 
 Bulk selection changes only `Preselected` and `Available` items. `Review`
 items, including unresolved rule conflicts, must be selected individually.
+Candidates protected by a runtime guard are `Excluded` while an owning process
+is active or its state cannot be verified. Cleanr captures one process snapshot
+for analysis, records that evidence in the plan, then checks again before the
+run and immediately before each guarded item is moved to trash. It never stops
+an application on the user's behalf.
 
 ## Built-in rule packs
 
@@ -61,19 +67,21 @@ directory name alone is not enough to identify one of these project artifacts.
 
 Project-aware coverage includes:
 
-- Cargo, Node.js and React Native, Unity, Haskell, SBT, Maven, Gradle, CMake,
-  and Unreal Engine;
+- Cargo, Node.js, Nuxt, SvelteKit, Astro, Parcel, React Native, Unity, Haskell,
+  SBT, Maven, Gradle, Android native builds, CMake, and Unreal Engine;
 - Jupyter, Python, Pixi, Composer, Pub, Flutter, Elixir, Swift, Zig, Godot,
   and .NET;
 - Turborepo, Terraform, and CocoaPods.
 
 The pack also retains rules for caches such as Cargo registries and Git
-dependencies, npm, pnpm, Yarn, pip, uv, Go modules, Xcode `DerivedData`, and
-Next.js and Python tool caches. On macOS it also discovers Homebrew, CocoaPods,
-SwiftPM, Go build, Deno, Cypress, Composer, Bun, Pub, CoreSimulator, and other
-named Xcode caches. DeviceSupport and XCTest devices require review; Xcode
-archives are low-confidence because retained builds and dSYMs may be
-irreplaceable.
+dependencies, npm, pnpm, Yarn, pip, uv, Go modules, Corepack, language-version
+manager downloads, rustup downloads, Xcode `DerivedData`, and Next.js and
+Python tool caches. Generated coverage, deployment output, managed hook
+environments, and other potentially retained artifacts stay review-only. On
+macOS it also discovers Homebrew, CocoaPods, SwiftPM, Go build, Deno, Cypress,
+Composer, Bun, Pub, CoreSimulator, and other named Xcode caches. DeviceSupport
+and XCTest devices require review; Xcode archives are low-confidence because
+retained builds and dSYMs may be irreplaceable.
 
 Python `.venv` directories are intentionally not covered: they may contain
 local environments that are costly or impossible to reproduce exactly. Other
@@ -95,8 +103,8 @@ These rules are intentionally medium or low confidence and start unselected.
 
 Finds known user-level system cleanup candidates:
 
-- browser cache directories for Chrome, Chromium, Edge, Firefox, Safari,
-  Brave, and Arc;
+- bounded profile cache directories for Chrome, Chromium, Edge, Firefox,
+  Safari, Brave, Vivaldi, and Arc;
 - the standard macOS application-cache root plus narrowly named cache
   directories for popular desktop apps when they live under Application
   Support or an app container;
@@ -108,9 +116,11 @@ Finds known user-level system cleanup candidates:
   `.mpkg`, and `.iso` installers.
 
 Only known rebuildable cache targets may be preselected, and they still pass
-the shared age and evidence gates. Broad application caches, Spotify's
+the shared age, evidence, and declared process-state gates. A valid standard
+cache-directory tag is accepted only as medium-confidence fallback evidence;
+it never preselects a directory by itself. Broad application caches, Spotify's
 persistent cache, logs, diagnostics, generic temporary-file matches, and
-Downloads remain review-only. Quit an application before selecting its cache.
+Downloads remain review-only.
 
 The macOS allowlist was audited against
 [Dusty](https://github.com/yagcioglutoprak/dusty) and
@@ -119,7 +129,8 @@ Cleanr's trash-and-restore model. Cleanr deliberately excludes Trash contents,
 Mail data, iOS backups, Time Machine snapshots, browser service workers, Docker
 prune actions, and system-owned roots.
 
-The Windows allowlist is intentionally file-only. A Windows-specific rule
+Beyond the exact named browser and desktop-app cache leaves above, the
+conservative Windows-specific allowlist contains only ordinary files and
 requires at least 30 days without modification before matching:
 
 - **user temporary file** means a regular file below the current user's
@@ -129,10 +140,12 @@ requires at least 30 days without modification before matching:
   below `AppData\Local\D3DSCache`; Windows recreates it as needed, although the
   next graphics launch may spend time recompiling shaders.
 
-Cleanr does not stop applications. If Windows keeps a candidate locked, moving
-that item to the Recycle Bin fails and the original stays in place. Explorer
-thumbnail databases are excluded because established cleaners restart
-Explorer to release them. Crash dumps, Windows Update and Delivery Optimization
+Cleanr does not stop applications. Rules for named browsers and desktop apps
+block selection when their owner is running or process state is unavailable,
+and execution repeats that check. If Windows still keeps another candidate
+locked, moving it to the Recycle Bin fails and the original stays in place.
+Explorer thumbnail databases are excluded because cleaning them would require
+restarting Explorer. Crash dumps, Windows Update and Delivery Optimization
 data, Prefetch, the Recycle Bin, registry data, Downloads, and system-owned
 roots are also excluded from this conservative Windows routine.
 
@@ -215,6 +228,18 @@ safety boundary. When publishing a bundle that uses this matcher, set its
 `cleanr_version` to the first Cleanr release whose rule schema supports
 `project`; do not reuse the generic `>=0.1.0` minimum from the minimal example.
 
+For cache data that must not be touched while its owner runs, declare exact
+process or executable names on the rule:
+
+```toml
+runtime_guard = { process_names = ["Example Tool", "example-tool"] }
+```
+
+Names are matched case-insensitively, without wildcard or substring matching.
+An unavailable process snapshot fails closed. This field protects the matched
+cache; it is not permission to terminate the owner. Set the plugin's
+`cleanr_version` to the first release supporting runtime guards.
+
 Legacy loose TOML rule-pack files are still discovered in plugin directories,
 but bundles provide version and compatibility metadata and are preferred.
 
@@ -230,3 +255,8 @@ Set `match_role = "fallback"` only on a deliberately broad rule that should
 apply when no trusted primary rule matches the same candidate. Fallback rules
 cannot use `default_selected = true`. Prefer a specific matcher or a project
 matcher whenever one can express the ownership boundary.
+
+A directory carrying a valid standard `CACHEDIR.TAG` can be matched with
+`match = { kind = "directory", cache_tagged = true }`. Treat this as a hint,
+not proof of low recreation cost: use a medium-confidence, unselected fallback
+rule and never combine it with another path matcher.

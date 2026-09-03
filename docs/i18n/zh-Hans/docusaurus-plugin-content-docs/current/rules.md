@@ -21,6 +21,7 @@ Cleanr 不会只看目录名就判断它可以移除。扫描条目会与带版�
 | 匹配角色 | 具体规则使用 `primary`，宽泛证据规则使用 `fallback` |
 | 平台 | 可选的 `macos`、`windows` 和/或 `linux` 限制 |
 | 来源 | 固定到 revision、用于转化或只读审计的开源项目 |
+| 运行保护 | 可选的归属进程名称，以及观测到的 `idle`、`active` 或 `unknown` 状态 |
 
 同一个条目被多条规则匹配时，Cleanr 会保留全部命中作为证据。安全语义等价的规则
 会以确定性方式解析；可信的具体 `primary` 规则可以在选择决策中遮蔽宽泛的
@@ -41,6 +42,9 @@ fallback。其他语义分歧会保持为未解析冲突并要求人工审阅，
 
 批量选择只会改变 `Preselected` 和 `Available` 条目；包括未解析规则冲突在内的
 `Review` 条目必须逐项选择。
+带运行保护的候选项在归属进程运行中、或进程状态无法确认时会被标记为 `Excluded`。
+Cleanr 会在分析时只采集一次进程快照，把证据写入计划，并在执行开始前和每个受保护
+条目移入回收站前再次检查；它不会代替用户停止应用。
 
 ## 内置规则包
 
@@ -53,17 +57,19 @@ marker 文件识别项目根，并可用项目根的直接子目录进一步约�
 
 项目感知规则覆盖：
 
-- Cargo、Node.js 和 React Native、Unity、Haskell、SBT、Maven、Gradle、CMake
-  以及 Unreal Engine；
+- Cargo、Node.js、Nuxt、SvelteKit、Astro、Parcel、React Native、Unity、Haskell、
+  SBT、Maven、Gradle、Android 原生构建、CMake 以及 Unreal Engine；
 - Jupyter、Python、Pixi、Composer、Pub、Flutter、Elixir、Swift、Zig、Godot
   以及 .NET；
 - Turborepo、Terraform 和 CocoaPods。
 
 规则包仍然覆盖 Cargo registry 与 Git 依赖缓存、npm、pnpm、Yarn、pip、uv、Go
-module、Xcode `DerivedData`、Next.js 和 Python 工具缓存等内容。在 macOS 上，还会
-发现 Homebrew、CocoaPods、SwiftPM、Go build、Deno、Cypress、Composer、Bun、Pub、
-CoreSimulator 和其他明确命名的 Xcode 缓存。DeviceSupport 与 XCTest devices 需要
-人工审阅；Xcode archives 是低置信候选项，因为保留的构建和 dSYM 可能无法重建。
+module、Corepack、语言版本管理器下载、rustup 下载、Xcode `DerivedData`、Next.js 和
+Python 工具缓存等内容。生成的覆盖率报告、部署输出、hook 环境等可能需要留存的产物
+保持为仅供审阅。在 macOS 上，还会发现 Homebrew、CocoaPods、SwiftPM、Go build、
+Deno、Cypress、Composer、Bun、Pub、CoreSimulator 和其他明确命名的 Xcode 缓存。
+DeviceSupport 与 XCTest devices 需要人工审阅；Xcode archives 是低置信候选项，因为
+保留的构建和 dSYM 可能无法重建。
 
 Python `.venv` 目录被有意排除，因为其中可能包含重建成本很高、甚至无法精确重现的
 本地环境。其他风险较高或可能包含本地状态的目录只供审阅，绝不会被预选；加入清理
@@ -83,7 +89,7 @@ Python `.venv` 目录被有意排除，因为其中可能包含重建成本很�
 
 查找已知用户级系统清理候选项：
 
-- Chrome、Chromium、Edge、Firefox、Safari、Brave 和 Arc 的浏览器缓存目录；
+- Chrome、Chromium、Edge、Firefox、Safari、Brave、Vivaldi 和 Arc 的受限配置缓存目录；
 - macOS 标准应用缓存根目录，以及位于 Application Support 或应用容器中、路径明确
   的常用桌面应用缓存；
 - Quick Look 缩略图、Zoom 更新安装包、用户日志和诊断报告；
@@ -91,25 +97,27 @@ Python `.venv` 目录被有意排除，因为其中可能包含重建成本很�
 - 大型临时文件和 Downloads 文件，包括 `.dmg`、`.pkg`、`.mpkg` 和 `.iso`
   安装文件。
 
-只有已知可重建缓存才可能被预选，并且仍需通过统一的年龄和证据门槛。宽泛的应用
-缓存、Spotify 持久缓存、日志、诊断报告、通用临时文件匹配和 Downloads 都只供
-审阅。选择某个应用的缓存前，应先退出该应用。
+只有已知可重建缓存才可能被预选，并且仍需通过统一的年龄、证据和已声明进程状态
+门槛。有效的标准缓存目录标记只会作为中置信度 fallback 证据，绝不会仅凭标记预选
+目录。宽泛的应用缓存、Spotify 持久缓存、日志、诊断报告、通用临时文件匹配和
+Downloads 都只供审阅。
 
 macOS 白名单参考了 [Dusty](https://github.com/yagcioglutoprak/dusty) 和
 [PureMac](https://github.com/momenbasel/PureMac)，并按 Cleanr 的“废纸篓加恢复清单”
 模型进一步收窄。Cleanr 明确排除废纸篓内容、Mail 数据、iOS 备份、Time Machine
 快照、浏览器 Service Worker、Docker prune 动作和系统所有的根目录。
 
-Windows 白名单刻意只包含普通文件。Windows 专属规则要求文件至少 30 天未修改才会
-匹配：
+除上述明确命名的浏览器和桌面应用缓存叶子外，保守的 Windows 专属白名单只包含普通
+文件，并要求文件至少 30 天未修改才会匹配：
 
 - **用户临时文件**是当前用户 `AppData\Local\Temp` 下的普通文件；Temp 目录和
   子目录本身都不是候选项；
 - **DirectX 着色器缓存文件**是 `AppData\Local\D3DSCache` 下由图形系统生成的
   普通缓存文件；Windows 可以按需重建，但图形应用下次启动时可能需要重新编译。
 
-Cleanr 不会停止应用。如果 Windows 锁定了某个候选文件，移入回收站会失败，原文件
-保持不变。Explorer 缩略图数据库需要成熟清理器重启 Explorer 才能释放，因此不会
+Cleanr 不会停止应用。明确命名的浏览器和桌面应用规则会在归属进程运行中或状态不可
+确认时阻止选择，并在执行时复核。如果 Windows 仍锁定其他候选文件，移入回收站会
+失败，原文件保持不变。Explorer 缩略图数据库若要清理需要重启 Explorer，因此不会
 纳入。用户级崩溃转储只以低置信度诊断项供人工审阅；系统所有的崩溃转储、Windows
 Update 与传递优化数据、Prefetch、回收站、注册表数据和系统所有的根目录不会进入
 清理计划。
@@ -180,6 +188,16 @@ artifact_paths = ["build/cache", "build/generated"]
 `cleanr_version` 设为规则 schema 首次支持 `project` 的 Cleanr 版本；不要沿用最小
 示例中通用的 `>=0.1.0` 下限。
 
+对于归属工具运行时不能触碰的缓存，在规则上声明确切的进程或可执行文件名称：
+
+```toml
+runtime_guard = { process_names = ["Example Tool", "example-tool"] }
+```
+
+名称按大小写不敏感的精确值匹配，不支持 wildcard 或子串。进程快照不可用时会安全
+阻断。这个字段只保护匹配到的缓存，并不授权终止归属进程。插件的 `cleanr_version`
+应设置为首个支持运行保护的版本。
+
 插件目录中仍可以发现旧版独立 TOML 规则包，但 bundle 能提供版本和兼容性
 元数据，因此更推荐使用。
 
@@ -194,3 +212,7 @@ artifact_paths = ["build/cache", "build/generated"]
 规则，才应设置 `match_role = "fallback"`。Fallback 规则不能设置
 `default_selected = true`。只要能够表达明确的归属边界，就应优先使用具体 matcher
 或 project matcher。
+
+带有效标准 `CACHEDIR.TAG` 的目录可以用
+`match = { kind = "directory", cache_tagged = true }` 匹配。它只是提示，不能证明重建
+代价低；应使用中置信度、默认不选中的 fallback 规则，并且不能再组合其他路径 matcher。

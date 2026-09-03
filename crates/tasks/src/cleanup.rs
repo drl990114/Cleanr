@@ -14,7 +14,11 @@ use cleanr_core::{
 };
 use uuid::Uuid;
 
-use crate::{ManifestRepository, platform::absolute_path, platform::trash_with_receipt};
+use crate::{
+    ManifestRepository,
+    platform::{absolute_path, trash_with_receipt},
+    runtime::{validate_current_runtime_guards, validate_plan_current_runtime_guards},
+};
 
 pub trait CleanupExecutor {
     fn trash(&self, path: &Path) -> Result<RollbackReceipt>;
@@ -91,6 +95,7 @@ pub(crate) fn execute_cleanup_plan(
         .iter()
         .filter(|item| item.selected)
         .collect::<Vec<_>>();
+    validate_plan_current_runtime_guards(selected_items.iter().copied())?;
     let items = selected_items
         .iter()
         .map(|item| ExecutionItem {
@@ -117,7 +122,9 @@ pub(crate) fn execute_cleanup_plan(
 
     repository.write_execution(&manifest)?;
     for (index, item) in selected_items.iter().enumerate() {
-        let result = validate_cleanup_target(item, plan).and_then(|()| executor.trash(&item.path));
+        let result = validate_cleanup_target(item, plan)
+            .and_then(|()| validate_current_runtime_guards(item))
+            .and_then(|()| executor.trash(&item.path));
         manifest.items[index] = match result {
             Ok(receipt) => ExecutionItem {
                 path: item.path.clone(),
@@ -228,9 +235,25 @@ fn validate_cleanup_target(item: &CleanupItem, plan: &CleanupPlan) -> Result<()>
         );
     }
 
+    let allow_named_global_root = item
+        .evidence
+        .as_ref()
+        .is_some_and(|evidence| evidence.known_global_location)
+        && plan
+            .source_scan
+            .as_ref()
+            .and_then(|source| source.scope.as_ref())
+            .is_some_and(|scope| {
+                !scope.global_kinds.is_empty()
+                    && !scope
+                        .explicit_roots
+                        .iter()
+                        .any(|root| absolute_path(root).is_ok_and(|root| root == absolute))
+            });
     let within_scan_root = plan.scan_roots.iter().any(|root| {
         let root = root.canonicalize().unwrap_or_else(|_| root.clone());
-        absolute != root && absolute.starts_with(root)
+        (absolute != root && absolute.starts_with(&root))
+            || (allow_named_global_root && absolute == root)
     });
     if !within_scan_root {
         anyhow::bail!(
@@ -338,6 +361,62 @@ pub(crate) fn validate_recoverable_plan(plan: &CleanupPlan) -> Result<()> {
             || item.rollback_method != "system-trash+manifest"
     }) {
         anyhow::bail!("selected cleanup items must use system trash and a manifest");
+    }
+    let has_global_scope = plan
+        .source_scan
+        .as_ref()
+        .and_then(|source| source.scope.as_ref())
+        .is_some_and(|scope| !scope.global_kinds.is_empty());
+    for item in plan.items.iter().filter(|item| item.selected) {
+        if let Some(evidence) = &item.evidence {
+            for rule in &evidence.matched_rules {
+                if rule
+                    .runtime_guard
+                    .as_ref()
+                    .is_some_and(|guard| guard.rule != rule.key)
+                {
+                    anyhow::bail!("cleanup plan contains inconsistent runtime guard evidence");
+                }
+            }
+            let expected_runtime_guards = evidence
+                .matched_rules
+                .iter()
+                .filter(|rule| !evidence.shadowed_rules.contains(&rule.key))
+                .filter_map(|rule| rule.runtime_guard.clone())
+                .collect::<Vec<_>>();
+            if evidence.runtime_guards != expected_runtime_guards {
+                anyhow::bail!("cleanup plan contains inconsistent runtime guard evidence");
+            }
+            if evidence
+                .runtime_guards
+                .iter()
+                .any(|guard| guard.state != cleanr_core::RuntimeGuardState::Idle)
+            {
+                anyhow::bail!("selected cleanup items require verified-idle owning processes");
+            }
+            if evidence.known_global_location {
+                let target = absolute_path(&item.path)?;
+                let is_exact_scan_root = plan
+                    .scan_roots
+                    .iter()
+                    .any(|root| absolute_path(root).is_ok_and(|root| root == target));
+                let is_explicit_root = plan
+                    .source_scan
+                    .as_ref()
+                    .and_then(|source| source.scope.as_ref())
+                    .is_some_and(|scope| {
+                        scope
+                            .explicit_roots
+                            .iter()
+                            .any(|root| absolute_path(root).is_ok_and(|root| root == target))
+                    });
+                if !has_global_scope || !is_exact_scan_root || is_explicit_root {
+                    anyhow::bail!(
+                        "selected named global locations require their exact reviewed global scan root"
+                    );
+                }
+            }
+        }
     }
     let selected_count = plan.items.iter().filter(|item| item.selected).count();
     let selected_size_bytes = plan

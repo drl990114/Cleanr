@@ -1,5 +1,5 @@
 id = "builtin-dev-global-locations"
-version = "0.13.0"
+version = "0.13.1"
 
 [[locations]]
 id = "linux-pnpm-cache"
@@ -72,3 +72,59 @@ kind = "developer-caches"
 platforms = ["macos", "linux"]
 base = "home"
 relative_path = ".bun/install/cache"
+
+[[locations]]
+id = "unix-corepack-cache"
+label = "Corepack download cache"
+kind = "developer-caches"
+platforms = ["macos", "linux"]
+base = "cache"
+relative_path = "node/corepack"
+
+[[locations]]
+id = "windows-corepack-cache"
+label = "Corepack download cache"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "node/corepack"
+
+[[locations]]
+id = "unix-pyenv-cache"
+label = "pyenv download cache"
+kind = "developer-caches"
+platforms = ["macos", "linux"]
+base = "home"
+relative_path = ".pyenv/cache"
+
+[[locations]]
+id = "unix-rbenv-cache"
+label = "rbenv download cache"
+kind = "developer-caches"
+platforms = ["macos", "linux"]
+base = "home"
+relative_path = ".rbenv/cache"
+
+[[locations]]
+id = "cross-platform-rustup-downloads"
+label = "rustup download cache"
+kind = "developer-caches"
+platforms = ["macos", "windows", "linux"]
+base = "home"
+relative_path = ".rustup/downloads"
+
+[[locations]]
+id = "linux-pre-commit-cache"
+label = "pre-commit managed environments"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "pre-commit"
+
+[[locations]]
+id = "macos-pre-commit-cache"
+label = "pre-commit managed environments"
+kind = "developer-caches"
+platforms = ["macos"]
+base = "home"
+relative_path = ".cache/pre-commit"

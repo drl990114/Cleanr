@@ -182,9 +182,10 @@ pub fn build_cleanup_plan_from_analysis(
                 return None;
             }
             let normalized_path = normalize_path(&candidate.local_path);
-            if normalized_scan_roots
+            let is_scan_root = normalized_scan_roots
                 .iter()
-                .any(|root| root == &normalized_path)
+                .any(|root| root == &normalized_path);
+            if (is_scan_root && !candidate.known_global_location)
                 || !policy.allows_candidate(&candidate.local_path)
             {
                 return None;
@@ -223,6 +224,8 @@ pub fn build_cleanup_plan_from_analysis(
                     rule_resolution_state: candidate.rules.state,
                     matched_rules: candidate.rules.matched.clone(),
                     shadowed_rules: candidate.rules.shadowed.clone(),
+                    known_global_location: candidate.known_global_location,
+                    runtime_guards: candidate.runtime_guards.clone(),
                 }),
                 selected,
                 planned_action: PlannedAction::Trash,

@@ -21,7 +21,7 @@ use cleanr_core::{
 #[cfg(test)]
 use cleanr_core::{
     GlobalScanEvidence, GlobalScanKind, RulePlatform, ScanLocationBase, ScanLocationDefinition,
-    ScanLocationMode, ScanRequest,
+    ScanLocationExpansion, ScanLocationMode, ScanRequest,
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::{
@@ -176,6 +176,7 @@ pub fn scan_paths(paths: &[PathBuf], options: &ScanOptions) -> Result<ScanReport
     scan_paths_impl(
         paths,
         ScanRootInput::UserProvided,
+        &[],
         options,
         None,
         Instant::now(),
@@ -191,6 +192,7 @@ pub fn scan_paths_with_progress(
     scan_paths_impl(
         paths,
         ScanRootInput::UserProvided,
+        &[],
         options,
         None,
         Instant::now(),
@@ -207,6 +209,7 @@ pub fn scan_paths_with_progress_cancellable(
     scan_paths_impl(
         paths,
         ScanRootInput::UserProvided,
+        &[],
         options,
         Some(cancelled),
         Instant::now(),
@@ -234,6 +237,7 @@ pub fn scan_resolved_paths_started_at(
     scan_paths_impl(
         &resolved.roots,
         ScanRootInput::Resolved,
+        &resolved.issues,
         options,
         None,
         started_at,
@@ -249,6 +253,7 @@ pub fn scan_resolved_paths_with_progress(
     scan_paths_impl(
         &resolved.roots,
         ScanRootInput::Resolved,
+        &resolved.issues,
         options,
         None,
         Instant::now(),
@@ -284,6 +289,7 @@ pub fn scan_resolved_paths_with_progress_cancellable_started_at(
     scan_paths_impl(
         &resolved.roots,
         ScanRootInput::Resolved,
+        &resolved.issues,
         options,
         Some(cancelled),
         started_at,
@@ -300,6 +306,7 @@ enum ScanRootInput {
 fn scan_paths_impl(
     paths: &[PathBuf],
     root_input: ScanRootInput,
+    initial_issues: &[ScanIssue],
     options: &ScanOptions,
     cancelled: Option<&AtomicBool>,
     started_at: Instant,
@@ -323,7 +330,7 @@ fn scan_paths_impl(
             ..ScanSummary::default()
         },
         entries: Vec::new(),
-        issues: Vec::new(),
+        issues: initial_issues.to_vec(),
         errors: Vec::new(),
         budget_exceeded: Vec::new(),
         workers_used: options.effective_workers(),
@@ -372,7 +379,7 @@ fn scan_paths_impl(
         let parallel = scan_roots_parallel(&roots, options, &ignore, cancelled, &mut progress)?;
         let traversal_completed = parallel.traversal_completed;
         report.errors = parallel.errors;
-        report.issues = parallel.issues;
+        report.issues.extend(parallel.issues);
         report.entries = parallel.entries;
         progress.bytes_scanned =
             finalize_parallel_entries(&mut report.entries, parallel.hardlinks, cancelled)?;
@@ -2338,6 +2345,7 @@ mod tests {
                 base: ScanLocationBase::Cache,
                 relative_path: "example".to_string(),
                 mode: ScanLocationMode::Scan,
+                expansion: None,
             },
             ScanLocationDefinition {
                 id: "system-maintenance".to_string(),
@@ -2347,6 +2355,7 @@ mod tests {
                 base: ScanLocationBase::Data,
                 relative_path: String::new(),
                 mode: ScanLocationMode::OsManaged,
+                expansion: None,
             },
         ];
         let request = ScanRequest::global(vec![GlobalScanKind::AppCaches]);
@@ -2388,6 +2397,159 @@ mod tests {
     }
 
     #[test]
+    fn scan_location_expansion_selects_only_bounded_profile_cache_leaves() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cache = temp.path().join("cache");
+        let profiles = cache.join("browser");
+        for path in [
+            profiles.join("Default/Cache"),
+            profiles.join("Profile 2/Code Cache"),
+            profiles.join("System Profile/Cache"),
+        ] {
+            fs::create_dir_all(path).expect("profile cache");
+        }
+        let environment = GlobalScanEnvironment {
+            cache_dir: Some(cache),
+            ..GlobalScanEnvironment::default()
+        };
+        let definitions = [ScanLocationDefinition {
+            id: "browser-profile-caches".to_string(),
+            label: "Browser profile cache".to_string(),
+            kind: GlobalScanKind::BrowserCaches,
+            platforms: vec![RulePlatform::Linux],
+            base: ScanLocationBase::Cache,
+            relative_path: "browser".to_string(),
+            mode: ScanLocationMode::Scan,
+            expansion: Some(ScanLocationExpansion {
+                child_globs: vec!["Default".to_string(), "Profile *".to_string()],
+                suffixes: vec!["Cache".to_string(), "Code Cache".to_string()],
+                max_matches: 64,
+            }),
+        }];
+
+        let resolved = resolve_scan_roots_with_env_and_locations(
+            &ScanRequest::global(vec![GlobalScanKind::BrowserCaches]),
+            &[],
+            &environment,
+            &definitions,
+            Some(RulePlatform::Linux),
+        )
+        .expect("expanded locations");
+        let paths = resolved
+            .global_locations
+            .iter()
+            .filter(|location| location.label == "Browser profile cache")
+            .map(|location| location.path.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            paths,
+            vec![
+                profiles
+                    .join("Default/Cache")
+                    .canonicalize()
+                    .expect("default cache"),
+                profiles
+                    .join("Profile 2/Code Cache")
+                    .canonicalize()
+                    .expect("profile cache"),
+            ]
+        );
+        assert!(resolved.issues.is_empty());
+    }
+
+    #[test]
+    fn expansion_caps_are_reported_and_make_the_scan_partial() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cache = temp.path().join("cache");
+        for profile in ["Profile 1", "Profile 2"] {
+            fs::create_dir_all(cache.join("browser").join(profile).join("Cache"))
+                .expect("profile cache");
+        }
+        let environment = GlobalScanEnvironment {
+            cache_dir: Some(cache),
+            ..GlobalScanEnvironment::default()
+        };
+        let definitions = [ScanLocationDefinition {
+            id: "capped-browser-caches".to_string(),
+            label: "Capped browser cache".to_string(),
+            kind: GlobalScanKind::BrowserCaches,
+            platforms: vec![RulePlatform::Linux],
+            base: ScanLocationBase::Cache,
+            relative_path: "browser".to_string(),
+            mode: ScanLocationMode::Scan,
+            expansion: Some(ScanLocationExpansion {
+                child_globs: vec!["Profile *".to_string()],
+                suffixes: vec!["Cache".to_string()],
+                max_matches: 1,
+            }),
+        }];
+        let resolved = resolve_scan_roots_with_env_and_locations(
+            &ScanRequest::global(vec![GlobalScanKind::BrowserCaches]),
+            &[],
+            &environment,
+            &definitions,
+            Some(RulePlatform::Linux),
+        )
+        .expect("expanded locations");
+
+        assert_eq!(resolved.roots.len(), 1);
+        assert_eq!(resolved.issues.len(), 1);
+        assert_eq!(resolved.issues[0].code, ScanIssueCode::Unknown);
+        let report = scan_resolved_paths(&resolved, &ScanOptions::default()).expect("scan");
+        assert_eq!(report.completeness(), ReportIntegrity::Partial);
+        assert_eq!(report.issues, resolved.issues);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_location_expansion_does_not_follow_symlinked_profiles_or_leaves() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cache = temp.path().join("cache");
+        let profiles = cache.join("browser");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(outside.join("Cache")).expect("outside cache");
+        fs::create_dir_all(profiles.join("Default")).expect("default profile");
+        std::os::unix::fs::symlink(&outside, profiles.join("Profile 1")).expect("profile symlink");
+        std::os::unix::fs::symlink(outside.join("Cache"), profiles.join("Default/Cache"))
+            .expect("cache symlink");
+        let environment = GlobalScanEnvironment {
+            cache_dir: Some(cache),
+            ..GlobalScanEnvironment::default()
+        };
+        let definitions = [ScanLocationDefinition {
+            id: "browser-profile-caches".to_string(),
+            label: "Browser profile cache".to_string(),
+            kind: GlobalScanKind::BrowserCaches,
+            platforms: vec![RulePlatform::Linux],
+            base: ScanLocationBase::Cache,
+            relative_path: "browser".to_string(),
+            mode: ScanLocationMode::Scan,
+            expansion: Some(ScanLocationExpansion {
+                child_globs: vec!["Default".to_string(), "Profile *".to_string()],
+                suffixes: vec!["Cache".to_string()],
+                max_matches: 64,
+            }),
+        }];
+
+        let resolved = resolve_scan_roots_with_env_and_locations(
+            &ScanRequest::global(vec![GlobalScanKind::BrowserCaches]),
+            &[],
+            &environment,
+            &definitions,
+            Some(RulePlatform::Linux),
+        )
+        .expect("expanded locations");
+
+        assert!(
+            resolved
+                .global_locations
+                .iter()
+                .all(|location| location.label != "Browser profile cache")
+        );
+    }
+
+    #[test]
     fn global_scan_evidence_is_deterministic_and_uses_completed_roots() {
         let scan_root = PathBuf::from("scan-root");
         let app_cache = scan_root.join("app-cache");
@@ -2420,6 +2582,7 @@ mod tests {
                 },
             ],
             os_managed: Vec::new(),
+            issues: Vec::new(),
         };
 
         let evidence = global_scan_evidence(
@@ -2455,6 +2618,7 @@ mod tests {
                 label: "Application cache".to_string(),
             }],
             os_managed: Vec::new(),
+            issues: Vec::new(),
         };
 
         assert_eq!(

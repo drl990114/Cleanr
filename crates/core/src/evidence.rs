@@ -311,6 +311,23 @@ pub struct RuleKey {
     pub rule_id: String,
 }
 
+/// The observed state of processes that own a cleanup candidate.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeGuardState {
+    Idle,
+    Active,
+    Unknown,
+}
+
+/// Process-state evidence attached to one effective cleanup rule.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeGuardEvidence {
+    pub rule: RuleKey,
+    pub process_names: Vec<String>,
+    pub state: RuntimeGuardState,
+}
+
 /// The rule facts that informed one candidate's recommendation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuleEvidence {
@@ -325,6 +342,8 @@ pub struct RuleEvidence {
     pub risk_note: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<RuleSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_guard: Option<RuntimeGuardEvidence>,
 }
 
 /// How matching rules were resolved for recommendation purposes.
@@ -410,6 +429,8 @@ pub enum DecisionCode {
     GlobalKindNotRequested,
     ScanRoot,
     SafetyPolicyExcluded,
+    OwnerProcessActive,
+    OwnerProcessStateUnknown,
 }
 
 impl fmt::Display for DecisionCode {
@@ -432,6 +453,8 @@ impl fmt::Display for DecisionCode {
             Self::GlobalKindNotRequested => "global-kind-not-requested",
             Self::ScanRoot => "scan-root",
             Self::SafetyPolicyExcluded => "safety-policy-excluded",
+            Self::OwnerProcessActive => "owner-process-active",
+            Self::OwnerProcessStateUnknown => "owner-process-state-unknown",
         })
     }
 }
@@ -458,6 +481,11 @@ pub struct CandidateEvidence {
     pub overlap: OverlapEvidence,
     pub recommendation: RecommendationDecision,
     pub rollback_method: String,
+    /// Whether this candidate is itself a bounded location selected by a global scan definition.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub known_global_location: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_guards: Vec<RuntimeGuardEvidence>,
 }
 
 /// One existing named global location and its naturally completed, deduplicated covering root.
@@ -747,6 +775,8 @@ fn build_analysis_report_inner(
         integrity,
         policy: &policy,
         safety_policy: context.safety_policy,
+        global: context.global,
+        explicit_roots: context.explicit_roots,
     };
     let issue_scopes = IssueScopes::new(issues, !context.budget_exceeded.is_empty());
     let activity_by_path = activity_by_path(entries, as_of, &issue_scopes);
@@ -761,11 +791,21 @@ fn build_analysis_report_inner(
                 .cloned()
                 .unwrap_or_else(ActivityFacts::missing)
                 .into_evidence(coverage, as_of);
+            let known_global_location = recommendation_context.global.is_some_and(|global| {
+                global.locations.iter().any(|location| {
+                    location.local_path == entry.path
+                        && global.requested_kinds.contains(&location.kind)
+                })
+            }) && !recommendation_context
+                .explicit_roots
+                .iter()
+                .any(|root| root == &entry.path);
             let mut recommendation = recommend_candidate(
                 &entry.path,
                 &rules,
                 &activity,
                 coverage,
+                known_global_location,
                 &recommendation_context,
             );
             // Keep budget-limited evidence readable, but encode the read-only boundary with an
@@ -776,6 +816,7 @@ fn build_analysis_report_inner(
                 recommendation.state = RecommendationState::Excluded;
                 recommendation.initial_selected = false;
             }
+            let runtime_guards = effective_runtime_guards(&rules);
             CandidateEvidence {
                 id: CandidateId::new_random(),
                 local_path: entry.path.clone(),
@@ -787,6 +828,8 @@ fn build_analysis_report_inner(
                 overlap: OverlapEvidence::None,
                 recommendation,
                 rollback_method: "system-trash+manifest".to_string(),
+                known_global_location,
+                runtime_guards,
             }
         })
         .collect::<Vec<_>>();
@@ -1057,6 +1100,7 @@ fn rule_evidence(hit: &RuleHit) -> RuleEvidence {
         reason: hit.reason.clone(),
         risk_note: hit.risk_note.clone(),
         sources: hit.sources.clone(),
+        runtime_guard: hit.runtime_guard.clone(),
     }
 }
 
@@ -1068,6 +1112,30 @@ fn same_safety_semantics(left: &RuleEvidence, right: &RuleEvidence) -> bool {
         && left.match_role == right.match_role
         && left.reason == right.reason
         && left.risk_note == right.risk_note
+        && same_runtime_guard_semantics(left.runtime_guard.as_ref(), right.runtime_guard.as_ref())
+}
+
+fn same_runtime_guard_semantics(
+    left: Option<&RuntimeGuardEvidence>,
+    right: Option<&RuntimeGuardEvidence>,
+) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            left.process_names == right.process_names && left.state == right.state
+        }
+        (None, Some(_)) | (Some(_), None) => false,
+    }
+}
+
+fn effective_runtime_guards(rules: &RuleResolution) -> Vec<RuntimeGuardEvidence> {
+    let shadowed = rules.shadowed.iter().collect::<BTreeSet<_>>();
+    rules
+        .matched
+        .iter()
+        .filter(|rule| !shadowed.contains(&rule.key))
+        .filter_map(|rule| rule.runtime_guard.clone())
+        .collect()
 }
 
 struct RecommendationContext<'a> {
@@ -1075,6 +1143,8 @@ struct RecommendationContext<'a> {
     integrity: ReportIntegrity,
     policy: &'a RecommendationPolicy,
     safety_policy: Option<&'a SafetyPolicy>,
+    global: Option<&'a GlobalScanEvidence>,
+    explicit_roots: &'a [PathBuf],
 }
 
 fn recommend_candidate(
@@ -1082,10 +1152,11 @@ fn recommend_candidate(
     rules: &RuleResolution,
     activity: &ActivityEvidence,
     coverage: CandidateCoverage,
+    known_global_location: bool,
     context: &RecommendationContext<'_>,
 ) -> RecommendationDecision {
     let mut codes = BTreeSet::new();
-    if context.scan_roots.iter().any(|root| root == path) {
+    if context.scan_roots.iter().any(|root| root == path) && !known_global_location {
         codes.insert(DecisionCode::ScanRoot);
         return decision(RecommendationState::Excluded, codes);
     }
@@ -1094,6 +1165,23 @@ fn recommend_candidate(
         .is_some_and(|safety| !safety.allows_candidate(path))
     {
         codes.insert(DecisionCode::SafetyPolicyExcluded);
+        return decision(RecommendationState::Excluded, codes);
+    }
+
+    for guard in effective_runtime_guards(rules) {
+        match guard.state {
+            RuntimeGuardState::Idle => {}
+            RuntimeGuardState::Active => {
+                codes.insert(DecisionCode::OwnerProcessActive);
+            }
+            RuntimeGuardState::Unknown => {
+                codes.insert(DecisionCode::OwnerProcessStateUnknown);
+            }
+        }
+    }
+    if codes.contains(&DecisionCode::OwnerProcessActive)
+        || codes.contains(&DecisionCode::OwnerProcessStateUnknown)
+    {
         return decision(RecommendationState::Excluded, codes);
     }
 
@@ -1194,6 +1282,7 @@ fn decision(state: RecommendationState, codes: BTreeSet<DecisionCode>) -> Recomm
 }
 
 fn resolve_overlaps(candidates: &mut [CandidateEvidence], policy: &RecommendationPolicy) {
+    propagate_runtime_guard_exclusions(candidates);
     if !policy.filters_candidate_projection_by_inactivity() {
         resolve_overlaps_v1(candidates);
         return;
@@ -1327,6 +1416,55 @@ fn resolve_overlaps(candidates: &mut [CandidateEvidence], policy: &Recommendatio
         candidates[index].recommendation.codes.dedup();
         candidates[index].recommendation.state = RecommendationState::Suppressed;
         candidates[index].recommendation.initial_selected = false;
+    }
+}
+
+fn propagate_runtime_guard_exclusions(candidates: &mut [CandidateEvidence]) {
+    let candidate_by_path = candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| (candidate.local_path.clone(), index))
+        .collect::<HashMap<_, _>>();
+    let updates = candidates
+        .iter()
+        .filter_map(|candidate| {
+            let code = if candidate
+                .recommendation
+                .codes
+                .contains(&DecisionCode::OwnerProcessActive)
+            {
+                Some(DecisionCode::OwnerProcessActive)
+            } else if candidate
+                .recommendation
+                .codes
+                .contains(&DecisionCode::OwnerProcessStateUnknown)
+            {
+                Some(DecisionCode::OwnerProcessStateUnknown)
+            } else {
+                None
+            }?;
+            Some(
+                candidate
+                    .local_path
+                    .ancestors()
+                    .skip(1)
+                    .filter_map(|ancestor| candidate_by_path.get(ancestor).copied())
+                    .map(move |index| (index, code)),
+            )
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+
+    for (index, code) in updates {
+        let recommendation = &mut candidates[index].recommendation;
+        recommendation.codes.push(code);
+        recommendation
+            .codes
+            .push(DecisionCode::CoveredDescendantHasBlocker);
+        recommendation.codes.sort();
+        recommendation.codes.dedup();
+        recommendation.state = RecommendationState::Excluded;
+        recommendation.initial_selected = false;
     }
 }
 
@@ -1506,6 +1644,7 @@ mod tests {
             trust,
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
+            runtime_guard: None,
         }
     }
 
@@ -1768,6 +1907,176 @@ mod tests {
             assert_eq!(candidate.recommendation.state, expected_state);
             assert!(candidate.recommendation.codes.contains(&expected_code));
         }
+    }
+
+    #[test]
+    fn runtime_guards_fail_closed_before_a_candidate_can_be_selected() {
+        let as_of = Utc::now();
+        for (state, code, expected_state) in [
+            (
+                RuntimeGuardState::Idle,
+                None,
+                RecommendationState::Preselected,
+            ),
+            (
+                RuntimeGuardState::Active,
+                Some(DecisionCode::OwnerProcessActive),
+                RecommendationState::Excluded,
+            ),
+            (
+                RuntimeGuardState::Unknown,
+                Some(DecisionCode::OwnerProcessStateUnknown),
+                RecommendationState::Excluded,
+            ),
+        ] {
+            let mut guarded_hit = hit(Confidence::High, true, RuleTrust::Builtin);
+            guarded_hit.runtime_guard = Some(RuntimeGuardEvidence {
+                rule: RuleKey {
+                    rule_pack_id: guarded_hit.rule_pack_id.clone(),
+                    rule_id: guarded_hit.rule_id.clone(),
+                },
+                process_names: vec!["example-app".to_string()],
+                state,
+            });
+            let report = build_analysis_report(
+                as_of,
+                as_of,
+                vec![PathBuf::from("/repo")],
+                &[entry(
+                    "/repo/cache",
+                    Some(as_of - Duration::days(100)),
+                    vec![guarded_hit],
+                )],
+                &[],
+                RecommendationPolicy::default(),
+            )
+            .expect("valid policy");
+            let candidate = &report.candidates[0];
+
+            assert_eq!(candidate.recommendation.state, expected_state);
+            assert_eq!(candidate.runtime_guards.len(), 1);
+            if let Some(code) = code {
+                assert!(candidate.recommendation.codes.contains(&code));
+                assert!(!candidate.recommendation.initial_selected);
+            }
+        }
+    }
+
+    #[test]
+    fn active_guarded_descendant_excludes_a_covering_parent_candidate() {
+        let as_of = Utc::now();
+        let mut guarded_hit = hit(Confidence::High, true, RuleTrust::Builtin);
+        guarded_hit.rule_id = "guarded-child".to_string();
+        guarded_hit.runtime_guard = Some(RuntimeGuardEvidence {
+            rule: RuleKey {
+                rule_pack_id: guarded_hit.rule_pack_id.clone(),
+                rule_id: guarded_hit.rule_id.clone(),
+            },
+            process_names: vec!["example-app".to_string()],
+            state: RuntimeGuardState::Active,
+        });
+        let report = build_analysis_report(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/repo")],
+            &[
+                entry(
+                    "/repo/cache",
+                    Some(as_of - Duration::days(100)),
+                    vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+                ),
+                entry(
+                    "/repo/cache/profile/Cache",
+                    Some(as_of - Duration::days(100)),
+                    vec![guarded_hit],
+                ),
+            ],
+            &[],
+            RecommendationPolicy::default(),
+        )
+        .expect("analysis");
+        let parent = report
+            .candidates
+            .iter()
+            .find(|candidate| candidate.local_path == Path::new("/repo/cache"))
+            .expect("parent candidate");
+
+        assert_eq!(parent.recommendation.state, RecommendationState::Excluded);
+        assert!(
+            parent
+                .recommendation
+                .codes
+                .contains(&DecisionCode::OwnerProcessActive)
+        );
+        assert!(
+            parent
+                .recommendation
+                .codes
+                .contains(&DecisionCode::CoveredDescendantHasBlocker)
+        );
+    }
+
+    #[test]
+    fn exact_named_global_location_is_distinct_from_an_explicit_scan_root() {
+        let as_of = Utc::now();
+        let cache = PathBuf::from("/cache/pnpm");
+        let global = GlobalScanEvidence {
+            requested_kinds: vec![GlobalScanKind::DeveloperCaches],
+            locations: vec![GlobalScanLocationEvidence {
+                kind: GlobalScanKind::DeveloperCaches,
+                label: "pnpm cache".to_string(),
+                local_path: cache.clone(),
+                scan_root: cache.clone(),
+            }],
+            os_managed: Vec::new(),
+        };
+        let entries = [entry(
+            cache.to_str().expect("UTF-8 test path"),
+            Some(as_of - Duration::days(100)),
+            vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+        )];
+        let analyze = |explicit_roots: &[PathBuf]| {
+            build_analysis_report_with_scan_context(
+                as_of,
+                as_of,
+                vec![cache.clone()],
+                &entries,
+                &[],
+                RecommendationPolicy::default(),
+                AnalysisScanContext {
+                    global: Some(&global),
+                    explicit_roots,
+                    ..AnalysisScanContext::default()
+                },
+            )
+            .expect("valid policy")
+        };
+
+        let global_report = analyze(&[]);
+        assert!(global_report.candidates[0].known_global_location);
+        assert_eq!(
+            global_report.candidates[0].recommendation.state,
+            RecommendationState::Preselected
+        );
+        assert!(
+            !global_report.candidates[0]
+                .recommendation
+                .codes
+                .contains(&DecisionCode::ScanRoot)
+        );
+
+        let explicit_report = analyze(std::slice::from_ref(&cache));
+        assert!(!explicit_report.candidates[0].known_global_location);
+        assert_eq!(
+            explicit_report.candidates[0].recommendation.state,
+            RecommendationState::Excluded
+        );
+        assert!(
+            explicit_report.candidates[0]
+                .recommendation
+                .codes
+                .contains(&DecisionCode::ScanRoot)
+        );
     }
 
     #[test]

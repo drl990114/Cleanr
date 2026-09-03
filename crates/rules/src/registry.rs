@@ -11,7 +11,8 @@ use chrono::{DateTime, Utc};
 #[cfg(test)]
 use cleanr_config::Config;
 use cleanr_core::{
-    EntryKind, RuleHit, RulePlatform, RuleTrust, RulesetVersion, ScanEntry, ScanLocationDefinition,
+    EntryKind, RuleHit, RuleKey, RulePlatform, RuleTrust, RulesetVersion, RuntimeGuardEvidence,
+    RuntimeGuardState, ScanEntry, ScanLocationDefinition,
 };
 use cleanr_plugin_api::{PluginDiagnostic, PluginSource, TrustLevel};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -222,6 +223,17 @@ impl RuleRegistry {
                         TrustLevel::Trusted => RuleTrust::Trusted,
                         TrustLevel::Untrusted => RuleTrust::Untrusted,
                     },
+                    runtime_guard: rule
+                        .runtime_guard
+                        .as_ref()
+                        .map(|guard| RuntimeGuardEvidence {
+                            rule: RuleKey {
+                                rule_pack_id: pack.definition.id.clone(),
+                                rule_id: rule.id.clone(),
+                            },
+                            process_names: guard.process_names.clone(),
+                            state: RuntimeGuardState::Unknown,
+                        }),
                 })
             })
             .collect()
@@ -516,6 +528,22 @@ mod tests {
         let cases = [
             ("/cargo/Cargo.toml", "/cargo/target", "rust-target"),
             ("/node/package.json", "/node/node_modules", "node-modules"),
+            ("/nuxt/package.json", "/nuxt/.nuxt", "nuxt-generated-cache"),
+            (
+                "/svelte/package.json",
+                "/svelte/.svelte-kit",
+                "sveltekit-generated-cache",
+            ),
+            (
+                "/astro/package.json",
+                "/astro/.astro",
+                "astro-generated-cache",
+            ),
+            (
+                "/parcel/package.json",
+                "/parcel/.parcel-cache",
+                "parcel-project-cache",
+            ),
             (
                 "/react-native/package.json",
                 "/react-native/android/build",
@@ -542,6 +570,11 @@ mod tests {
                 "/gradle/build.gradle.kts",
                 "/gradle/build",
                 "gradle-project-artifacts",
+            ),
+            (
+                "/android-native/build.gradle.kts",
+                "/android-native/.cxx",
+                "android-native-build-cache",
             ),
             (
                 "/cmake/CMakeLists.txt",
@@ -653,6 +686,18 @@ mod tests {
                 "/composer/composer.json",
                 "/composer/vendor",
                 "composer-vendor",
+                Confidence::Medium,
+            ),
+            (
+                "/nuxt-output/package.json",
+                "/nuxt-output/.output",
+                "nuxt-output",
+                Confidence::Medium,
+            ),
+            (
+                "/coverage/package.json",
+                "/coverage/coverage",
+                "javascript-test-coverage",
                 Confidence::Medium,
             ),
         ];
@@ -832,6 +877,7 @@ mod tests {
             .expect("browser hit");
         assert_eq!(browser_hit.confidence, Confidence::High);
         assert!(browser_hit.default_selected);
+        assert!(browser_hit.runtime_guard.is_some());
 
         let download_hit = registry
             .hits_for(&download)
@@ -861,7 +907,7 @@ mod tests {
             ),
             (
                 "/Users/me/Library/Application Support/Slack/Cache",
-                "macos-electron-app-cache",
+                "macos-slack-cache",
             ),
             (
                 "/Users/me/Library/Containers/com.microsoft.teams2/Data/Library/Caches",
@@ -880,6 +926,9 @@ mod tests {
                 .expect("safe macOS cleanup rule");
             assert_eq!(hit.confidence, Confidence::High, "{path}");
             assert!(hit.default_selected, "{path}");
+            if expected_rule != "macos-quicklook-thumbnail-cache" {
+                assert!(hit.runtime_guard.is_some(), "{path}");
+            }
         }
 
         let mut spotify = test_entry(
@@ -1078,6 +1127,129 @@ mod tests {
                 })
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn cache_tag_matcher_requires_the_standard_regular_file_signature() {
+        let raw = r#"
+        id = "cache-tag-test"
+        name = "Cache Tag Test"
+        version = "1.0.0"
+        description = "Cache directory tag matcher"
+        categories = ["cache"]
+
+        [[rules]]
+        id = "tagged-cache"
+        label = "Tagged cache"
+        category = "cache"
+        match = { kind = "directory", cache_tagged = true }
+        confidence = "medium"
+        default_selected = false
+        action = "trash"
+        reason = "cache owner marked this directory as disposable"
+        risk_note = "review before cleanup"
+        "#;
+        let mut registry = RuleRegistry::empty();
+        registry
+            .add_pack(
+                RulePack::from_toml(raw).expect("rule pack"),
+                PluginSource::Builtin,
+                TrustLevel::Builtin,
+                None,
+            )
+            .expect("add pack");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let tagged = temp.path().join("tagged");
+        let invalid = temp.path().join("invalid");
+        fs::create_dir(&tagged).expect("tagged directory");
+        fs::create_dir(&invalid).expect("invalid directory");
+        fs::write(
+            tagged.join("CACHEDIR.TAG"),
+            b"Signature: 8a477f597d28d172789f06886806bc55\n# cache contents\n",
+        )
+        .expect("valid tag");
+        fs::write(
+            invalid.join("CACHEDIR.TAG"),
+            b"Signature: not-the-standard-signature\n",
+        )
+        .expect("invalid tag");
+        let mut entries = vec![
+            test_entry(
+                tagged.to_str().expect("UTF-8 tagged path"),
+                EntryKind::Directory,
+            ),
+            test_entry(
+                tagged
+                    .join("CACHEDIR.TAG")
+                    .to_str()
+                    .expect("UTF-8 tag path"),
+                EntryKind::File,
+            ),
+            test_entry(
+                invalid.to_str().expect("UTF-8 invalid path"),
+                EntryKind::Directory,
+            ),
+            test_entry(
+                invalid
+                    .join("CACHEDIR.TAG")
+                    .to_str()
+                    .expect("UTF-8 invalid tag path"),
+                EntryKind::File,
+            ),
+        ];
+
+        registry.annotate_entries(&mut entries);
+
+        assert_eq!(entries[0].rule_hits[0].rule_id, "tagged-cache");
+        assert!(entries[2].rule_hits.is_empty());
+    }
+
+    #[test]
+    fn runtime_guard_declarations_are_validated_and_retained_as_unknown_evidence() {
+        let pack = |process_name: &str| {
+            format!(
+                r#"
+                id = "guard-test"
+                name = "Guard Test"
+                version = "1.0.0"
+                description = "Runtime guard"
+                categories = ["cache"]
+
+                [[rules]]
+                id = "guarded-cache"
+                label = "Guarded cache"
+                category = "cache"
+                match = {{ dir_name = "Cache" }}
+                confidence = "high"
+                default_selected = true
+                action = "trash"
+                reason = "generated"
+                risk_note = "close the owner"
+                runtime_guard = {{ process_names = ["{process_name}"] }}
+                "#
+            )
+        };
+        for invalid in ["", "bad/name", r"bad\name", "bad*name"] {
+            assert!(RulePack::from_toml(&pack(invalid)).is_err(), "{invalid}");
+        }
+
+        let mut registry = RuleRegistry::empty();
+        registry
+            .add_pack(
+                RulePack::from_toml(&pack("Example App")).expect("valid guard"),
+                PluginSource::Builtin,
+                TrustLevel::Builtin,
+                None,
+            )
+            .expect("add pack");
+        let hit = registry
+            .hits_for(&test_entry("/repo/Cache", EntryKind::Directory))
+            .into_iter()
+            .next()
+            .expect("guarded hit");
+        let guard = hit.runtime_guard.expect("runtime guard evidence");
+        assert_eq!(guard.process_names, vec!["Example App"]);
+        assert_eq!(guard.state, cleanr_core::RuntimeGuardState::Unknown);
     }
 
     #[test]
@@ -1552,6 +1724,50 @@ relative_path = "{relative_path}"
 "#
             );
             assert!(scan_location_pack_from_toml(&raw).is_err());
+        }
+    }
+
+    #[test]
+    fn scan_location_expansions_reject_recursive_or_unbounded_patterns() {
+        let location_pack = |expansion: &str| {
+            format!(
+                r#"
+id = "expanded"
+version = "1.0.0"
+
+[[locations]]
+id = "profiles"
+label = "Profile caches"
+kind = "browser-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "browser"
+expansion = {expansion}
+"#
+            )
+        };
+        assert!(
+            scan_location_pack_from_toml(&location_pack(
+                r#"{ child_globs = ["Default", "Profile *"], suffixes = ["Cache", "Code Cache"], max_matches = 64 }"#
+            ))
+            .is_ok()
+        );
+        let empty_anchor = location_pack(
+            r#"{ child_globs = ["Example"], suffixes = ["Cache"], max_matches = 64 }"#,
+        )
+        .replace(r#"relative_path = "browser""#, r#"relative_path = """#);
+        assert!(scan_location_pack_from_toml(&empty_anchor).is_ok());
+        for invalid in [
+            r#"{ child_globs = ["["], suffixes = ["Cache"], max_matches = 64 }"#,
+            r#"{ child_globs = ["Profile/*"], suffixes = ["Cache"], max_matches = 64 }"#,
+            r#"{ child_globs = ["Profile *"], suffixes = ["../Cache"], max_matches = 64 }"#,
+            r#"{ child_globs = ["Profile *"], suffixes = ["Cache"], max_matches = 0 }"#,
+            r#"{ child_globs = ["Profile *"], suffixes = ["Cache"], max_matches = 257 }"#,
+        ] {
+            assert!(
+                scan_location_pack_from_toml(&location_pack(invalid)).is_err(),
+                "{invalid}"
+            );
         }
     }
 

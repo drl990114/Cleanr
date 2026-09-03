@@ -1,5 +1,5 @@
 id = "builtin-system-global-locations"
-version = "0.13.0"
+version = "0.13.1"
 
 [[locations]]
 id = "windows-chrome-cache-root"
@@ -8,6 +8,7 @@ kind = "browser-caches"
 platforms = ["windows"]
 base = "data-local"
 relative_path = "Google/Chrome/User Data"
+expansion = { child_globs = ["Default", "Profile *", "Guest Profile"], suffixes = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache"], max_matches = 96 }
 
 [[locations]]
 id = "windows-edge-cache-root"
@@ -16,6 +17,7 @@ kind = "browser-caches"
 platforms = ["windows"]
 base = "data-local"
 relative_path = "Microsoft/Edge/User Data"
+expansion = { child_globs = ["Default", "Profile *", "Guest Profile"], suffixes = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache"], max_matches = 96 }
 
 [[locations]]
 id = "windows-brave-cache-root"
@@ -24,6 +26,7 @@ kind = "browser-caches"
 platforms = ["windows"]
 base = "data-local"
 relative_path = "BraveSoftware/Brave-Browser/User Data"
+expansion = { child_globs = ["Default", "Profile *", "Guest Profile"], suffixes = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache"], max_matches = 96 }
 
 [[locations]]
 id = "windows-firefox-cache-root"
@@ -32,54 +35,87 @@ kind = "browser-caches"
 platforms = ["windows"]
 base = "data-local"
 relative_path = "Mozilla/Firefox/Profiles"
+expansion = { child_globs = ["*"], suffixes = ["cache2"], max_matches = 64 }
 
 [[locations]]
-id = "windows-slack-cache"
-label = "Slack cache"
+id = "windows-vivaldi-cache-root"
+label = "Vivaldi cache"
+kind = "browser-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "Vivaldi/User Data"
+expansion = { child_globs = ["Default", "Profile *", "Guest Profile"], suffixes = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache"], max_matches = 96 }
+
+[[locations]]
+id = "macos-chrome-profile-caches"
+label = "Chrome profile cache"
+kind = "browser-caches"
+platforms = ["macos"]
+base = "data"
+relative_path = "Google/Chrome"
+expansion = { child_globs = ["Default", "Profile *", "Guest Profile"], suffixes = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache"], max_matches = 96 }
+
+[[locations]]
+id = "macos-chromium-profile-caches"
+label = "Chromium profile cache"
+kind = "browser-caches"
+platforms = ["macos"]
+base = "data"
+relative_path = "Chromium"
+expansion = { child_globs = ["Default", "Profile *", "Guest Profile"], suffixes = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache"], max_matches = 96 }
+
+[[locations]]
+id = "macos-edge-profile-caches"
+label = "Microsoft Edge profile cache"
+kind = "browser-caches"
+platforms = ["macos"]
+base = "data"
+relative_path = "Microsoft Edge"
+expansion = { child_globs = ["Default", "Profile *", "Guest Profile"], suffixes = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache"], max_matches = 96 }
+
+[[locations]]
+id = "macos-brave-profile-caches"
+label = "Brave profile cache"
+kind = "browser-caches"
+platforms = ["macos"]
+base = "data"
+relative_path = "BraveSoftware/Brave-Browser"
+expansion = { child_globs = ["Default", "Profile *", "Guest Profile"], suffixes = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache"], max_matches = 96 }
+
+[[locations]]
+id = "macos-vivaldi-profile-caches"
+label = "Vivaldi profile cache"
+kind = "browser-caches"
+platforms = ["macos"]
+base = "data"
+relative_path = "Vivaldi"
+expansion = { child_globs = ["Default", "Profile *", "Guest Profile"], suffixes = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache"], max_matches = 96 }
+
+[[locations]]
+id = "macos-firefox-profile-caches"
+label = "Firefox profile cache"
+kind = "browser-caches"
+platforms = ["macos"]
+base = "cache"
+relative_path = "Firefox/Profiles"
+expansion = { child_globs = ["*"], suffixes = ["cache2"], max_matches = 64 }
+
+[[locations]]
+id = "linux-vivaldi-cache-root"
+label = "Vivaldi cache"
+kind = "browser-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "vivaldi"
+
+[[locations]]
+id = "windows-desktop-app-cache-leaves"
+label = "Desktop application cache"
 kind = "app-caches"
 platforms = ["windows"]
 base = "data"
-relative_path = "Slack"
-
-[[locations]]
-id = "windows-discord-cache"
-label = "Discord cache"
-kind = "app-caches"
-platforms = ["windows"]
-base = "data"
-relative_path = "discord"
-
-[[locations]]
-id = "windows-vscode-cache"
-label = "Visual Studio Code cache"
-kind = "app-caches"
-platforms = ["windows"]
-base = "data"
-relative_path = "Code"
-
-[[locations]]
-id = "windows-cursor-cache"
-label = "Cursor cache"
-kind = "app-caches"
-platforms = ["windows"]
-base = "data"
-relative_path = "Cursor"
-
-[[locations]]
-id = "windows-notion-cache"
-label = "Notion cache"
-kind = "app-caches"
-platforms = ["windows"]
-base = "data"
-relative_path = "Notion"
-
-[[locations]]
-id = "windows-signal-cache"
-label = "Signal cache"
-kind = "app-caches"
-platforms = ["windows"]
-base = "data"
-relative_path = "Signal"
+relative_path = ""
+expansion = { child_globs = ["Slack", "slack", "Discord", "discord", "Code", "Cursor", "Signal", "Notion", "Obsidian", "obsidian"], suffixes = ["Cache", "Code Cache", "GPUCache", "CachedData"], max_matches = 128 }
 
 [[locations]]
 id = "windows-user-crash-dumps"

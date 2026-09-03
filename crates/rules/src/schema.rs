@@ -46,6 +46,15 @@ pub struct RuleDefinition {
     pub platforms: Vec<RulePlatform>,
     #[serde(default)]
     pub source_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_guard: Option<RuntimeGuardDefinition>,
+}
+
+/// A fail-closed runtime condition for data owned by a running application or tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeGuardDefinition {
+    pub process_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq)]
@@ -59,6 +68,8 @@ pub struct RuleMatcher {
     pub project: Option<ProjectMatcher>,
     pub max_age_days: Option<i64>,
     pub min_size: Option<u64>,
+    #[serde(default)]
+    pub cache_tagged: bool,
 }
 
 /// Match generated directories relative to a project root identified by direct children.
@@ -188,6 +199,9 @@ impl RulePack {
             if rule.matcher.max_age_days.is_some_and(|days| days < 0) {
                 bail!("rule {}:{} has a negative max_age_days", self.id, rule.id);
             }
+            if let Some(guard) = &rule.runtime_guard {
+                guard.validate(&self.id, &rule.id)?;
+            }
             let has_matcher = rule.matcher.dir_name.is_some()
                 || rule.matcher.kind.is_some()
                 || rule.matcher.path_glob.is_some()
@@ -195,7 +209,8 @@ impl RulePack {
                 || rule.matcher.extension.is_some()
                 || rule.matcher.project.is_some()
                 || rule.matcher.max_age_days.is_some()
-                || rule.matcher.min_size.is_some();
+                || rule.matcher.min_size.is_some()
+                || rule.matcher.cache_tagged;
             if !has_matcher {
                 bail!("rule {}:{} has no matcher", self.id, rule.id);
             }
@@ -224,6 +239,57 @@ impl RulePack {
                     );
                 }
                 project.validate(&self.id, &rule.id)?;
+            }
+            if rule.matcher.cache_tagged {
+                if rule.matcher.kind != Some(EntryKind::Directory) {
+                    bail!(
+                        "rule {}:{} cache_tagged matcher requires kind = directory",
+                        self.id,
+                        rule.id
+                    );
+                }
+                if rule.matcher.dir_name.is_some()
+                    || rule.matcher.path_glob.is_some()
+                    || rule.matcher.file_name.is_some()
+                    || rule.matcher.extension.is_some()
+                    || rule.matcher.project.is_some()
+                {
+                    bail!(
+                        "rule {}:{} cache_tagged matcher cannot be combined with another path matcher",
+                        self.id,
+                        rule.id
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl RuntimeGuardDefinition {
+    fn validate(&self, pack_id: &str, rule_id: &str) -> Result<()> {
+        if self.process_names.is_empty() {
+            bail!("rule {pack_id}:{rule_id} runtime guard has no process_names");
+        }
+        if self.process_names.len() > 16 {
+            bail!("rule {pack_id}:{rule_id} runtime guard has too many process_names");
+        }
+        let mut normalized = BTreeSet::new();
+        for name in &self.process_names {
+            let trimmed = name.trim();
+            if trimmed.is_empty()
+                || trimmed.len() > 128
+                || trimmed
+                    .chars()
+                    .any(|character| character.is_control() || matches!(character, '/' | '\\'))
+                || trimmed
+                    .bytes()
+                    .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']'))
+            {
+                bail!("rule {pack_id}:{rule_id} has an invalid runtime process name");
+            }
+            if !normalized.insert(trimmed.to_lowercase()) {
+                bail!("rule {pack_id}:{rule_id} has duplicate runtime process names");
             }
         }
         Ok(())
@@ -308,9 +374,12 @@ fn validate_scan_location_pack(pack: &ScanLocationPack) -> Result<()> {
             bail!("scan location {} contains duplicate platforms", location.id);
         }
         let relative = Path::new(&location.relative_path);
-        if location.mode == ScanLocationMode::Scan && location.relative_path.trim().is_empty() {
+        if location.mode == ScanLocationMode::Scan
+            && location.relative_path.trim().is_empty()
+            && location.expansion.is_none()
+        {
             bail!(
-                "scan location {} requires a non-empty relative_path",
+                "scan location {} requires a non-empty relative_path unless it uses a bounded expansion",
                 location.id
             );
         }
@@ -340,6 +409,61 @@ fn validate_scan_location_pack(pack: &ScanLocationPack) -> Result<()> {
                 location.id
             );
         }
+        if let Some(expansion) = &location.expansion {
+            if location.mode != ScanLocationMode::Scan {
+                bail!(
+                    "scan location {} cannot expand an os-managed location",
+                    location.id
+                );
+            }
+            if expansion.child_globs.is_empty() || expansion.suffixes.is_empty() {
+                bail!(
+                    "scan location {} expansion requires child_globs and suffixes",
+                    location.id
+                );
+            }
+            if !(1..=256).contains(&expansion.max_matches) {
+                bail!(
+                    "scan location {} expansion max_matches must be in 1..=256",
+                    location.id
+                );
+            }
+            for child_glob in &expansion.child_globs {
+                validate_child_name_glob(child_glob).with_context(|| {
+                    format!(
+                        "scan location {} has an invalid direct-child glob",
+                        location.id
+                    )
+                })?;
+            }
+            for suffix in &expansion.suffixes {
+                validate_portable_relative_path(suffix, &location.id, "expansion suffix")?;
+                if Path::new(suffix).components().count() > 4 {
+                    bail!(
+                        "scan location {} expansion suffix exceeds four components",
+                        location.id
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_portable_relative_path(value: &str, location_id: &str, field: &str) -> Result<()> {
+    if value.trim().is_empty() || value.contains(['\\', ':']) {
+        bail!("scan location {location_id} {field} must be a non-empty portable relative path");
+    }
+    let relative = Path::new(value);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        || value
+            .bytes()
+            .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']' | b'{' | b'}'))
+    {
+        bail!("scan location {location_id} {field} must contain only fixed relative components");
     }
     Ok(())
 }

@@ -6,7 +6,7 @@ users.
 
 ## Prerequisites
 
-- Rust 1.94.1 or a compatible newer toolchain.
+- Rust 1.98.0 or a compatible newer toolchain.
 - Node.js 20 or later for the documentation site.
 - pnpm 10 for documentation dependencies.
 

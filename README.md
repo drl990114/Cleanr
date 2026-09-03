@@ -16,7 +16,7 @@
     <a href="https://www.npmjs.com/package/cleanr-cli"><img alt="npm version" src="https://img.shields.io/npm/v/cleanr-cli?style=flat-square&logo=npm"></a>
   </p>
   <p>
-    <img alt="Rust" src="https://img.shields.io/badge/Rust-1.94-000000?style=flat-square&logo=rust&logoColor=white">
+    <img alt="Rust" src="https://img.shields.io/badge/Rust-1.98-000000?style=flat-square&logo=rust&logoColor=white">
     <img alt="Ratatui" src="https://img.shields.io/badge/Ratatui-0.29-2563eb?style=flat-square">
     <img alt="Platforms: macOS, Linux, and Windows" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-475569?style=flat-square">
     <img alt="Open source" src="https://img.shields.io/badge/open%20source-MIT-155eef?style=flat-square">

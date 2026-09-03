@@ -1,5 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
+    fs::File,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -28,6 +30,7 @@ pub(super) struct CompiledProjectMatcher {
 #[derive(Debug, Clone, Default)]
 pub(super) struct ScanContext {
     pub(super) children_by_dir: BTreeMap<PathBuf, DirectoryChildren>,
+    cache_tagged_dirs: HashSet<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -79,6 +82,12 @@ impl ScanContext {
             let Some(parent) = entry.path.parent() else {
                 continue;
             };
+            if entry.kind == EntryKind::File
+                && entry.path.file_name().and_then(|name| name.to_str()) == Some("CACHEDIR.TAG")
+                && has_valid_cache_tag(&entry.path)
+            {
+                context.cache_tagged_dirs.insert(parent.to_path_buf());
+            }
             if !project_roots.contains(parent) {
                 continue;
             }
@@ -182,7 +191,31 @@ pub(super) fn matches_rule(
             return false;
         }
     }
+    if matcher.cache_tagged {
+        let Some(context) = context else {
+            return false;
+        };
+        if !context.cache_tagged_dirs.contains(&entry.path) {
+            return false;
+        }
+    }
     true
+}
+
+const CACHE_TAG_SIGNATURE: &[u8; 43] = b"Signature: 8a477f597d28d172789f06886806bc55";
+
+fn has_valid_cache_tag(path: &Path) -> bool {
+    let Ok(metadata) = path.symlink_metadata() else {
+        return false;
+    };
+    if !metadata.file_type().is_file() || metadata.len() < CACHE_TAG_SIGNATURE.len() as u64 {
+        return false;
+    }
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    let mut prefix = [0_u8; CACHE_TAG_SIGNATURE.len()];
+    file.read_exact(&mut prefix).is_ok() && &prefix == CACHE_TAG_SIGNATURE
 }
 
 pub(super) fn validate_child_name_glob(pattern: &str) -> Result<()> {

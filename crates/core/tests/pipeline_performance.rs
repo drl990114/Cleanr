@@ -139,6 +139,7 @@ fn synthetic_entries(
                 trust: RuleTrust::Builtin,
                 match_role: RuleMatchRole::Primary,
                 sources: Vec::new(),
+                runtime_guard: None,
             }],
         });
         for file_idx in 0..files_per_candidate {

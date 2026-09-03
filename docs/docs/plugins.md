@@ -13,9 +13,10 @@ installation.
 
 Plugins may also declare `scan-locations`. These are constrained, relative
 locations anchored to `home`, `cache`, `data-local`, `data`, `temp`, or
-`downloads`. They cannot contain absolute paths, parent traversal, or globs.
-Only built-in or explicitly trusted plugins may activate them; untrusted
-locations are diagnosed and ignored.
+`downloads`. Their fixed anchor cannot contain absolute paths, parent traversal,
+or globs. An optional bounded expansion may match direct child names and append
+fixed cache suffixes. Only built-in or explicitly trusted plugins may activate
+locations; untrusted locations are diagnosed and ignored.
 
 ## Package Manager
 
@@ -170,6 +171,30 @@ platforms = ["linux"]
 base = "cache"
 relative_path = "example-tool"
 ```
+
+For applications with multiple profile directories, keep the anchor fixed and
+expand only direct children into known cache leaves:
+
+```toml
+[[locations]]
+id = "example-profile-caches"
+label = "Example profile cache"
+kind = "browser-caches"
+platforms = ["macos", "windows", "linux"]
+base = "data-local"
+relative_path = "Example/User Data"
+expansion = { child_globs = ["Default", "Profile *"], suffixes = ["Cache", "Code Cache", "GPUCache"], max_matches = 64 }
+```
+
+`child_globs` match one directory name only; `/`, `\\`, and recursive paths are
+rejected. Each suffix is a fixed relative path of at most four components.
+Expansion never follows symlinked profiles or leaves, has a hard maximum of 256
+resolved leaves, and records partial scan evidence if the configured cap is
+exceeded or discovery cannot be completed. It never promotes the profile root
+itself to a cleanup target. `relative_path = ""` is allowed only with an
+expansion; in that form the selected base is the anchor but is never scanned as
+a candidate root. A bundle using `expansion` must set `cleanr_version` to the
+first Cleanr release that supports this field.
 
 Use `mode = "os-managed"` for path-free coverage that Cleanr should explain
 but never traverse or place in a cleanup plan.

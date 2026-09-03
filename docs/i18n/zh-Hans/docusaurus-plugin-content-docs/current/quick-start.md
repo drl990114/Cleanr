@@ -21,7 +21,7 @@ npm 包会安装一个轻量启动器，以及与你的操作系统和 CPU 匹�
 
 ### Cargo
 
-需要 Rust 1.94 或更高版本：
+需要 Rust 1.98 或更高版本：
 
 ```bash
 cargo install cleanr-cli

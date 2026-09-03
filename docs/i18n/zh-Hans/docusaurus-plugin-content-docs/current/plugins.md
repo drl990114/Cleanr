@@ -11,8 +11,8 @@ hook，但 hook 执行是单独的受信任能力，不会因为普通安装自�
 
 插件也可以声明 `scan-locations`。这些位置必须相对于 `home`、`cache`、
 `data-local`、`data`、`temp` 或 `downloads` 等受限基准目录，不能使用绝对路径、
-父目录跳转或 glob。只有内置或显式信任的插件可以激活扫描位置；不可信位置只产生
-诊断并被忽略。
+父目录跳转或 glob。可选的受限展开可以匹配直接子目录名称，再追加固定缓存后缀。
+只有内置或显式信任的插件可以激活扫描位置；不可信位置只产生诊断并被忽略。
 
 ## 包管理
 
@@ -143,6 +143,26 @@ platforms = ["linux"]
 base = "cache"
 relative_path = "example-tool"
 ```
+
+对于包含多个配置目录的应用，应保持锚点固定，只把直接子目录展开为已知缓存叶子：
+
+```toml
+[[locations]]
+id = "example-profile-caches"
+label = "Example profile cache"
+kind = "browser-caches"
+platforms = ["macos", "windows", "linux"]
+base = "data-local"
+relative_path = "Example/User Data"
+expansion = { child_globs = ["Default", "Profile *"], suffixes = ["Cache", "Code Cache", "GPUCache"], max_matches = 64 }
+```
+
+`child_globs` 只能匹配一个目录名，不能包含 `/`、`\\` 或递归路径；每个 suffix 都是
+最多四段的固定相对路径。展开不会跟随配置目录或叶子的符号链接，解析叶子数的硬上限
+为 256；超过配置上限或发现过程无法完成时，会记录部分扫描证据。配置目录根本身不会
+因此成为清理目标。只有使用展开时才允许 `relative_path = ""`；此时所选 base 仅作为
+锚点，本身不会作为候选根被扫描。使用 `expansion` 的 bundle 必须把
+`cleanr_version` 设为首个支持该字段的 Cleanr 版本。
 
 对于需要解释、但 Cleanr 不应遍历或加入计划的系统维护项，使用
 `mode = "os-managed"`。

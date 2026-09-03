@@ -1,10 +1,15 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use cleanr_core::{
     GlobalManagedLocationEvidence, GlobalScanEvidence, GlobalScanKind, GlobalScanLocationEvidence,
-    RulePlatform, ScanLocationBase, ScanLocationDefinition, ScanLocationMode, ScanRequest,
+    RulePlatform, ScanIssue, ScanIssueCode, ScanLocationBase, ScanLocationDefinition,
+    ScanLocationMode, ScanRequest,
 };
+use globset::{Glob, GlobSetBuilder};
 
 use crate::scanner::normalize_roots;
 
@@ -45,6 +50,8 @@ pub struct ResolvedScanRoots {
     pub global_roots: Vec<GlobalScanRoot>,
     pub global_locations: Vec<GlobalScanRoot>,
     pub os_managed: Vec<GlobalManagedLocationEvidence>,
+    /// Fail-closed discovery evidence produced before recursive traversal begins.
+    pub issues: Vec<ScanIssue>,
 }
 
 pub fn resolve_scan_roots(
@@ -97,6 +104,7 @@ pub fn resolve_scan_roots_with_env_and_locations(
     let mut global_roots = Vec::new();
     let mut global_locations = Vec::new();
     let mut os_managed = Vec::new();
+    let mut issues = Vec::new();
     if request.include_global {
         let global_kinds = if request.global_kinds.is_empty() {
             configured_global_kinds
@@ -108,21 +116,33 @@ pub fn resolve_scan_roots_with_env_and_locations(
             environment,
             locations,
             platform,
-        );
-        global_roots = normalize_global_roots(requested_locations, environment);
-        global_locations = discover_global_scan_locations_with_definitions(
-            &GlobalScanKind::ALL,
+            &mut issues,
+        )?;
+        global_roots = normalize_global_roots(requested_locations.clone(), environment);
+
+        // Reuse the exact locations that produced the traversal roots. Discover only the
+        // unrequested kinds needed for nested-category evidence, so a changing profile directory
+        // cannot make the scan roots and their recorded provenance disagree.
+        let unrequested_kinds = GlobalScanKind::ALL
+            .into_iter()
+            .filter(|kind| !global_kinds.contains(kind))
+            .collect::<Vec<_>>();
+        let mut all_locations = requested_locations;
+        all_locations.extend(discover_global_scan_locations_with_definitions(
+            &unrequested_kinds,
             environment,
             locations,
             platform,
-        )
-        .into_iter()
-        .filter(|location| {
-            global_roots
-                .iter()
-                .any(|root| location.path == root.path || location.path.starts_with(&root.path))
-        })
-        .collect();
+            &mut Vec::new(),
+        )?);
+        global_locations = normalize_global_locations(all_locations, environment)
+            .into_iter()
+            .filter(|location| {
+                global_roots
+                    .iter()
+                    .any(|root| location.path == root.path || location.path.starts_with(&root.path))
+            })
+            .collect();
         roots.extend(global_roots.iter().map(|root| root.path.clone()));
         os_managed = locations
             .iter()
@@ -153,6 +173,7 @@ pub fn resolve_scan_roots_with_env_and_locations(
         global_roots,
         global_locations,
         os_managed,
+        issues,
     })
 }
 
@@ -230,7 +251,9 @@ pub fn discover_global_scan_locations(
         environment,
         &[],
         RulePlatform::current(),
+        &mut Vec::new(),
     )
+    .expect("fixed built-in global locations do not require fallible expansion")
 }
 
 fn discover_global_scan_locations_with_definitions(
@@ -238,7 +261,8 @@ fn discover_global_scan_locations_with_definitions(
     environment: &GlobalScanEnvironment,
     definitions: &[ScanLocationDefinition],
     platform: Option<RulePlatform>,
-) -> Vec<GlobalScanRoot> {
+    issues: &mut Vec<ScanIssue>,
+) -> Result<Vec<GlobalScanRoot>> {
     let mut roots = Vec::new();
     if wants(kinds, GlobalScanKind::DeveloperCaches) {
         push_developer_cache_roots(environment, &mut roots);
@@ -294,15 +318,155 @@ fn discover_global_scan_locations_with_definitions(
             ScanLocationBase::Downloads => environment.download_dir.as_ref(),
         };
         if let Some(base) = base {
-            let path = if definition.relative_path.is_empty() {
-                base.clone()
-            } else {
-                base.join(&definition.relative_path)
-            };
-            push_global_root(&mut roots, &path, definition.kind, definition.label.clone());
+            push_definition_locations(&mut roots, issues, base, definition)?;
         }
     }
-    normalize_global_locations(roots, environment)
+    Ok(normalize_global_locations(roots, environment))
+}
+
+fn push_definition_locations(
+    roots: &mut Vec<GlobalScanRoot>,
+    issues: &mut Vec<ScanIssue>,
+    base: &Path,
+    definition: &ScanLocationDefinition,
+) -> Result<()> {
+    let path = if definition.relative_path.is_empty() {
+        base.to_path_buf()
+    } else {
+        base.join(&definition.relative_path)
+    };
+    if !path.exists() {
+        return Ok(());
+    }
+    let Some(anchor) = contained_directory(base, &path, issues) else {
+        return Ok(());
+    };
+    let Some(expansion) = &definition.expansion else {
+        push_global_root(roots, &anchor, definition.kind, definition.label.clone());
+        return Ok(());
+    };
+
+    let mut builder = GlobSetBuilder::new();
+    for pattern in &expansion.child_globs {
+        builder.add(Glob::new(pattern)?);
+    }
+    let child_matcher = builder.build()?;
+    let entries = match fs::read_dir(&anchor) {
+        Ok(entries) => entries,
+        Err(error) => {
+            issues.push(ScanIssue {
+                code: issue_code_for_io(&error),
+                path: Some(anchor),
+            });
+            return Ok(());
+        }
+    };
+    let mut leaves = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                issues.push(ScanIssue {
+                    code: issue_code_for_io(&error),
+                    path: Some(anchor.clone()),
+                });
+                continue;
+            }
+        };
+        if !child_matcher.is_match(entry.file_name()) {
+            continue;
+        }
+        let child = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            issues.push(ScanIssue {
+                code: ScanIssueCode::MetadataUnavailable,
+                path: Some(child),
+            });
+            continue;
+        };
+        if !file_type.is_dir() || file_type.is_symlink() {
+            continue;
+        }
+        let Some(child) = contained_directory(&anchor, &child, issues) else {
+            continue;
+        };
+        for suffix in &expansion.suffixes {
+            let leaf = child.join(suffix);
+            if !leaf.exists() {
+                continue;
+            }
+            let Some(leaf) = contained_directory(&child, &leaf, issues) else {
+                continue;
+            };
+            leaves.push(leaf);
+        }
+    }
+    leaves.sort();
+    leaves.dedup();
+    if leaves.len() > usize::from(expansion.max_matches) {
+        leaves.truncate(usize::from(expansion.max_matches));
+        issues.push(ScanIssue {
+            code: ScanIssueCode::Unknown,
+            path: Some(anchor),
+        });
+    }
+    for leaf in leaves {
+        push_global_root(roots, &leaf, definition.kind, definition.label.clone());
+    }
+    Ok(())
+}
+
+fn contained_directory(base: &Path, path: &Path, issues: &mut Vec<ScanIssue>) -> Option<PathBuf> {
+    let metadata = match path.symlink_metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            issues.push(ScanIssue {
+                code: issue_code_for_io(&error),
+                path: Some(path.to_path_buf()),
+            });
+            return None;
+        }
+    };
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return None;
+    }
+    let base = match base.canonicalize() {
+        Ok(base) => base,
+        Err(error) => {
+            issues.push(ScanIssue {
+                code: issue_code_for_io(&error),
+                path: Some(base.to_path_buf()),
+            });
+            return None;
+        }
+    };
+    let path = match path.canonicalize() {
+        Ok(path) => path,
+        Err(error) => {
+            issues.push(ScanIssue {
+                code: issue_code_for_io(&error),
+                path: Some(path.to_path_buf()),
+            });
+            return None;
+        }
+    };
+    if path == base || path.starts_with(&base) {
+        Some(path)
+    } else {
+        issues.push(ScanIssue {
+            code: ScanIssueCode::TraversalError,
+            path: Some(path),
+        });
+        None
+    }
+}
+
+fn issue_code_for_io(error: &io::Error) -> ScanIssueCode {
+    if error.kind() == io::ErrorKind::PermissionDenied {
+        ScanIssueCode::PermissionDenied
+    } else {
+        ScanIssueCode::TraversalError
+    }
 }
 
 fn wants(kinds: &[GlobalScanKind], kind: GlobalScanKind) -> bool {
@@ -492,10 +656,6 @@ fn push_browser_cache_roots(environment: &GlobalScanEnvironment, roots: &mut Vec
                     .join("Default")
                     .join("Cache"),
                 "Microsoft Edge cache",
-            ),
-            (
-                local.join("Mozilla").join("Firefox").join("Profiles"),
-                "Firefox cache",
             ),
         ] {
             push_global_root(roots, &path, GlobalScanKind::BrowserCaches, label);
