@@ -13,6 +13,13 @@ The paths passed at startup become the default scan roots:
 cleanr ~/projects/app-one ~/projects/app-two
 ```
 
+Use `--inactive-days <DAYS>` to override the configured candidate age for this
+invocation without changing the configuration file:
+
+```bash
+cleanr --inactive-days 30 ~/projects/app-one
+```
+
 If no path is provided, the current directory is used. Starting Cleanr does not
 immediately scan those paths; press `s` or run `/scan`.
 
@@ -39,6 +46,12 @@ enables global scanning:
 /scan --global-kind browser-caches
 ```
 
+Override the configured modification-age threshold for one scan with:
+
+```text
+/scan --inactive-days 30
+```
+
 For a routine Windows review, prefer the narrower file-only scope:
 
 ```text
@@ -58,15 +71,18 @@ pass the quoted path when launching Cleanr instead.
 ## Review and select candidates
 
 After a scan, press `r` or run `/review`. The review view shows the candidate
-path, size, confidence, reason, and risk note.
+path, size, confidence, reason, and risk note. By default, it includes only
+candidates whose newest observed modification time across the candidate tree
+meets the configured threshold, which is 90 days by default.
 
 High-confidence items from built-in or trusted rules can be preselected.
 Medium- and low-confidence items, and all matches from untrusted plugins, start
 unselected.
 
-The same `[recommendations].preselect_after_days` policy is used in the TUI,
-`cleanr analyze`, `cleanr plan`, and `cleanr dry-run`. It defaults to 90 days;
-set it to `0` to disable the age gate.
+Change the long-term threshold with
+`[recommendations].preselect_after_days`, or use `--inactive-days <DAYS>` for
+one invocation. `0` removes the age filter and shows all otherwise eligible
+candidates. Modification time is filesystem metadata, not proof of last access.
 
 Useful keys while reviewing:
 
@@ -120,6 +136,7 @@ Use these commands from scripts or terminals when you do not need the TUI:
 cleanr scan --json /path/to/project
 cleanr analyze /path/to/project
 cleanr plan --output cleanr-plan.json /path/to/project
+cleanr --inactive-days 30 plan --output cleanr-plan.json /path/to/project
 cleanr plan --output cleanr-plan.json --select /exact/candidate /path/to/project
 cleanr dry-run --json /path/to/project
 cleanr clean --plan cleanr-plan.json --plan-sha256 <reviewed-sha256> --authorized-by-user
@@ -127,26 +144,32 @@ cleanr restore list
 cleanr restore run <run-id> --confirm
 ```
 
-`analyze` always prints a versioned, local `AnalysisReport` JSON document. It
+`analyze` always prints a versioned, local `AnalysisReport` JSON document with
+the complete candidate evidence, including items outside the age threshold. It
 does not create a cleanup plan or move files. Its output contains real local
 paths, so use it only with a local agent unless you independently redact the
-data. It shares `[recommendations].preselect_after_days` with the TUI, `plan`,
-and `dry-run`. `dry-run` and `plan` only generate a cleanup plan.
+data. `dry-run` and `plan` only generate a cleanup plan.
 
-`plan` and `dry-run` start from deterministic recommendations. Repeat
-`--select <path>` or `--deselect <path>` to encode exact choices made during
-evidence review. A selected path must exist, match a candidate from that scan,
-and not be overlap-suppressed or safety-excluded. Review-only candidates can be
-selected this way, but an agent must not choose them without an explicit
-candidate-path decision from the current user. Do not edit the generated plan.
+The human-readable `cleanr scan` candidate count uses the effective age
+threshold. `cleanr scan --json` keeps the raw scan entries.
+
+`plan` and `dry-run` normally keep only candidates that satisfy the effective
+modification-age threshold. Repeat `--select <path>` or `--deselect <path>` to
+encode exact choices made during evidence review. An explicit `--select` can
+include an otherwise selectable review candidate with recent or missing
+modification-time evidence. A selected path must exist, match a candidate from
+that scan, and not be overlap-suppressed or safety-excluded. An agent must not
+choose a review-only candidate without an explicit candidate-path decision from
+the current user. Do not edit the generated plan.
 
 When `plan` writes a file, it prints that file's SHA-256. `clean` is intended
 for an exact plan that the current user has already reviewed and explicitly
 authorized. It verifies the supplied digest, re-scans the plan roots, rebuilds
-the plan with the exact reviewed selection, and refuses execution if the plan
-changed. It only moves validated items to the system trash and records an
-execution manifest; it never permanently deletes them. Restore still requires
-`--confirm`.
+the plan with the exact reviewed selection, and refuses execution if any
+selected target, scan provenance, or safety policy changed. Changes limited to
+unselected candidates do not invalidate the reviewed actions. It only moves
+validated items to the system trash and records an execution manifest; it never
+permanently deletes them. Restore still requires `--confirm`.
 
 ## Slash commands
 
@@ -155,9 +178,9 @@ after a scan finishes.
 
 | Command | What it does |
 | --- | --- |
-| `/scan [path...] [--global] [--global-kind=<kind>]` | Scan paths or known system cleanup locations |
+| `/scan [path...] [--global] [--global-kind=<kind>] [--inactive-days=<days>]` | Scan paths or known system cleanup locations with an optional one-scan age override |
 | `/scan --global` | Scan all known system cleanup locations |
-| `/usage [path...] [--global] [--global-kind=<kind>]` | Scan and open the disk-usage summary |
+| `/usage [path...] [--global] [--global-kind=<kind>] [--inactive-days=<days>]` | Scan and open the disk-usage summary with an optional recommendation-metric age override |
 | `/usage --global` | Scan known system cleanup locations and open usage |
 | `/review` | Build and show cleanup candidates |
 | `/plan` | Build the current cleanup plan |
@@ -178,6 +201,9 @@ after a scan finishes.
 ## Inspect disk usage without cleaning
 
 Press `u` or run `/usage`. This performs a scan and opens a size-oriented view.
+It keeps the complete usage entries. Its candidate and selected summary metrics
+apply the effective age threshold; `/usage --inactive-days <DAYS>` overrides
+that threshold for this scan.
 It does not move files or automatically execute a cleanup plan.
 
 ## Cancel or leave safely

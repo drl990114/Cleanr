@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     app::{ConfirmChoice, DurationRecorder, Mode, View},
-    commands::{ActionRequest, CleanupIntent, palette_command_invocation},
+    commands::{ActionRequest, CleanupIntent, palette_command_invocation, parse_slash_command},
     effects::{
         PreparedScan, ScanDiagnostics, ScanFailure, ScanStage, ScanTaskProgress, TaskEvent,
         build_usage_projection,
@@ -207,6 +207,7 @@ fn home_layout_switches_to_a_concise_scan_result() {
     .expect("write");
 
     let mut app = app(temp.path().to_path_buf());
+    app.config.recommendations.preselect_after_days = 0;
     let mut report =
         scan_paths(&[temp.path().to_path_buf()], &ScanOptions::default()).expect("scan");
     app.registry.annotate_entries(&mut report.entries);
@@ -269,6 +270,7 @@ fn scan_layout_keeps_selection_and_details_distinct() {
     .expect("write");
 
     let mut app = app(temp.path().to_path_buf());
+    app.config.recommendations.preselect_after_days = 0;
     let mut report =
         scan_paths(&[temp.path().to_path_buf()], &ScanOptions::default()).expect("scan");
     app.registry.annotate_entries(&mut report.entries);
@@ -279,7 +281,7 @@ fn scan_layout_keeps_selection_and_details_distinct() {
     let screen = render_text(&mut app, 120, 30);
     println!("{screen}");
 
-    assert!(screen.contains("[ ]"));
+    assert!(screen.contains("[✓]"));
     assert!(screen.contains("Preview"));
     assert!(screen.contains("space select"));
     assert!(screen.contains("Current item"));
@@ -388,6 +390,7 @@ fn chinese_scan_layout_uses_translations_for_preview_labels() {
         I18n::new("zh-CN", BTreeMap::new(), builtin_language_packs()),
         Theme::dark(),
     );
+    app.config.recommendations.preselect_after_days = 0;
     app.entries = vec![ScanEntry {
         path: temp.path().join("target"),
         kind: EntryKind::Directory,
@@ -460,6 +463,44 @@ fn slash_opens_command_palette() {
     app.handle_key(key(KeyCode::Char('/')));
     assert!(app.palette_open());
     assert_eq!(app.input(), "/");
+}
+
+#[test]
+fn invalid_scan_arguments_do_not_fall_back_to_a_default_palette_scan() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    for (command, expected_error) in [
+        (
+            "/scan --inactive-days nope",
+            "must be a non-negative integer",
+        ),
+        ("/scan --inactive-days 3651", "must be between 0 and 3650"),
+        ("/scan --inactive-days", "requires a value"),
+        ("/scan --inactive-days 30 --inactive-days 60", "only once"),
+    ] {
+        let mut app = app(temp.path().to_path_buf());
+        app.submit_slash_input(command);
+
+        assert!(!app.is_scan_running(), "invalid command ran: {command}");
+        assert!(
+            app.status().contains(expected_error),
+            "command={command}, status={}",
+            app.status()
+        );
+    }
+
+    let mut chinese = Workbench::new(
+        vec![temp.path().to_path_buf()],
+        Config::default(),
+        RuleRegistry::builtin().expect("builtin rules"),
+        I18n::new("zh-CN", BTreeMap::new(), builtin_language_packs()),
+        Theme::dark(),
+    );
+    chinese.submit_slash_input("/scan --inactive-days nope");
+    assert!(
+        chinese.status().contains("非负整数"),
+        "{}",
+        chinese.status()
+    );
 }
 
 #[test]
@@ -985,13 +1026,22 @@ fn tui_analysis_suppresses_candidates_from_unrequested_global_kinds() {
             .codes
             .contains(&DecisionCode::GlobalKindNotRequested)
     );
-    assert_eq!(app.plan().expect("plan").summary.candidate_count, 0);
+    let plan = app.plan().expect("plan");
+    assert_eq!(plan.summary.candidate_count, 0);
+    let scope = plan
+        .source_scan
+        .as_ref()
+        .and_then(|source| source.scope.as_ref())
+        .expect("TUI plan retains semantic global scope");
+    assert!(scope.explicit_roots.is_empty());
+    assert_eq!(scope.global_kinds, vec![GlobalScanKind::AppCaches]);
 }
 
 #[test]
 fn scan_view_can_render_selection_beyond_old_candidate_cap() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
+    app.config.recommendations.preselect_after_days = 0;
     app.entries = (0..501)
         .map(|index| ScanEntry {
             path: temp.path().join(format!("candidate-{index:03}")),
@@ -1147,11 +1197,11 @@ fn cleanup_success_starts_background_refresh_scan() {
     .expect("write");
     let mut app = app(temp.path().to_path_buf());
     app.state_dir = state_dir;
+    app.config.recommendations.preselect_after_days = 0;
     let report = scan_paths(&app.roots, &ScanOptions::default()).expect("scan");
     app.entries = report.entries;
     app.registry.annotate_entries(&mut app.entries);
     app.build_plan();
-    app.toggle_all_scan_selection();
     let executor = FakeTrashExecutor::default();
 
     app.clean_with_executor(CleanupIntent::ExplicitUserConfirmation, &executor);
@@ -1177,11 +1227,11 @@ fn cleanup_failure_surfaces_item_error_without_starting_refresh_scan() {
     fs::write(target.join("index.js"), vec![0; 2 * 1024 * 1024]).expect("write");
     let mut app = app(temp.path().to_path_buf());
     app.state_dir = state_dir;
+    app.config.recommendations.preselect_after_days = 0;
     let report = scan_paths(&app.roots, &ScanOptions::default()).expect("scan");
     app.entries = report.entries;
     app.registry.annotate_entries(&mut app.entries);
     app.build_plan();
-    app.toggle_all_scan_selection();
 
     app.clean_with_executor(
         CleanupIntent::ExplicitUserConfirmation,
@@ -1597,7 +1647,10 @@ fn toggling_selection_updates_summary() {
     .expect("write");
 
     let mut app = app(temp.path().to_path_buf());
-    app.dispatch(ActionRequest::Scan(ScanRequest::default()));
+    app.dispatch(ActionRequest::Scan(ScanRequest {
+        inactive_days: Some(0),
+        ..ScanRequest::default()
+    }));
     for _ in 0..50 {
         app.poll_tasks();
         if !app.is_scan_running() {
@@ -1614,7 +1667,7 @@ fn toggling_selection_updates_summary() {
 }
 
 #[test]
-fn rebuilding_a_plan_preserves_the_user_selection_from_one_analysis_report() {
+fn rebuilding_a_plan_filters_recent_candidates_but_preserves_explicit_selection() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
     let old_cache = temp.path().join("old-cache");
@@ -1637,6 +1690,17 @@ fn rebuilding_a_plan_preserves_the_user_selection_from_one_analysis_report() {
     ];
 
     app.build_plan();
+    assert_eq!(
+        app.analysis.as_ref().expect("analysis").candidates.len(),
+        2,
+        "read-only evidence retains recent candidates"
+    );
+    assert_eq!(app.plan().expect("plan").summary.candidate_count, 1);
+    assert!(
+        app.status().contains("at least 90 days"),
+        "{}",
+        app.status()
+    );
     let old_candidate_id = app
         .analysis
         .as_ref()
@@ -1671,15 +1735,12 @@ fn rebuilding_a_plan_preserves_the_user_selection_from_one_analysis_report() {
             .expect("plan")
             .items
             .iter()
-            .find(|item| item.path == recent_cache)
-            .expect("recent item")
-            .selected
+            .any(|item| item.path == recent_cache)
     );
 
     app.list_state.select(Some(0));
     app.toggle_scan_selection();
-    app.list_state.select(Some(1));
-    app.toggle_scan_selection();
+    app.selection.select(recent_candidate_id.clone());
     assert!(!app.selection.candidate_ids.contains(&old_candidate_id));
     assert!(app.selection.candidate_ids.contains(&recent_candidate_id));
 
@@ -2025,6 +2086,48 @@ fn invalid_gg_second_key_is_processed_normally() {
 }
 
 #[test]
+fn inactivity_threshold_precedence_keeps_session_override_out_of_config() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut app = app(temp.path().to_path_buf());
+    app.config.recommendations.preselect_after_days = 180;
+
+    assert_eq!(app.effective_inactive_days(None), 180);
+    app.session_inactive_days = Some(30);
+    assert_eq!(app.effective_inactive_days(None), 30);
+    assert_eq!(app.config.recommendations.preselect_after_days, 180);
+    assert_eq!(app.effective_inactive_days(Some(7)), 7);
+}
+
+#[test]
+fn default_and_threshold_only_rescans_reuse_the_last_semantic_global_scope() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut app = app(temp.path().to_path_buf());
+    app.roots = vec![temp.path().join("broad-physical-root")];
+    app.scan_explicit_roots = Vec::new();
+    app.scan_global_evidence.requested_kinds = vec![GlobalScanKind::AppCaches];
+
+    let mut keyboard_request = ScanRequest::default();
+    app.reuse_scan_scope_if_unspecified(&mut keyboard_request);
+    assert!(keyboard_request.paths.is_empty());
+    assert!(keyboard_request.include_global);
+    assert_eq!(
+        keyboard_request.global_kinds,
+        vec![GlobalScanKind::AppCaches]
+    );
+
+    let ActionRequest::Scan(mut slash_request) =
+        parse_slash_command("/scan --inactive-days 30").expect("slash scan")
+    else {
+        panic!("expected scan request");
+    };
+    app.reuse_scan_scope_if_unspecified(&mut slash_request);
+    assert_eq!(slash_request.inactive_days, Some(30));
+    assert!(slash_request.paths.is_empty());
+    assert!(slash_request.include_global);
+    assert_eq!(slash_request.global_kinds, vec![GlobalScanKind::AppCaches]);
+}
+
+#[test]
 fn count_prefix_moves_multiple_lines() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
@@ -2062,7 +2165,10 @@ fn toggle_all_selects_and_deselects_scan_items() {
     .expect("write");
 
     let mut app = app(temp.path().to_path_buf());
-    app.dispatch(ActionRequest::Scan(ScanRequest::default()));
+    app.dispatch(ActionRequest::Scan(ScanRequest {
+        inactive_days: Some(0),
+        ..ScanRequest::default()
+    }));
     for _ in 0..50 {
         app.poll_tasks();
         if !app.is_scan_running() {

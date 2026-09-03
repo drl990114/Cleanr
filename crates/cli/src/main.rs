@@ -7,9 +7,9 @@ mod workflow;
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use cleanr_core::{GlobalScanKind, ScanRequest};
+use cleanr_core::{GlobalScanKind, RecommendationPolicy, ScanRequest};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -29,6 +29,10 @@ struct Args {
     /// Read configuration from this TOML file instead of the default location.
     #[arg(long, global = true)]
     config: Option<PathBuf>,
+
+    /// Override the observed modification-age threshold without changing configuration.
+    #[arg(long, global = true, value_name = "DAYS")]
+    inactive_days: Option<u16>,
 
     /// Reserved for debug logging output.
     #[arg(long, env = "CLEANR_LOG_FILE")]
@@ -390,6 +394,7 @@ enum PluginAction {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    validate_inactive_days_scope(&args)?;
 
     if let Some(command) = args.command {
         return match command {
@@ -400,7 +405,7 @@ fn main() -> Result<()> {
                 json,
             } => workflow::scan(workflow::ScanCommand {
                 config_path: args.config,
-                request: scan_request(paths, global, global_kinds),
+                request: scan_request(paths, global, global_kinds, args.inactive_days),
                 json,
             }),
             Command::Analyze {
@@ -409,7 +414,7 @@ fn main() -> Result<()> {
                 global_kinds,
             } => workflow::analyze(workflow::AnalyzeCommand {
                 config_path: args.config,
-                request: scan_request(paths, global, global_kinds),
+                request: scan_request(paths, global, global_kinds, args.inactive_days),
             }),
             Command::Plan {
                 paths,
@@ -420,7 +425,7 @@ fn main() -> Result<()> {
                 output,
             } => workflow::plan(workflow::PlanCommand {
                 config_path: args.config,
-                request: scan_request(paths, global, global_kinds),
+                request: scan_request(paths, global, global_kinds, args.inactive_days),
                 selection: workflow::SelectionOverrides {
                     select_paths,
                     deselect_paths,
@@ -437,7 +442,7 @@ fn main() -> Result<()> {
                 output,
             } => workflow::dry_run(workflow::DryRunCommand {
                 config_path: args.config,
-                request: scan_request(paths, global, global_kinds),
+                request: scan_request(paths, global, global_kinds, args.inactive_days),
                 selection: workflow::SelectionOverrides {
                     select_paths,
                     deselect_paths,
@@ -594,6 +599,9 @@ fn main() -> Result<()> {
         Some(path) => cleanr_config::Config::load_from(path)?,
         None => cleanr_config::Config::load()?,
     };
+    if let Some(inactive_days) = args.inactive_days {
+        RecommendationPolicy::new(inactive_days)?;
+    }
 
     let roots = if args.paths.is_empty() {
         vec![std::env::current_dir()?]
@@ -612,22 +620,46 @@ fn main() -> Result<()> {
     });
 
     let _ = args.log_file;
-    cleanr_tui::run(cleanr_tui::TuiOptions {
-        roots,
-        config,
-        update_available,
-    })
+    cleanr_tui::run_with_inactivity_override(
+        cleanr_tui::TuiOptions {
+            roots,
+            config,
+            update_available,
+        },
+        args.inactive_days,
+    )
+}
+
+fn validate_inactive_days_scope(args: &Args) -> Result<()> {
+    if args.inactive_days.is_some()
+        && !matches!(
+            args.command.as_ref(),
+            None | Some(
+                Command::Scan { .. }
+                    | Command::Analyze { .. }
+                    | Command::Plan { .. }
+                    | Command::DryRun { .. }
+            )
+        )
+    {
+        bail!(
+            "--inactive-days is supported only for TUI startup, scan, analyze, plan, and dry-run"
+        );
+    }
+    Ok(())
 }
 
 fn scan_request(
     paths: Vec<PathBuf>,
     include_global: bool,
     global_kinds: Vec<GlobalScanKind>,
+    inactive_days: Option<u16>,
 ) -> ScanRequest {
     ScanRequest {
         paths,
         include_global: include_global || !global_kinds.is_empty(),
         global_kinds,
+        inactive_days,
     }
 }
 
@@ -716,13 +748,17 @@ mod tests {
             "/tmp/cleanr.toml",
             "scan",
             "--json",
+            "--inactive-days",
+            "30",
             "--global",
             "--global-kind",
             "browser-caches",
             "/repo/with spaces",
         ])
         .expect("parse scan");
+        validate_inactive_days_scope(&scan).expect("scan supports inactivity override");
         assert_eq!(scan.config, Some(PathBuf::from("/tmp/cleanr.toml")));
+        assert_eq!(scan.inactive_days, Some(30));
         assert!(matches!(
             scan.command,
             Some(Command::Scan { paths, global: true, global_kinds, json: true })
@@ -733,11 +769,14 @@ mod tests {
         let analyze = Args::try_parse_from([
             "cleanr",
             "analyze",
+            "--inactive-days=120",
             "--global-kind",
             "developer-caches",
             "/repo",
         ])
         .expect("parse analyze");
+        validate_inactive_days_scope(&analyze).expect("analyze supports inactivity override");
+        assert_eq!(analyze.inactive_days, Some(120));
         assert!(matches!(
             analyze.command,
             Some(Command::Analyze {
@@ -751,9 +790,20 @@ mod tests {
             Args::try_parse_from(["cleanr", "analyze", "--preselect-after-days", "120",]).is_err()
         );
 
+        let plan = Args::try_parse_from(["cleanr", "plan", "--inactive-days", "3650", "/repo"])
+            .expect("parse plan");
+        validate_inactive_days_scope(&plan).expect("plan supports inactivity override");
+        assert_eq!(plan.inactive_days, Some(3650));
+        assert!(matches!(
+            plan.command,
+            Some(Command::Plan { paths, .. }) if paths == vec![PathBuf::from("/repo")]
+        ));
+
         let dry_run = Args::try_parse_from([
             "cleanr",
             "dry-run",
+            "--inactive-days",
+            "0",
             "--output",
             "/tmp/plan.json",
             "--select",
@@ -763,6 +813,8 @@ mod tests {
             "/repo",
         ])
         .expect("parse dry-run");
+        validate_inactive_days_scope(&dry_run).expect("dry-run supports inactivity override");
+        assert_eq!(dry_run.inactive_days, Some(0));
         assert!(matches!(
             dry_run.command,
             Some(Command::DryRun {
@@ -861,14 +913,56 @@ mod tests {
 
     #[test]
     fn paths_are_preserved_when_launching_the_tui_mode() {
-        let args = Args::try_parse_from(["cleanr", "--no-update-check", "/repo/one", "/repo/two"])
-            .expect("parse");
+        let args = Args::try_parse_from([
+            "cleanr",
+            "--no-update-check",
+            "--inactive-days",
+            "45",
+            "/repo/one",
+            "/repo/two",
+        ])
+        .expect("parse");
 
         assert!(args.command.is_none());
         assert!(args.no_update_check);
+        assert_eq!(args.inactive_days, Some(45));
+        validate_inactive_days_scope(&args).expect("TUI startup supports inactivity override");
         assert_eq!(
             args.paths,
             vec![PathBuf::from("/repo/one"), PathBuf::from("/repo/two")]
         );
+    }
+
+    #[test]
+    fn scan_request_preserves_the_one_scan_inactivity_override() {
+        let request = scan_request(vec![PathBuf::from("/repo")], false, Vec::new(), Some(30));
+
+        assert_eq!(request.inactive_days, Some(30));
+    }
+
+    #[test]
+    fn inactivity_override_is_rejected_for_unrelated_commands() {
+        let unsupported = vec![
+            vec!["cleanr", "config", "path", "--inactive-days", "30"],
+            vec!["cleanr", "restore", "list", "--inactive-days", "30"],
+            vec!["cleanr", "plugin", "doctor", "--inactive-days", "30"],
+            vec![
+                "cleanr",
+                "clean",
+                "--plan",
+                "plan.json",
+                "--plan-sha256",
+                "abc",
+                "--inactive-days",
+                "30",
+            ],
+        ];
+
+        for argv in unsupported {
+            let args = Args::try_parse_from(argv).expect("global option parses before scope check");
+            let error = validate_inactive_days_scope(&args)
+                .expect_err("unrelated command must reject inactivity override");
+            assert!(error.to_string().contains("supported only"));
+        }
     }
 }

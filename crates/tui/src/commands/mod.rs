@@ -1,8 +1,45 @@
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
-use cleanr_core::{GlobalScanKind, ScanRequest};
+use cleanr_core::{GlobalScanKind, MAX_RECOMMENDATION_AGE_DAYS, RecommendationPolicy, ScanRequest};
 use cleanr_i18n::I18n;
+
+#[derive(Debug)]
+enum InactiveDaysCommandError {
+    Missing,
+    InvalidInteger,
+    Duplicate,
+    OutOfRange,
+}
+
+impl std::fmt::Display for InactiveDaysCommandError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing => write!(formatter, "--inactive-days requires a value"),
+            Self::InvalidInteger => write!(formatter, "--inactive-days must be an integer"),
+            Self::Duplicate => write!(formatter, "--inactive-days may be supplied only once"),
+            Self::OutOfRange => write!(
+                formatter,
+                "--inactive-days must be in 0..={MAX_RECOMMENDATION_AGE_DAYS}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InactiveDaysCommandError {}
+
+pub(crate) fn localized_command_error(error: &anyhow::Error, i18n: &I18n) -> String {
+    let Some(error) = error.downcast_ref::<InactiveDaysCommandError>() else {
+        return error.to_string();
+    };
+    let key = match error {
+        InactiveDaysCommandError::Missing => "error_inactive_days_missing",
+        InactiveDaysCommandError::InvalidInteger => "error_inactive_days_integer",
+        InactiveDaysCommandError::Duplicate => "error_inactive_days_duplicate",
+        InactiveDaysCommandError::OutOfRange => "error_inactive_days_range",
+    };
+    i18n.format(key, &[("max", MAX_RECOMMENDATION_AGE_DAYS.to_string())])
+}
 
 /// A TUI command action. This is intentionally local UI plumbing, not an AI protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +174,16 @@ fn parse_scan_request(args: Vec<String>) -> Result<ScanRequest> {
         } else if let Some(kind) = arg.strip_prefix("--global-kind=") {
             request.include_global = true;
             request.global_kinds.push(parse_global_kind(kind)?);
+        } else if arg == "--inactive-days" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err(InactiveDaysCommandError::Missing.into());
+            };
+            set_inactive_days(&mut request, value)?;
+        } else if let Some(value) = arg.strip_prefix("--inactive-days=") {
+            set_inactive_days(&mut request, value)?;
+        } else if arg.starts_with("--") {
+            bail!("unsupported scan option: {arg}");
         } else {
             request.paths.push(PathBuf::from(arg));
         }
@@ -149,6 +196,22 @@ fn parse_scan_request(args: Vec<String>) -> Result<ScanRequest> {
 
 fn parse_global_kind(value: &str) -> Result<GlobalScanKind> {
     value.parse().map_err(anyhow::Error::msg)
+}
+
+fn set_inactive_days(request: &mut ScanRequest, value: &str) -> Result<()> {
+    if request.inactive_days.is_some() {
+        return Err(InactiveDaysCommandError::Duplicate.into());
+    }
+    let days = value
+        .parse::<u64>()
+        .map_err(|_| InactiveDaysCommandError::InvalidInteger)?;
+    if days > u64::from(MAX_RECOMMENDATION_AGE_DAYS) {
+        return Err(InactiveDaysCommandError::OutOfRange.into());
+    }
+    let days = u16::try_from(days).map_err(|_| InactiveDaysCommandError::OutOfRange)?;
+    RecommendationPolicy::new(days).map_err(|_| InactiveDaysCommandError::OutOfRange)?;
+    request.inactive_days = Some(days);
+    Ok(())
 }
 
 fn split_command(input: &str) -> Result<Vec<String>> {
@@ -326,6 +389,7 @@ mod tests {
                 ],
                 include_global: true,
                 global_kinds: Vec::new(),
+                inactive_days: None,
             })
         );
         assert_eq!(
@@ -344,9 +408,34 @@ mod tests {
                 paths: Vec::new(),
                 include_global: true,
                 global_kinds: vec![GlobalScanKind::BrowserCaches, GlobalScanKind::Logs],
+                inactive_days: None,
             })
         );
         assert!(parse_slash_command("/scan --global-kind unknown").is_err());
+    }
+
+    #[test]
+    fn parses_and_validates_scan_inactivity_override() {
+        assert_eq!(
+            parse_slash_command("/scan --inactive-days 30 /repo").expect("parse"),
+            ActionRequest::Scan(ScanRequest {
+                paths: vec![PathBuf::from("/repo")],
+                include_global: false,
+                global_kinds: Vec::new(),
+                inactive_days: Some(30),
+            })
+        );
+        assert_eq!(
+            parse_slash_command("/scan --inactive-days=0").expect("parse"),
+            ActionRequest::Scan(ScanRequest {
+                inactive_days: Some(0),
+                ..ScanRequest::default()
+            })
+        );
+        assert!(parse_slash_command("/scan --inactive-days 3651").is_err());
+        assert!(parse_slash_command("/scan --inactive-days nope").is_err());
+        assert!(parse_slash_command("/scan --inactive-days").is_err());
+        assert!(parse_slash_command("/scan --unknown").is_err());
     }
 
     #[test]

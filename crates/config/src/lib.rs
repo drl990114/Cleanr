@@ -94,7 +94,8 @@ pub struct CleanupConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct RecommendationConfig {
-    /// Number of inactive days required for automatic preselection. Zero disables this age gate.
+    /// Inactive days required for the normal candidate set and automatic preselection.
+    /// Zero disables this age gate.
     pub preselect_after_days: u16,
 }
 
@@ -282,7 +283,7 @@ impl Config {
             "enabled_rule_packs = [\"builtin-dev\", \"builtin-general\", \"builtin-system\"]\n",
             "\n",
             "[recommendations]\n",
-            "# Set to 0 to disable the age gate for automatic preselection.\n",
+            "# Set to 0 to show all otherwise eligible candidates and disable the preselection age gate.\n",
             "preselect_after_days = 90\n",
             "\n",
             "[plugins]\n",

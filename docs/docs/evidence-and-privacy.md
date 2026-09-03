@@ -19,12 +19,27 @@ cleanr analyze /path/to/project
 
 It also accepts `--global` and repeatable `--global-kind <kind>` options for
 known user-level cleanup locations. Its recommendation policy comes from the
-shared configuration:
+shared long-term configuration:
 
 ```toml
 [recommendations]
 preselect_after_days = 90
 ```
+
+`--inactive-days <DAYS>` overrides that threshold for one invocation without
+writing the configuration file. Analysis still reports the complete candidate
+evidence; the override changes the policy snapshot and recommendation
+decisions, not which candidates appear in the report.
+
+Current reports use recommendation policy `v2`, where the threshold also
+defines the normal candidate projection. Policy `v1` reports are still readable
+for legacy plan validation, but their threshold controlled only automatic
+preselection.
+
+Overlap evidence describes the normal age-qualified projection. A recent or
+missing-time candidate may remain explicitly selectable even when that
+projection suppresses it in favor of inactive descendants; a cleanup plan
+still rejects overlapping selected targets.
 
 For a routine macOS review, keep developer caches separate unless the user
 includes them:
@@ -58,9 +73,11 @@ adding browser or developer caches. Crash dumps, Explorer thumbnail databases,
 Windows Update data, Prefetch, Downloads, registry data, the Recycle Bin, and
 system-owned roots are outside this routine scope.
 
-Set `preselect_after_days` to `0` to disable the age gate, or to an integer
-from `1` through `3650`. The TUI, `cleanr analyze`, `cleanr plan`, and
-`cleanr dry-run` use this same policy.
+Set `preselect_after_days` to `0` to remove the age filter, or to an integer
+from `1` through `3650`. The normal TUI review, `cleanr plan`, and
+`cleanr dry-run` keep only otherwise eligible candidates that satisfy the
+effective threshold. `cleanr analyze` and the TUI `/usage` view retain complete
+evidence; `/usage` candidate and selected metrics remain threshold-aware.
 
 The command writes a versioned `AnalysisReport` JSON document to standard
 output. It only scans and evaluates evidence. It does **not** create a cleanup
@@ -111,8 +128,10 @@ threshold boundary. It includes:
 
 Modification time is observed filesystem metadata, not proof that a user last
 accessed a file. For a directory, Cleanr considers the newest observed
-modification time in its scanned descendants. Missing, future, partial, or
-incomplete evidence blocks automatic preselection.
+modification time across the candidate and its scanned descendants. Missing,
+future, partial, or incomplete evidence blocks automatic preselection. The
+ordinary candidate set omits recent or missing-time evidence, while `analyze`
+keeps those candidates available for explanation and explicit review.
 
 The optional `scan.global` object is additive to `cleanr.analysis.v1`. It is
 omitted for explicit-path analysis, and older v1 reports without it still
@@ -134,23 +153,27 @@ ledger. Cleanr never scans or executes those entries.
    order.
 3. If cleanup is requested, it writes a local plan with `cleanr plan --output`.
    It may use repeatable `--select` and `--deselect` only to encode exact
-   candidate-path choices the current user made after reviewing the evidence;
-   the plan file itself is not edited.
+   candidate-path choices the current user made after reviewing the evidence.
+   An explicit `--select` may include an otherwise selectable review candidate
+   with recent or missing modification-time evidence; the plan file itself is
+   not edited.
 4. It inspects the selected trash actions and summarizes the exact roots,
    count, size, risks, plan path, and printed SHA-256.
 5. The current user explicitly authorizes that exact plan after seeing the
    summary.
 6. The agent runs `cleanr clean` with the plan path, reviewed SHA-256, and
    `--authorized-by-user`.
-7. Cleanr verifies the digest, re-scans and compares the plan, validates every
-   target, moves successful items to system trash, and records the manifest.
+7. Cleanr verifies the digest, re-scans and compares the selected execution
+   projection plus safety provenance, validates every target, moves successful
+   items to system trash, and records the manifest. Unselected candidate drift
+   does not invalidate the reviewed actions.
 
 The analysis command has no cleanup operation. A suggestion, recommendation,
 initial cleanup request, or broad standing permission is never an execution
 token. An agent must not select a review-only item on its own judgment. Unknown,
-overlap-suppressed, and safety-excluded paths cannot be selected. If the plan
-changes, the agent must generate, summarize, and obtain authorization for a new
-plan.
+overlap-suppressed, and safety-excluded paths cannot be selected. If a selected
+target or safety provenance changes, the agent must generate, summarize, and
+obtain authorization for a new plan.
 
 ## Data boundary
 

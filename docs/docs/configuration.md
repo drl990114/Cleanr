@@ -86,6 +86,12 @@ Supported values include `true`/`false`, `yes`/`no`, `on`/`off`, and `1`/`0`
 for booleans. An unknown key or invalid value is rejected without replacing a
 valid configuration.
 
+To override only the current invocation without writing the configuration:
+
+```bash
+cleanr --inactive-days 30 ~/projects
+```
+
 ## Configuration reference
 
 ### `[scan]`
@@ -144,12 +150,20 @@ requires a local user action; see [Safety and recovery](./safety-and-recovery).
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `preselect_after_days` | `90` | Observed modification-age threshold for deterministic preselection; `0` disables the age gate and values from `1` through `3650` are accepted |
+| `preselect_after_days` | `90` | Observed modification-age threshold for the ordinary candidate set and deterministic preselection; `0` removes the age filter and values from `1` through `3650` are accepted |
 
-This is one shared policy: the TUI, `cleanr analyze`, `cleanr plan`, and
-`cleanr dry-run` all use it. The age is based on observed modification metadata,
-not proven last access. Missing, future, partial, or incomplete evidence still
-blocks automatic preselection.
+The normal TUI review, `cleanr plan`, and `cleanr dry-run` keep only otherwise
+eligible candidates whose newest observed modification time across the
+candidate tree is at least this old. `--inactive-days <DAYS>` overrides the
+setting for one invocation without writing the file. `0` shows all otherwise
+eligible candidates.
+
+`cleanr analyze` and the TUI `/usage` view retain complete evidence. The
+candidate and selected metrics in `/usage` still reflect the effective
+threshold. An explicit `--select` can add an otherwise selectable review
+candidate with recent or missing modification-time evidence to a plan.
+Modification time is observed filesystem metadata, not proof of last access;
+future, partial, or incomplete evidence still blocks automatic preselection.
 
 ## External local AI tools
 
@@ -157,7 +171,7 @@ Cleanr has no embedded model, provider, endpoint, or API-key configuration.
 An external agent running on the same machine can consume the read-only
 `cleanr analyze` JSON contract, but analysis grants no cleanup capability by
 itself. Delegated cleanup requires a separately reviewed plan, its SHA-256, and
-explicit current-user authorization. The report includes the configured
+explicit current-user authorization. The report includes the effective
 recommendation-policy snapshot and real local paths, so it is not a safe
 remote-sharing format.
 See [Evidence and privacy](./evidence-and-privacy) before giving it to another

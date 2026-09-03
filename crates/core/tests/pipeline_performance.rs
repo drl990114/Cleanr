@@ -9,14 +9,16 @@ use cleanr_core::{
 
 const ENTRIES_ENV: &str = "CLEANR_BENCH_ENTRIES";
 const ROUNDS_ENV: &str = "CLEANR_BENCH_ROUNDS";
+const FILES_PER_CANDIDATE_ENV: &str = "CLEANR_BENCH_FILES_PER_CANDIDATE";
 
 #[test]
 #[ignore = "manual synthetic pipeline performance evidence"]
 fn analysis_and_plan_pipeline() {
     let requested_entries = env_usize(ENTRIES_ENV, 100_000).max(101);
     let rounds = env_usize(ROUNDS_ENV, 3).max(1);
+    let files_per_candidate = env_usize(FILES_PER_CANDIDATE_ENV, 99);
     let root = PathBuf::from("cleanr-synthetic-benchmark");
-    let entries = synthetic_entries(&root, requested_entries);
+    let entries = synthetic_entries(&root, requested_entries, files_per_candidate);
     let candidate_count = entries
         .iter()
         .filter(|entry| !entry.rule_hits.is_empty())
@@ -69,9 +71,10 @@ fn analysis_and_plan_pipeline() {
         assert!(!encoded.is_empty());
 
         eprintln!(
-            "cleanr-pipeline-benchmark round={round} entries={} candidates={} analysis_ms={} plan_ms={} serialize_ms={} encoded_bytes={}",
+            "cleanr-pipeline-benchmark round={round} entries={} candidates={} files_per_candidate={} analysis_ms={} plan_ms={} serialize_ms={} encoded_bytes={}",
             entries.len(),
             candidate_count,
+            files_per_candidate,
             analysis_elapsed.as_millis(),
             plan_elapsed.as_millis(),
             serialization_elapsed.as_millis(),
@@ -101,11 +104,14 @@ fn env_usize(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-fn synthetic_entries(root: &std::path::Path, requested_entries: usize) -> Vec<ScanEntry> {
-    const FILES_PER_CANDIDATE: usize = 99;
-    let candidates = (requested_entries - 1) / (FILES_PER_CANDIDATE + 1);
+fn synthetic_entries(
+    root: &std::path::Path,
+    requested_entries: usize,
+    files_per_candidate: usize,
+) -> Vec<ScanEntry> {
+    let candidates = (requested_entries - 1) / (files_per_candidate + 1);
     let modified_at = Utc::now() - Duration::days(120);
-    let mut entries = Vec::with_capacity(1 + candidates * (FILES_PER_CANDIDATE + 1));
+    let mut entries = Vec::with_capacity(1 + candidates * (files_per_candidate + 1));
     entries.push(ScanEntry {
         path: root.to_path_buf(),
         kind: EntryKind::Directory,
@@ -119,7 +125,7 @@ fn synthetic_entries(root: &std::path::Path, requested_entries: usize) -> Vec<Sc
         entries.push(ScanEntry {
             path: candidate.clone(),
             kind: EntryKind::Directory,
-            size_bytes: FILES_PER_CANDIDATE as u64,
+            size_bytes: files_per_candidate as u64,
             modified_at: Some(modified_at),
             rule_hits: vec![RuleHit {
                 rule_pack_id: "synthetic".to_string(),
@@ -135,7 +141,7 @@ fn synthetic_entries(root: &std::path::Path, requested_entries: usize) -> Vec<Sc
                 sources: Vec::new(),
             }],
         });
-        for file_idx in 0..FILES_PER_CANDIDATE {
+        for file_idx in 0..files_per_candidate {
             entries.push(ScanEntry {
                 path: candidate.join(format!("file-{file_idx:03}")),
                 kind: EntryKind::File,

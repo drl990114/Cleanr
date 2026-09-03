@@ -57,6 +57,12 @@ cleanr
 cleanr ~/projects ~/Downloads
 ```
 
+如需只为本次运行修改候选门槛而不改配置，可加入 `--inactive-days <天数>`：
+
+```bash
+cleanr --inactive-days 30 ~/projects
+```
+
 Cleanr 会先打开首页，**不会**在启动时自动扫描或清理任何内容。
 
 ## 3. 完成第一次清理
@@ -64,7 +70,7 @@ Cleanr 会先打开首页，**不会**在启动时自动扫描或清理任何内
 进入 TUI 后：
 
 1. 按 `s` 扫描当前根目录。
-2. 扫描完成后按 `r` 审阅清理候选项。
+2. 扫描完成后按 `r` 审阅达到当前观测修改时间年龄门槛的候选项。
 3. 使用 `j`/`k` 或方向键移动。
 4. 按 `space` 选择或取消选择。
 5. 按 `c` 检查已选数量和大小，并进入确认。
@@ -104,11 +110,11 @@ Cleanr 会先打开首页，**不会**在启动时自动扫描或清理任何内
 cleanr analyze ~/projects > cleanr-analysis.json
 ```
 
-该命令只扫描并输出带版本的 JSON 报告；不会创建清理计划，也不会移动文件。输出
-包含真实本地路径，除非已经独立去除敏感信息，否则应保留在本机。契约和边界详见
-[证据与隐私](./evidence-and-privacy)。它与 TUI、`plan` 和 `dry-run` 共用推荐策略。
-如有需要，可在配置文件的 `[recommendations].preselect_after_days` 中修改默认的
-90 天年龄门槛。
+该命令只扫描并输出带版本的 JSON 报告，会保留完整候选证据，包括未达到年龄门槛的
+条目；不会创建清理计划，也不会移动文件。输出包含真实本地路径，除非已经独立去除
+敏感信息，否则应保留在本机。契约和边界详见[证据与隐私](./evidence-and-privacy)。
+长期门槛由 `[recommendations].preselect_after_days` 设置，默认 90 天；本次运行可用
+`--inactive-days <天数>` 覆盖。修改时间只是文件系统元数据，并不能证明最后访问时间。
 
 可直接从 GitHub 安装仓库中的跨 Agent Skill：
 

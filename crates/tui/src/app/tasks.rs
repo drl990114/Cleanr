@@ -253,17 +253,11 @@ impl Workbench {
                 selection,
                 plan,
             })) => {
+                let inactive_days = analysis.policy.preselect_after_days;
                 self.analysis = Some(analysis);
                 self.candidate_ids_by_path = candidate_ids_by_path;
                 self.selection = selection;
-                self.status = self.i18n.format(
-                    "status_plan_ready",
-                    &[
-                        ("candidates", plan.summary.candidate_count.to_string()),
-                        ("selected", plan.summary.selected_count.to_string()),
-                        ("size", format_bytes(plan.summary.selected_size_bytes)),
-                    ],
-                );
+                self.status = self.plan_ready_status(&plan, inactive_days);
                 self.plan = Some(plan);
                 if self.view == View::Scan {
                     self.select_first();
@@ -300,9 +294,7 @@ impl Workbench {
             return;
         }
         self.status_after_scan = None;
-        if request.paths.is_empty() && !request.include_global {
-            request.paths = self.roots.clone();
-        }
+        self.reuse_scan_scope_if_unspecified(&mut request);
         let budgets = match self.config.scan.budgets.limits() {
             Ok(budgets) => budgets,
             Err(error) => {
@@ -317,12 +309,17 @@ impl Workbench {
             budgets,
             ..ScanOptions::default()
         };
+        let preselect_after_days = self.effective_inactive_days(request.inactive_days);
+        if let Err(error) = RecommendationPolicy::new(preselect_after_days) {
+            self.status = error.to_string();
+            return;
+        }
         self.next_scan_job_id = self.next_scan_job_id.wrapping_add(1);
         let job_id = self.next_scan_job_id;
         let preparation = ScanPreparation {
             registry: Arc::clone(&self.registry),
             safety_policy: self.safety_policy(),
-            preselect_after_days: self.config.recommendations.preselect_after_days,
+            preselect_after_days,
             // A normal scan needs evidence and a cleanup plan, but usage remains view-demanded.
             prepare_usage: view == View::Usage,
         };
@@ -379,6 +376,21 @@ impl Workbench {
         self.list_state.select(None);
         self.status = self.i18n.t("status_scan_resolving");
         self.task_log.push(self.i18n.t("status_scan_started"));
+    }
+
+    pub(crate) fn reuse_scan_scope_if_unspecified(&self, request: &mut ScanRequest) {
+        if !request.paths.is_empty() || request.include_global {
+            return;
+        }
+        if self.scan_explicit_roots.is_empty()
+            && self.scan_global_evidence.requested_kinds.is_empty()
+        {
+            request.paths = self.roots.clone();
+            return;
+        }
+        request.paths = self.scan_explicit_roots.clone();
+        request.global_kinds = self.scan_global_evidence.requested_kinds.clone();
+        request.include_global = !request.global_kinds.is_empty();
     }
 
     pub(crate) fn cancel_scan(&mut self) {

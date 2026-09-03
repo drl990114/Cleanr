@@ -8,14 +8,13 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use cleanr_config::{Config, default_config_path, default_state_dir};
 use cleanr_core::{
-    AnalysisReport, AnalysisScanContext, CleanupPlan, CleanupPlanBuildError, GlobalScanEvidence,
-    RecommendationPolicy, RecommendationState, SafetyPolicy, ScanRequest, UserSelection,
-    build_analysis_report_with_scan_context, build_cleanup_plan_from_analysis,
-    suppress_unrequested_global_candidates,
+    AnalysisReport, AnalysisScanContext, CleanupPlan, CleanupPlanBuildError, CleanupPlanScanScope,
+    GlobalScanEvidence, RecommendationPolicy, RecommendationState, SafetyPolicy, ScanRequest,
+    UserSelection, build_analysis_report_with_scan_context, build_cleanup_plan_from_analysis,
 };
 use cleanr_fs::{
-    ScanOptions, ScanReport, global_scan_evidence, resolve_scan_roots_with_locations,
-    scan_resolved_paths_started_at,
+    ResolvedScanRoots, ScanOptions, ScanReport, global_scan_evidence,
+    resolve_scan_roots_with_locations, scan_resolved_paths_started_at,
 };
 use cleanr_rules::RuleRegistry;
 use cleanr_tasks::{
@@ -68,6 +67,7 @@ pub struct CleanCommand {
 struct WorkflowScan {
     config: Config,
     config_path: Option<PathBuf>,
+    recommendation_policy: RecommendationPolicy,
     registry: RuleRegistry,
     roots: Vec<PathBuf>,
     explicit_roots: Vec<PathBuf>,
@@ -84,14 +84,9 @@ pub fn scan(command: ScanCommand) -> Result<()> {
     if command.json {
         print_scan_json(&scan.report)?;
     } else {
-        let candidates = scan
-            .report
-            .entries
-            .iter()
-            .filter(|entry| !entry.rule_hits.is_empty())
-            .count();
+        let candidates = inactivity_qualified_candidate_count(&scan)?;
         println!(
-            "Scanned {} entrie(s), found {} candidate(s), total size {}.",
+            "Scanned {} entrie(s), found {} modification-age-qualified candidate(s), total size {}.",
             scan.report.summary.entries_seen,
             candidates,
             format_bytes(scan.report.summary.total_size_bytes)
@@ -117,7 +112,7 @@ pub fn analyze(command: AnalyzeCommand) -> Result<()> {
         ScanPreparationMode::Evidence,
     )?;
     let safety = safety_policy(&scan.config, scan.config_path.clone());
-    let report = build_analysis_report(&scan, recommendation_policy(&scan.config)?, &safety)?;
+    let report = build_analysis_report(&scan, &safety)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }
@@ -186,11 +181,25 @@ pub fn clean(command: CleanCommand) -> Result<()> {
         bail!("cleanup plan has no selected items");
     }
 
-    let scan = run_scan(
+    let recommendation_policy = expected_plan
+        .source_scan
+        .as_ref()
+        .and_then(|source| source.recommendation_policy.clone());
+    let rescan_request = expected_plan
+        .source_scan
+        .as_ref()
+        .and_then(|source| source.scope.as_ref())
+        .map_or_else(
+            || ScanRequest::paths(expected_plan.scan_roots.clone()),
+            CleanupPlanScanScope::to_scan_request,
+        );
+    let mut scan = run_scan_with_recommendation_policy(
         command.config_path,
-        ScanRequest::paths(expected_plan.scan_roots.clone()),
+        rescan_request,
         ScanPreparationMode::Planning,
+        recommendation_policy,
     )?;
+    apply_legacy_plan_policy_compatibility(&expected_plan, &mut scan);
     let selected_paths = expected_plan
         .items
         .iter()
@@ -272,20 +281,32 @@ fn run_scan(
     request: ScanRequest,
     preparation_mode: ScanPreparationMode,
 ) -> Result<WorkflowScan> {
+    run_scan_with_recommendation_policy(config_path, request, preparation_mode, None)
+}
+
+fn run_scan_with_recommendation_policy(
+    config_path: Option<PathBuf>,
+    request: ScanRequest,
+    preparation_mode: ScanPreparationMode,
+    policy_override: Option<RecommendationPolicy>,
+) -> Result<WorkflowScan> {
     let config_path_for_policy = config_path.clone().or_else(default_config_path);
     let config = load_config(config_path)?;
+    let recommendation_policy = match policy_override {
+        Some(policy) => {
+            policy.validate()?;
+            policy
+        }
+        None => recommendation_policy(&config, request.inactive_days)?,
+    };
     let registry = RuleRegistry::load(&config)?;
     let scan_started_at = Instant::now();
-    let explicit_roots = request
-        .paths
-        .iter()
-        .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
-        .collect();
     let resolved = resolve_scan_roots_with_locations(
         &request,
         &config.scan.global_kinds,
         registry.scan_locations(),
     )?;
+    let explicit_roots = semantic_explicit_roots(&request, &resolved);
     let options = ScanOptions {
         stay_on_filesystem: config.scan.stay_on_filesystem,
         ignore_dirs: config.scan.ignore_dirs.clone(),
@@ -307,6 +328,7 @@ fn run_scan(
     Ok(WorkflowScan {
         config,
         config_path: config_path_for_policy,
+        recommendation_policy,
         registry,
         roots,
         explicit_roots,
@@ -315,26 +337,49 @@ fn run_scan(
     })
 }
 
-fn build_analysis_report(
-    scan: &WorkflowScan,
-    policy: RecommendationPolicy,
-    safety: &SafetyPolicy,
-) -> Result<AnalysisReport> {
-    let mut report = build_analysis_report_with_scan_context(
+fn semantic_explicit_roots(request: &ScanRequest, resolved: &ResolvedScanRoots) -> Vec<PathBuf> {
+    if request.paths.is_empty() && !request.include_global {
+        return resolved.roots.clone();
+    }
+    request
+        .paths
+        .iter()
+        .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
+        .collect()
+}
+
+fn build_analysis_report(scan: &WorkflowScan, safety: &SafetyPolicy) -> Result<AnalysisReport> {
+    Ok(build_analysis_report_with_scan_context(
         scan.report.as_of,
         Utc::now(),
         scan.roots.clone(),
         &scan.report.entries,
         &scan.report.issues,
-        policy,
+        scan.recommendation_policy.clone(),
         AnalysisScanContext {
             budget_exceeded: &scan.report.budget_exceeded,
             safety_policy: Some(safety),
+            global: Some(&scan.global_scan),
+            explicit_roots: &scan.explicit_roots,
         },
-    )?;
-    report.scan.global = scan.global_scan.clone();
-    suppress_unrequested_global_candidates(&mut report, &scan.explicit_roots);
-    Ok(report)
+    )?)
+}
+
+fn inactivity_qualified_candidate_count(scan: &WorkflowScan) -> Result<usize> {
+    let safety = safety_policy(&scan.config, scan.config_path.clone());
+    let analysis = build_analysis_report(scan, &safety)?;
+    Ok(analysis
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            !matches!(
+                candidate.recommendation.state,
+                RecommendationState::Suppressed | RecommendationState::Excluded
+            ) && analysis
+                .policy
+                .activity_meets_inactivity_threshold(&candidate.activity)
+        })
+        .count())
 }
 
 enum PlanSelection {
@@ -347,14 +392,14 @@ fn build_plan(scan: &WorkflowScan, requested_selection: PlanSelection) -> Result
         return Err(CleanupPlanBuildError::ScanBudgetExceeded.into());
     }
     let safety = safety_policy(&scan.config, scan.config_path.clone());
-    let analysis = build_analysis_report(scan, recommendation_policy(&scan.config)?, &safety)?;
+    let analysis = build_analysis_report(scan, &safety)?;
     let selection = match requested_selection {
         PlanSelection::Recommendations(overrides) => {
             selection_with_overrides(&analysis, overrides)?
         }
         PlanSelection::ExactPaths(paths) => exact_selection(&analysis, &paths)?,
     };
-    build_cleanup_plan_from_analysis(
+    let mut plan = build_cleanup_plan_from_analysis(
         scan.roots.clone(),
         scan.registry.versions(),
         &scan.report.entries,
@@ -362,7 +407,14 @@ fn build_plan(scan: &WorkflowScan, requested_selection: PlanSelection) -> Result
         &selection,
         &safety,
     )
-    .context("failed to build cleanup plan from analysis")
+    .context("failed to build cleanup plan from analysis")?;
+    if let Some(source) = plan.source_scan.as_mut() {
+        source.scope = Some(CleanupPlanScanScope::new(
+            scan.explicit_roots.clone(),
+            scan.global_scan.requested_kinds.clone(),
+        ));
+    }
+    Ok(plan)
 }
 
 fn selection_with_overrides(
@@ -377,6 +429,7 @@ fn selection_with_overrides(
             path.display()
         );
     }
+    reject_overlapping_explicit_selections(&select_paths)?;
 
     let mut selection = UserSelection::from_recommendations(analysis);
     for path in deselect_paths {
@@ -385,9 +438,44 @@ fn selection_with_overrides(
     }
     for path in select_paths {
         let candidate = selectable_candidate_for_path(analysis, &path)?;
+        let overlapping_ids = analysis
+            .candidates
+            .iter()
+            .filter(|overlapping| {
+                overlapping.id != candidate.id
+                    && selection.candidate_ids.contains(&overlapping.id)
+                    && cleanup_paths_overlap(&candidate.local_path, &overlapping.local_path)
+            })
+            .map(|overlapping| overlapping.id.clone())
+            .collect::<Vec<_>>();
+        for overlapping_id in overlapping_ids {
+            selection.deselect(&overlapping_id);
+        }
         selection.select(candidate.id.clone());
     }
     Ok(selection)
+}
+
+fn reject_overlapping_explicit_selections(paths: &BTreeSet<PathBuf>) -> Result<()> {
+    let paths = paths.iter().collect::<Vec<_>>();
+    for (index, left) in paths.iter().enumerate() {
+        if let Some(right) = paths
+            .iter()
+            .skip(index + 1)
+            .find(|right| cleanup_paths_overlap(left, right))
+        {
+            bail!(
+                "explicitly selected candidate paths overlap: {} and {}",
+                left.display(),
+                right.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_paths_overlap(left: &Path, right: &Path) -> bool {
+    left.starts_with(right) || right.starts_with(left)
 }
 
 fn exact_selection(analysis: &AnalysisReport, paths: &[PathBuf]) -> Result<UserSelection> {
@@ -464,15 +552,24 @@ fn ensure_plan_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> Resul
         && expected.scan_roots == current.scan_roots
         && expected.ruleset_versions == current.ruleset_versions
         && source_scan_provenance_unchanged(expected, current)
-        && expected.summary == current.summary
-        && expected.items == current.items
+        && selected_plan_projection_unchanged(expected, current)
         && expected.safety == current.safety;
     if !unchanged {
         bail!(
-            "cleanup plan changed after authorization; generate, review, and authorize a new plan"
+            "selected cleanup targets or safety provenance changed after authorization; generate, review, and authorize a new plan"
         );
     }
     Ok(())
+}
+
+fn selected_plan_projection_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> bool {
+    expected.summary.selected_count == current.summary.selected_count
+        && expected.summary.selected_size_bytes == current.summary.selected_size_bytes
+        && expected
+            .items
+            .iter()
+            .filter(|item| item.selected)
+            .eq(current.items.iter().filter(|item| item.selected))
 }
 
 fn ensure_plan_source_scan_is_executable(plan: &CleanupPlan) -> Result<()> {
@@ -488,25 +585,48 @@ fn ensure_plan_source_scan_is_executable(plan: &CleanupPlan) -> Result<()> {
     Ok(())
 }
 
+fn apply_legacy_plan_policy_compatibility(expected: &CleanupPlan, scan: &mut WorkflowScan) {
+    if expected
+        .source_scan
+        .as_ref()
+        .is_none_or(|source| source.recommendation_policy.is_none())
+    {
+        // Policy v1 filtered only automatic preselection. Rebuild that projection when validating
+        // an older plan, while every selected item and fingerprint still must match exactly.
+        scan.recommendation_policy.version = "v1".to_string();
+    }
+}
+
 fn source_scan_provenance_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> bool {
     match (&expected.source_scan, &current.source_scan) {
         (None, None) => true,
         (Some(expected), Some(current)) => {
             expected.integrity == current.integrity
                 && expected.budget_exceeded == current.budget_exceeded
+                && expected
+                    .recommendation_policy
+                    .as_ref()
+                    .is_none_or(|policy| current.recommendation_policy.as_ref() == Some(policy))
+                && expected
+                    .scope
+                    .as_ref()
+                    .is_none_or(|scope| current.scope.as_ref() == Some(scope))
         }
         // Plans written before source-scan provenance was added remain executable only when the
         // fresh scan has no budget ledger. The current builder already refuses budget-limited
-        // analysis, while the rest of `ensure_plan_unchanged` still compares every plan item and
-        // safety field. A new plan losing provenance remains a downgrade and is rejected.
+        // analysis, while the rest of `ensure_plan_unchanged` still compares every selected plan
+        // item and safety field. A new plan losing provenance remains a downgrade and is rejected.
         (None, Some(current)) => current.budget_exceeded.is_empty(),
         (Some(_), None) => false,
     }
 }
 
-fn recommendation_policy(config: &Config) -> Result<RecommendationPolicy> {
+fn recommendation_policy(
+    config: &Config,
+    inactive_days: Option<u16>,
+) -> Result<RecommendationPolicy> {
     Ok(RecommendationPolicy::new(
-        config.recommendations.preselect_after_days,
+        inactive_days.unwrap_or(config.recommendations.preselect_after_days),
     )?)
 }
 
@@ -605,10 +725,11 @@ fn format_bytes(bytes: u64) -> String {
 mod tests {
     use super::*;
     use cleanr_core::{
-        Confidence, DecisionCode, EntryKind, GlobalScanKind, ReportIntegrity, RuleHit,
-        RuleMatchRole, RuleTrust, ScanBudgetExceeded, ScanEntry, ScanIssue, ScanIssueCode,
+        CleanupItem, CleanupItemFingerprint, Confidence, DecisionCode, EntryKind, GlobalScanKind,
+        PlanSummary, PlannedAction, ReportIntegrity, RuleHit, RuleMatchRole, RuleTrust,
+        ScanBudgetExceeded, ScanEntry, ScanIssue, ScanIssueCode,
     };
-    use cleanr_fs::{GlobalScanRoot, ResolvedScanRoots, ScanError};
+    use cleanr_fs::{GlobalScanRoot, ScanError};
 
     #[test]
     fn scan_json_separates_structured_issues_from_local_diagnostics() {
@@ -700,6 +821,266 @@ mod tests {
     }
 
     #[test]
+    fn request_inactivity_override_wins_without_mutating_config() {
+        let mut config = Config::default();
+        config.recommendations.preselect_after_days = 180;
+
+        let configured = recommendation_policy(&config, None).expect("configured policy");
+        let overridden = recommendation_policy(&config, Some(30)).expect("one-scan override");
+
+        assert_eq!(configured.preselect_after_days, 180);
+        assert_eq!(overridden.preselect_after_days, 30);
+        assert_eq!(config.recommendations.preselect_after_days, 180);
+        assert!(recommendation_policy(&config, Some(3651)).is_err());
+    }
+
+    #[test]
+    fn default_local_scope_materializes_the_resolved_working_directory() {
+        let original_working_directory = PathBuf::from("/original/working-directory");
+        let request = ScanRequest::default();
+        let resolved = ResolvedScanRoots {
+            roots: vec![original_working_directory.clone()],
+            ..ResolvedScanRoots::default()
+        };
+
+        let scope =
+            CleanupPlanScanScope::new(semantic_explicit_roots(&request, &resolved), Vec::new());
+        let rescan_request = scope.to_scan_request();
+
+        assert_eq!(scope.explicit_roots, vec![original_working_directory]);
+        assert_eq!(rescan_request.paths, scope.explicit_roots);
+        assert!(!rescan_request.include_global);
+    }
+
+    #[test]
+    fn effective_policy_filters_summary_and_plan_but_preserves_raw_evidence() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let inactive_path = temp.path().join("inactive-cache");
+        let recent_path = temp.path().join("recent-cache");
+        std::fs::create_dir(&inactive_path)?;
+        std::fs::create_dir(&recent_path)?;
+        let as_of = Utc::now();
+        let hit = |rule_id: &str| RuleHit {
+            rule_pack_id: "builtin-test".to_string(),
+            rule_id: rule_id.to_string(),
+            label: rule_id.to_string(),
+            category: "cache".to_string(),
+            confidence: Confidence::High,
+            reason: "rebuildable".to_string(),
+            risk_note: "rebuild".to_string(),
+            default_selected: true,
+            trust: RuleTrust::Builtin,
+            match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
+        };
+        let mut config = Config::default();
+        config.recommendations.preselect_after_days = 180;
+        let scan = WorkflowScan {
+            config: config.clone(),
+            config_path: None,
+            recommendation_policy: RecommendationPolicy::new(30)?,
+            registry: RuleRegistry::builtin()?,
+            roots: vec![temp.path().to_path_buf()],
+            explicit_roots: vec![temp.path().to_path_buf()],
+            global_scan: GlobalScanEvidence::default(),
+            report: ScanReport {
+                as_of,
+                entries: vec![
+                    ScanEntry {
+                        path: inactive_path.clone(),
+                        kind: EntryKind::Directory,
+                        size_bytes: 10,
+                        modified_at: Some(as_of - chrono::Duration::days(31)),
+                        rule_hits: vec![hit("inactive")],
+                    },
+                    ScanEntry {
+                        path: recent_path.clone(),
+                        kind: EntryKind::Directory,
+                        size_bytes: 20,
+                        modified_at: Some(as_of - chrono::Duration::days(29)),
+                        rule_hits: vec![hit("recent")],
+                    },
+                ],
+                ..ScanReport::default()
+            },
+        };
+
+        let safety = safety_policy(&config, None);
+        let analysis = build_analysis_report(&scan, &safety)?;
+        assert_eq!(analysis.policy.preselect_after_days, 30);
+        assert_eq!(analysis.candidates.len(), 2);
+        assert_eq!(
+            scan_json_value(&scan.report)["entries"]
+                .as_array()
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(inactivity_qualified_candidate_count(&scan)?, 1);
+
+        let recommended = build_plan(
+            &scan,
+            PlanSelection::Recommendations(SelectionOverrides::default()),
+        )?;
+        assert_eq!(recommended.summary.candidate_count, 1);
+        assert_eq!(recommended.items[0].path, inactive_path);
+        assert_eq!(
+            recommended
+                .source_scan
+                .as_ref()
+                .and_then(|source| source.recommendation_policy.as_ref()),
+            Some(&scan.recommendation_policy)
+        );
+
+        let explicitly_selected = build_plan(
+            &scan,
+            PlanSelection::Recommendations(SelectionOverrides {
+                select_paths: vec![recent_path.clone()],
+                deselect_paths: Vec::new(),
+            }),
+        )?;
+        assert_eq!(explicitly_selected.summary.candidate_count, 2);
+        assert!(
+            explicitly_selected
+                .items
+                .iter()
+                .any(|item| item.path == recent_path && item.selected)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn saved_policy_override_is_reused_exactly_for_rescan() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let config_path = temp.path().join("config.toml");
+        let mut config = Config::default();
+        config.recommendations.preselect_after_days = 180;
+        config.save_to(&config_path)?;
+        let saved_policy = RecommendationPolicy {
+            version: "v1".to_string(),
+            preselect_after_days: 30,
+            strict_report_integrity: false,
+        };
+
+        let scan = run_scan_with_recommendation_policy(
+            Some(config_path.clone()),
+            ScanRequest::paths(vec![temp.path().to_path_buf()]),
+            ScanPreparationMode::Planning,
+            Some(saved_policy.clone()),
+        )?;
+
+        assert_eq!(scan.recommendation_policy, saved_policy);
+        assert_eq!(scan.config.recommendations.preselect_after_days, 180);
+        let unknown_policy = RecommendationPolicy {
+            version: "future-v99".to_string(),
+            ..RecommendationPolicy::default()
+        };
+        let error = run_scan_with_recommendation_policy(
+            Some(config_path),
+            ScanRequest::paths(vec![temp.path().to_path_buf()]),
+            ScanPreparationMode::Planning,
+            Some(unknown_policy),
+        )
+        .err()
+        .context("unknown saved policy must fail closed")?;
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported recommendation policy")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn policyless_v1_plan_rebuild_keeps_recent_unselected_candidates() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().canonicalize()?;
+        let recent_path = root.join("recent-cache");
+        let inactive_path = root.join("inactive-cache");
+        std::fs::create_dir(&recent_path)?;
+        std::fs::create_dir(&inactive_path)?;
+        let as_of = Utc::now();
+        let hit = RuleHit {
+            rule_pack_id: "builtin-test".to_string(),
+            rule_id: "cache".to_string(),
+            label: "Cache".to_string(),
+            category: "cache".to_string(),
+            confidence: Confidence::High,
+            reason: "rebuildable".to_string(),
+            risk_note: "rebuild".to_string(),
+            default_selected: true,
+            trust: RuleTrust::Builtin,
+            match_role: RuleMatchRole::Primary,
+            sources: Vec::new(),
+        };
+        let entries = vec![
+            ScanEntry {
+                path: recent_path.clone(),
+                kind: EntryKind::Directory,
+                size_bytes: 1,
+                modified_at: Some(as_of - chrono::Duration::days(1)),
+                rule_hits: vec![hit.clone()],
+            },
+            ScanEntry {
+                path: inactive_path.clone(),
+                kind: EntryKind::Directory,
+                size_bytes: 1,
+                modified_at: Some(as_of - chrono::Duration::days(100)),
+                rule_hits: vec![hit],
+            },
+        ];
+        let make_scan = |recommendation_policy: RecommendationPolicy| -> Result<WorkflowScan> {
+            Ok(WorkflowScan {
+                config: Config::default(),
+                config_path: None,
+                recommendation_policy,
+                registry: RuleRegistry::builtin()?,
+                roots: vec![root.clone()],
+                explicit_roots: vec![root.clone()],
+                global_scan: GlobalScanEvidence::default(),
+                report: ScanReport {
+                    as_of,
+                    entries: entries.clone(),
+                    ..ScanReport::default()
+                },
+            })
+        };
+        let legacy_policy = RecommendationPolicy {
+            version: "v1".to_string(),
+            ..RecommendationPolicy::default()
+        };
+        let legacy_scan = make_scan(legacy_policy)?;
+        let mut expected = build_plan(
+            &legacy_scan,
+            PlanSelection::Recommendations(SelectionOverrides::default()),
+        )?;
+        assert_eq!(expected.summary.candidate_count, 2);
+        assert_eq!(expected.summary.selected_count, 1);
+        let source = expected
+            .source_scan
+            .as_mut()
+            .context("analysis-backed plan")?;
+        source.recommendation_policy = None;
+        source.scope = None;
+
+        let mut current_scan = make_scan(RecommendationPolicy::default())?;
+        apply_legacy_plan_policy_compatibility(&expected, &mut current_scan);
+        assert_eq!(current_scan.recommendation_policy.version, "v1");
+        let current = build_plan(
+            &current_scan,
+            PlanSelection::ExactPaths(vec![inactive_path]),
+        )?;
+
+        ensure_plan_unchanged(&expected, &current)?;
+        assert!(
+            current
+                .items
+                .iter()
+                .any(|item| item.path == recent_path && !item.selected)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn analysis_json_preserves_requested_global_kinds_and_named_locations() {
         let scan_root = PathBuf::from("/tmp/cleanr-cache");
         let pnpm = scan_root.join("pnpm");
@@ -750,6 +1131,7 @@ mod tests {
         let scan = WorkflowScan {
             config: config.clone(),
             config_path: None,
+            recommendation_policy: RecommendationPolicy::default(),
             registry: RuleRegistry::builtin().expect("builtin registry"),
             roots: resolved.roots,
             explicit_roots: Vec::new(),
@@ -757,12 +1139,8 @@ mod tests {
             report: ScanReport::default(),
         };
 
-        let report = build_analysis_report(
-            &scan,
-            RecommendationPolicy::default(),
-            &safety_policy(&config, None),
-        )
-        .expect("analysis report");
+        let report =
+            build_analysis_report(&scan, &safety_policy(&config, None)).expect("analysis report");
         let value = serde_json::to_value(report).expect("analysis JSON");
 
         assert_eq!(
@@ -815,6 +1193,7 @@ mod tests {
         let scan = WorkflowScan {
             config: config.clone(),
             config_path: None,
+            recommendation_policy: RecommendationPolicy::default(),
             registry: RuleRegistry::builtin().expect("builtin registry"),
             roots: resolved.roots,
             explicit_roots: Vec::new(),
@@ -844,12 +1223,8 @@ mod tests {
             },
         };
 
-        let analysis = build_analysis_report(
-            &scan,
-            RecommendationPolicy::default(),
-            &safety_policy(&config, None),
-        )
-        .expect("analysis report");
+        let analysis =
+            build_analysis_report(&scan, &safety_policy(&config, None)).expect("analysis report");
 
         assert_eq!(
             analysis.candidates[0].recommendation.state,
@@ -868,6 +1243,17 @@ mod tests {
         .expect("cleanup plan");
         assert_eq!(plan.summary.candidate_count, 0);
         assert_eq!(plan.summary.selected_count, 0);
+        let scope = plan
+            .source_scan
+            .as_ref()
+            .and_then(|source| source.scope.as_ref())
+            .expect("plan retains semantic global scope");
+        assert!(scope.explicit_roots.is_empty());
+        assert_eq!(scope.global_kinds, vec![GlobalScanKind::AppCaches]);
+        let rescan_request = scope.to_scan_request();
+        assert!(rescan_request.include_global);
+        assert!(rescan_request.paths.is_empty());
+        assert_eq!(rescan_request.global_kinds, vec![GlobalScanKind::AppCaches]);
     }
 
     #[test]
@@ -884,18 +1270,15 @@ mod tests {
         let scan = WorkflowScan {
             config: config.clone(),
             config_path: None,
+            recommendation_policy: RecommendationPolicy::default(),
             registry: RuleRegistry::builtin().expect("builtin registry"),
             roots,
             explicit_roots: vec![PathBuf::from("/tmp/project")],
             global_scan: evidence.clone(),
             report: ScanReport::default(),
         };
-        let report = build_analysis_report(
-            &scan,
-            RecommendationPolicy::default(),
-            &safety_policy(&config, None),
-        )
-        .expect("analysis report");
+        let report =
+            build_analysis_report(&scan, &safety_policy(&config, None)).expect("analysis report");
         let value = serde_json::to_value(report).expect("analysis JSON");
 
         assert_eq!(evidence, GlobalScanEvidence::default());
@@ -911,6 +1294,7 @@ mod tests {
         let scan = WorkflowScan {
             config: config.clone(),
             config_path: None,
+            recommendation_policy: RecommendationPolicy::default(),
             registry: RuleRegistry::builtin().expect("builtin registry"),
             roots: Vec::new(),
             explicit_roots: Vec::new(),
@@ -918,12 +1302,8 @@ mod tests {
             report: ScanReport::default(),
         };
 
-        let report = build_analysis_report(
-            &scan,
-            RecommendationPolicy::default(),
-            &safety_policy(&config, None),
-        )
-        .expect("analysis report");
+        let report =
+            build_analysis_report(&scan, &safety_policy(&config, None)).expect("analysis report");
         let value = serde_json::to_value(report).expect("analysis JSON");
 
         assert_eq!(
@@ -995,11 +1375,203 @@ mod tests {
             });
         assert!(ensure_plan_unchanged(&expected, &changed_budget).is_err());
 
+        let mut changed_policy = current.clone();
+        changed_policy
+            .source_scan
+            .as_mut()
+            .context("current plan should retain source scan provenance")?
+            .recommendation_policy = Some(RecommendationPolicy::new(30)?);
+        assert!(ensure_plan_unchanged(&expected, &changed_policy).is_err());
+
+        let mut changed_scope = current.clone();
+        changed_scope
+            .source_scan
+            .as_mut()
+            .context("current plan should retain source scan provenance")?
+            .scope = Some(CleanupPlanScanScope::new(
+            Vec::new(),
+            vec![GlobalScanKind::BrowserCaches],
+        ));
+        assert!(ensure_plan_unchanged(&expected, &changed_scope).is_err());
+
+        let mut policyless_expected = expected.clone();
+        policyless_expected
+            .source_scan
+            .as_mut()
+            .context("expected plan should retain source scan provenance")?
+            .recommendation_policy = None;
+        ensure_plan_unchanged(&policyless_expected, &current)?;
+
         current.summary.selected_count = 1;
         let error = ensure_plan_unchanged(&expected, &current)
             .err()
             .context("changed plan must be rejected")?;
         assert!(error.to_string().contains("changed after authorization"));
+        Ok(())
+    }
+
+    #[test]
+    fn plan_revalidation_ignores_unselected_candidate_drift() -> Result<()> {
+        let mut expected = empty_analysis_backed_plan()?;
+        let selected = CleanupItem {
+            path: PathBuf::from("/repo/selected-cache"),
+            kind: EntryKind::Directory,
+            size_bytes: 10,
+            modified_at: None,
+            tree_fingerprint: Some(CleanupItemFingerprint {
+                descendants: 1,
+                total_size_bytes: 10,
+                latest_modified_at: None,
+            }),
+            rule_id: "builtin-test:selected".to_string(),
+            category: "cache".to_string(),
+            confidence: Confidence::High,
+            reason: "selected candidate".to_string(),
+            risk_note: "rebuildable".to_string(),
+            evidence: None,
+            selected: true,
+            planned_action: PlannedAction::Trash,
+            rollback_method: "system-trash+manifest".to_string(),
+        };
+        let mut unselected = selected.clone();
+        unselected.path = PathBuf::from("/repo/unselected-cache");
+        unselected.size_bytes = 20;
+        unselected.tree_fingerprint = Some(CleanupItemFingerprint {
+            descendants: 2,
+            total_size_bytes: 20,
+            latest_modified_at: None,
+        });
+        unselected.reason = "unselected candidate".to_string();
+        unselected.selected = false;
+        expected.items = vec![selected, unselected];
+        expected.summary = PlanSummary {
+            candidate_count: 2,
+            selected_count: 1,
+            selected_size_bytes: 10,
+            total_candidate_size_bytes: 30,
+        };
+
+        let mut changed_unselected = expected.clone();
+        changed_unselected.items[1].size_bytes = 25;
+        changed_unselected.items[1].reason = "updated unrelated evidence".to_string();
+        changed_unselected.summary.total_candidate_size_bytes = 35;
+        ensure_plan_unchanged(&expected, &changed_unselected)?;
+
+        let mut added_unselected = changed_unselected.clone();
+        let mut new_candidate = added_unselected.items[1].clone();
+        new_candidate.path = PathBuf::from("/repo/new-unselected-cache");
+        new_candidate.size_bytes = 5;
+        added_unselected.items.push(new_candidate);
+        added_unselected.summary.candidate_count = 3;
+        added_unselected.summary.total_candidate_size_bytes = 40;
+        ensure_plan_unchanged(&expected, &added_unselected)?;
+
+        let mut removed_unselected = expected.clone();
+        removed_unselected.items.retain(|item| item.selected);
+        removed_unselected.summary.candidate_count = 1;
+        removed_unselected.summary.total_candidate_size_bytes = 10;
+        ensure_plan_unchanged(&expected, &removed_unselected)?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_revalidation_rejects_selected_target_drift() -> Result<()> {
+        let mut expected = empty_analysis_backed_plan()?;
+        expected.items.push(CleanupItem {
+            path: PathBuf::from("/repo/selected-cache"),
+            kind: EntryKind::Directory,
+            size_bytes: 10,
+            modified_at: None,
+            tree_fingerprint: Some(CleanupItemFingerprint {
+                descendants: 1,
+                total_size_bytes: 10,
+                latest_modified_at: None,
+            }),
+            rule_id: "builtin-test:selected".to_string(),
+            category: "cache".to_string(),
+            confidence: Confidence::High,
+            reason: "selected candidate".to_string(),
+            risk_note: "rebuildable".to_string(),
+            evidence: None,
+            selected: true,
+            planned_action: PlannedAction::Trash,
+            rollback_method: "system-trash+manifest".to_string(),
+        });
+        expected.summary = PlanSummary {
+            candidate_count: 1,
+            selected_count: 1,
+            selected_size_bytes: 10,
+            total_candidate_size_bytes: 10,
+        };
+
+        let mut changed_target = expected.clone();
+        changed_target.items[0]
+            .tree_fingerprint
+            .as_mut()
+            .context("directory fingerprint")?
+            .descendants = 2;
+        assert!(ensure_plan_unchanged(&expected, &changed_target).is_err());
+
+        let mut changed_selected_summary = expected.clone();
+        changed_selected_summary.summary.selected_size_bytes = 11;
+        assert!(ensure_plan_unchanged(&expected, &changed_selected_summary).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rescan_allows_unselected_filesystem_drift_but_rejects_selected_tree_drift() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().canonicalize()?;
+        let selected_path = root.join("selected-project/node_modules");
+        let unselected_path = root.join("unselected-project/node_modules");
+        std::fs::create_dir_all(&selected_path)?;
+        std::fs::create_dir_all(&unselected_path)?;
+        std::fs::File::create(selected_path.join("payload"))?.set_len(1_048_576)?;
+        std::fs::File::create(unselected_path.join("payload"))?.set_len(1_048_576)?;
+        let request = ScanRequest {
+            inactive_days: Some(0),
+            ..ScanRequest::paths(vec![root])
+        };
+
+        let initial_scan = run_scan(None, request.clone(), ScanPreparationMode::Planning)?;
+        let expected = build_plan(
+            &initial_scan,
+            PlanSelection::Recommendations(SelectionOverrides {
+                select_paths: Vec::new(),
+                deselect_paths: vec![unselected_path.clone()],
+            }),
+        )?;
+        assert!(
+            expected
+                .items
+                .iter()
+                .any(|item| item.path == selected_path && item.selected)
+        );
+        assert!(
+            expected
+                .items
+                .iter()
+                .any(|item| item.path == unselected_path && !item.selected)
+        );
+
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(unselected_path.join("payload"))?
+            .set_len(1_048_577)?;
+        let unselected_drift_scan = run_scan(None, request.clone(), ScanPreparationMode::Planning)?;
+        let unselected_drift_plan = build_plan(
+            &unselected_drift_scan,
+            PlanSelection::ExactPaths(vec![selected_path.clone()]),
+        )?;
+        ensure_plan_unchanged(&expected, &unselected_drift_plan)?;
+
+        std::fs::File::create(selected_path.join("new-payload"))?.set_len(1)?;
+        let selected_drift_scan = run_scan(None, request, ScanPreparationMode::Planning)?;
+        let selected_drift_plan = build_plan(
+            &selected_drift_scan,
+            PlanSelection::ExactPaths(vec![selected_path]),
+        )?;
+        assert!(ensure_plan_unchanged(&expected, &selected_drift_plan).is_err());
         Ok(())
     }
 
@@ -1124,6 +1696,7 @@ mod tests {
         let scan = WorkflowScan {
             config,
             config_path: None,
+            recommendation_policy: RecommendationPolicy::default(),
             registry: RuleRegistry::builtin()?,
             roots: vec![PathBuf::from("/repo")],
             explicit_roots: vec![PathBuf::from("/repo")],

@@ -325,12 +325,22 @@ impl Workbench {
     }
 
     pub(crate) fn submit_slash_input(&mut self, input: &str) {
-        if let Ok(action) = parse_slash_command(input) {
-            self.status = self.i18n.format(
-                "status_queued",
-                &[("command", command_name_for_status(&action).to_string())],
-            );
-            self.dispatch(action);
+        let parse_error = match parse_slash_command(input) {
+            Ok(action) => {
+                self.status = self.i18n.format(
+                    "status_queued",
+                    &[("command", command_name_for_status(&action).to_string())],
+                );
+                self.dispatch(action);
+                return;
+            }
+            Err(error) => error,
+        };
+
+        // Palette fallback is only for fuzzy command-name completion. Once the user supplied an
+        // argument, silently falling back could execute a command after rejecting its options.
+        if input.split_whitespace().nth(1).is_some() {
+            self.status = localized_command_error(&parse_error, &self.i18n);
             return;
         }
 

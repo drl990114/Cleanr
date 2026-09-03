@@ -69,23 +69,30 @@ blocker and link to the Cleanr releases page.
 Before cleanup planning or execution, also run `cleanr clean --help`. If the
 installed version lacks delegated cleanup support, finish the evidence review
 and explain that execution requires a user-approved upgrade. Do not improvise.
+When the request relies on a one-run inactivity override, also verify that
+`cleanr analyze --help` lists `--inactive-days`; if it does not, do not silently
+substitute a persistent configuration change.
 
 ## Stage 3 — Analyze once
 
-Only when the user explicitly asks to change the shared age policy, set it
+Only when the user explicitly asks to persist a new shared age policy, set it
 before analysis:
 
 ```bash
 cleanr config set recommendations.preselect_after_days 90
 ```
 
-Allow `0` or `1..=3650`. Zero disables only the age gate; it does not bypass
-incomplete evidence, trust, conflicts, overlap handling, or protected paths.
+Allow `0` or `1..=3650`. Zero removes the plan's age filter and disables the
+preselection age gate; it does not bypass incomplete evidence, trust, conflicts,
+overlap handling, or protected paths.
 
-Run the narrowest approved read-only analysis:
+Run the narrowest approved read-only analysis exactly once. Use the first form
+for the configured threshold, or the second for a one-run override that leaves
+the configuration unchanged:
 
 ```bash
 cleanr analyze /approved/local/root
+cleanr analyze --inactive-days 90 /approved/local/root
 ```
 
 Use `--config` only for a user-provided or approved configuration. Add approved
@@ -98,14 +105,18 @@ the local destination; never place a report inside a scanned root.
 In this order:
 
 1. Require a supported `schema_version`.
-2. Confirm that the reported roots and, when present, `requested_kinds` equal
+2. Require `policy.version` to be `v1` or `v2`. Only `v2` applies the inactivity
+   threshold to the normal candidate projection; `v1` applies it only to
+   automatic preselection. Do not describe a v1 report as age-filtered, and
+   explain that the newer projection requires a user-approved CLI upgrade.
+3. Confirm that the reported roots and, when present, `requested_kinds` equal
    the approved scope.
-3. Read `scan.integrity`; `partial` evidence stays read-only.
-4. Read `policy.preselect_after_days`.
-5. For global analysis, require `scan.global` and build the coverage ledger from
+4. Read `scan.integrity`; `partial` evidence stays read-only.
+5. Read `policy.preselect_after_days`.
+6. For global analysis, require `scan.global` and build the coverage ledger from
    its `locations` and path-free `os_managed` entries. Never infer category
    coverage from deduplicated `scan.roots`.
-6. Group candidates by `recommendation.state`, decision `codes`, confidence,
+7. Group candidates by `recommendation.state`, decision `codes`, confidence,
    trust, and material rebuild or application risk.
 
 Interpret states conservatively: `preselected` is only a deterministic default;
@@ -116,12 +127,16 @@ scanned descendants.
 
 ## Stage 5 — Continue automatically or stop
 
-Compute candidate count and total size from `candidates`; do not assume the
-report contains a top-level summary. Respond in one linear order:
+Compute evidence candidate count and total size from `candidates`; do not assume
+the report contains a top-level summary. For policy v2, also compute the normal
+projection: exclude `suppressed` and `excluded`, then keep candidates with
+complete activity and `age_days >= preselect_after_days`; a zero threshold keeps
+all otherwise eligible candidates. Respond in one linear order:
 
 1. scope and scan integrity;
 2. age threshold and global coverage, when applicable;
-3. candidate count, total size, and recommendation-state counts;
+3. evidence count, projected candidate count and size, and recommendation-state
+   counts;
 4. material risks or evidence gaps;
 5. the next action: stop or prepare a plan.
 
@@ -139,8 +154,9 @@ post-evidence confirmation. Never infer extra path choices.
 Read
 [`references/authorized-execution.md`](references/authorized-execution.md) and
 follow its plan-preparation and human-summary sections. Use the identical roots,
-config, and global categories from the reviewed analysis. Never select a
-`review` or `available` item on the agent's own judgment.
+config, global categories, and one-run inactivity override from the reviewed
+analysis. Never select a `review` or `available` item on the agent's own
+judgment.
 
 The JSON plan is the machine-verifiable contract, not the user interface. Do
 not ask the user to open or interpret it. Present the selected items as a
@@ -158,8 +174,10 @@ cleanup run.
 
 Continue only after that unambiguous answer. Follow the execution section of
 the authorized-execution reference.
-If the scope, config, plan bytes, digest, or re-scan result changes, do not
-execute: return to Stage 3 and obtain new authorization for a new plan.
+If the scope, relevant config, plan bytes, digest, selected execution
+projection, or safety provenance changes, do not execute: return to Stage 3 and
+obtain new authorization for a new plan. Drift limited to unselected candidates
+does not invalidate the reviewed actions.
 
 Report the run ID and per-item results. State that successes moved to system
 trash and were not permanently deleted. Never empty the trash.

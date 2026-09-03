@@ -13,8 +13,10 @@ that choice, and never overwrite an existing file:
 cleanr plan --output /local/path/cleanr-plan.json /approved/scope
 ```
 
-Reuse the approved `--config` and `--global-kind` arguments. Do not edit the
-plan. Record the `sha256=` value printed by Cleanr.
+Reuse the approved `--config` and `--global-kind` arguments. If analysis used
+`--inactive-days <DAYS>`, pass the same override to `plan`; do not substitute
+the current configuration value. Do not edit the plan. Record the `sha256=`
+value printed by Cleanr.
 
 Start from Cleanr's deterministic recommendations. For a broad cleanup request,
 do not add path overrides. Use them only to encode exact candidate paths the
@@ -34,8 +36,8 @@ that are not current candidates or are suppressed or excluded.
 
 Before requesting authorization, verify:
 
-- the plan roots, config, and global categories exactly match the reviewed
-  analysis;
+- the plan roots, config, global categories, and inactivity policy exactly
+  match the reviewed analysis;
 - every selected item is an exact reviewed candidate;
 - every action is `trash`;
 - plan and item rollback methods are `system-trash+manifest`;
@@ -109,8 +111,10 @@ cleanr clean \
 ```
 
 Cleanr verifies the digest, re-scans the roots, rebuilds the deterministic
-plan, validates every target, moves successful items to system trash, and
-writes an execution manifest. A refusal or changed plan requires a new
+plan, compares the selected execution projection and safety provenance,
+validates every target, moves successful items to system trash, and writes an
+execution manifest. Drift limited to unselected candidates does not invalidate
+the reviewed actions. A refusal or selected-target/safety change requires a new
 analysis, plan, summary, and authorization. Never fall back to another cleanup
 tool.
 

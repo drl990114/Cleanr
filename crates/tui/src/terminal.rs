@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use cleanr_config::Config;
+use cleanr_core::RecommendationPolicy;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, DisableBracketedPaste, EnableBracketedPaste, Event},
@@ -36,12 +37,20 @@ pub struct UpdateNotice {
 }
 
 pub fn run(options: TuiOptions) -> Result<()> {
+    run_with_inactivity_override(options, None)
+}
+
+pub fn run_with_inactivity_override(options: TuiOptions, inactive_days: Option<u16>) -> Result<()> {
     const ANIMATION_INTERVAL: Duration = Duration::from_millis(80);
     const IDLE_WAKE_INTERVAL: Duration = Duration::from_secs(1);
 
+    if let Some(inactive_days) = inactive_days {
+        RecommendationPolicy::new(inactive_days)?;
+    }
     let (registry, i18n) = load_runtime(&options.config)?;
     let theme = resolve_theme(options.config.ui.theme);
     let mut app = Workbench::new(options.roots, options.config, registry, i18n, theme);
+    app.session_inactive_days = inactive_days;
     if let Some(update) = options.update_available {
         app.status = app.i18n.format(
             "status_update_available",

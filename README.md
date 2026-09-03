@@ -178,19 +178,27 @@ cleanr clean --plan cleanr-plan.json \
   --authorized-by-user
 ```
 
-`plan` and `dry-run` also accept repeatable `--select <exact-candidate-path>`
-and `--deselect <exact-candidate-path>` options. This lets an agent encode the
-user's explicit choices for review-only candidates without editing the plan;
-unknown, suppressed, and safety-excluded paths are rejected.
+By default, the TUI review, `plan`, and `dry-run` keep only candidates whose
+newest observed modification across the candidate tree occurred at least the
+effective threshold ago. `plan` and `dry-run` also accept repeatable
+`--select <exact-candidate-path>` and `--deselect <exact-candidate-path>`
+options. An explicit `--select` can include an otherwise selectable review
+candidate with recent or missing modification-time evidence; unknown,
+suppressed, and safety-excluded paths are rejected.
 
 `plan` prints the file's SHA-256. `clean` requires explicit authorization,
-verifies that digest, re-scans and rejects plan drift, then moves validated
-items to system trash and records a restore manifest. It never permanently
-deletes them.
+verifies that digest, re-scans, and rejects drift in the selected targets,
+scan provenance, or safety policy. Changes limited to unselected candidates do
+not invalidate the reviewed actions. Validated items then move to system trash
+with a restore manifest; Cleanr never permanently deletes them.
 
-The TUI, `analyze`, `plan`, and `dry-run` share
-`[recommendations].preselect_after_days` from `cleanr.toml` (90 days by
-default; `0` disables the age gate).
+The long-term setting is `[recommendations].preselect_after_days` in
+`cleanr.toml`, with a default of 90 days. `--inactive-days <DAYS>` overrides it
+for one invocation without changing the file; `0` removes the age filter and
+shows all otherwise eligible candidates. `analyze` and the TUI `/usage` view
+retain complete evidence; `/usage` candidate and selected metrics still use the
+effective threshold. Modification time is filesystem metadata, not proof of
+last access.
 
 ## Safety Model
 

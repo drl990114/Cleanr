@@ -1273,6 +1273,7 @@ mod tests {
             AnalysisScanContext {
                 budget_exceeded: &budgets,
                 safety_policy: Some(&policy),
+                ..AnalysisScanContext::default()
             },
         )
         .expect("analysis");
@@ -1286,6 +1287,8 @@ mod tests {
             analysis_id: analysis.analysis_id,
             integrity: analysis.scan.integrity,
             budget_exceeded: analysis.scan.budget_exceeded,
+            recommendation_policy: Some(analysis.policy),
+            scope: None,
         });
         let fake = FakeTrashExecutor::default();
         let authorization = CleanupAuthorization::explicit_user_confirmation();
@@ -1322,6 +1325,7 @@ mod tests {
             AnalysisScanContext {
                 budget_exceeded: &[],
                 safety_policy: Some(&policy),
+                ..AnalysisScanContext::default()
             },
         )
         .expect("ordinary partial analysis");

@@ -38,23 +38,34 @@ selected as one cleanup item.
 
 ## How selection works
 
+The normal TUI review, `cleanr plan`, and `cleanr dry-run` first keep only
+otherwise eligible candidates whose newest observed modification time across
+the candidate tree is at least the effective threshold. The long-term setting
+is `[recommendations].preselect_after_days` (90 days by default), and
+`--inactive-days <DAYS>` overrides it for one invocation. `0` removes this age
+filter and shows all otherwise eligible candidates.
+
 An item is preselected only when all of the following are true:
 
 - the rule confidence is `High`;
 - the rule declares `default_selected = true`;
-- the rule comes from Cleanr itself or an explicitly trusted plugin.
-- its observed modification age satisfies the shared
-  `[recommendations].preselect_after_days` policy (90 days by default, or no
-  age gate when set to `0`);
+- the rule comes from Cleanr itself or an explicitly trusted plugin;
+- its observed modification age satisfies the effective threshold;
 - its scan evidence is complete and not future-dated.
 
 Everything can still be deselected before cleanup. General downloads, logs,
 broad temporary-file matches, medium-confidence items, and untrusted plugin
 matches require manual selection. The narrow Windows rule for regular files
 inside the current user's Temp directory is the exception: it requires the
-file to be at least 30 days old and still passes the shared age policy. The
-TUI, `cleanr analyze`, `cleanr plan`, and `cleanr dry-run` apply the same
-recommendation policy.
+file to be at least 30 days old and still passes the effective threshold. An
+explicit `--select` may add an otherwise selectable review candidate with
+recent or missing modification-time evidence to a plan. `cleanr analyze` and
+the TUI `/usage` view retain complete evidence; `/usage` candidate and selected
+metrics still apply the effective threshold.
+
+Modification time is observed filesystem metadata, not proof of last access.
+For a directory, Cleanr uses the newest observed modification time across the
+candidate and its scanned descendants.
 
 ## Manifests and history
 
@@ -104,11 +115,13 @@ cleanr clean \
 made during evidence review; they cannot add unknown, overlap-suppressed, or
 safety-excluded paths. Before execution, `clean` verifies the digest, re-scans
 the recorded roots, rebuilds the plan with that exact selection, and compares
-its content with the authorized file. Any scope, rule, recommendation,
-selection, safety, or filesystem-evidence drift aborts cleanup and requires a
-new review and authorization. Successful items still go only to system trash,
-with an execution manifest and restore locator. The manifest records whether
-authorization came from local TUI confirmation or explicit user delegation.
+the selected execution projection with the authorized file. Any scope, rule,
+recommendation policy, selection, safety, or selected-target filesystem drift
+aborts cleanup and requires a new review and authorization. Candidate changes
+outside the selected targets do not invalidate the plan. Successful items still
+go only to system trash, with an execution manifest and restore locator. The
+manifest records whether authorization came from local TUI confirmation or
+explicit user delegation.
 
 Setting `cleanup.require_confirm = false` removes the interactive confirmation
 dialog for a direct local `/clean` request. It does not turn `analyze` into an

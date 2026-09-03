@@ -22,6 +22,9 @@ description: 解决 Cleanr 安装、终端、扫描、配置和恢复中的常�
 - 对应规则包是否在 `cleanup.enabled_rule_packs` 中；
 - 目标是否被 `ignore_dirs` 或 `ignore_patterns` 排除；
 - 条目是否满足规则的大小、时间、名称或路径条件；
+- 条目是否达到本次生效的 `[recommendations].preselect_after_days` 修改时间年龄门槛。
+  `cleanr analyze` 会保留未达到门槛的证据；若其中已有规则命中，可修改设置，或有意地
+  使用 `/scan --inactive-days <天数>` 重新扫描；
 - 扫描的是包含候选项的目录，而不是把候选目录本身作为根目录。扫描根目录本身
   永远不会成为清理候选项。
 

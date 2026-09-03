@@ -23,6 +23,10 @@ Check the following:
 - The relevant pack is listed in `cleanup.enabled_rule_packs`.
 - The target is not excluded by `ignore_dirs` or `ignore_patterns`.
 - The item meets the rule's size, age, name, or path requirements.
+- The item meets the effective `[recommendations].preselect_after_days`
+  modification-age threshold. `cleanr analyze` retains below-threshold evidence;
+  if that confirms a rule match, adjust the setting or rerun with an intentional
+  `/scan --inactive-days <DAYS>` override.
 - You scanned the directory that contains the candidate, not the candidate
   directory as the root. Scan roots themselves are never cleanup candidates.
 

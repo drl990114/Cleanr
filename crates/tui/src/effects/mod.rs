@@ -12,10 +12,10 @@ use std::{
 use anyhow::{Context, Result};
 use cleanr_config::Config;
 use cleanr_core::{
-    AnalysisReport, AnalysisScanContext, CandidateId, CleanupPlan, EntryKind, ExecutionManifest,
-    GlobalScanEvidence, GlobalScanKind, RecommendationPolicy, RestoreManifest, SafetyPolicy,
-    ScanEntry, ScanRequest, UserSelection, build_analysis_report_with_scan_context,
-    build_cleanup_plan_from_analysis, suppress_unrequested_global_candidates,
+    AnalysisReport, AnalysisScanContext, CandidateId, CleanupPlan, CleanupPlanScanScope, EntryKind,
+    ExecutionManifest, GlobalScanEvidence, GlobalScanKind, RecommendationPolicy, RestoreManifest,
+    SafetyPolicy, ScanEntry, ScanRequest, UserSelection, build_analysis_report_with_scan_context,
+    build_cleanup_plan_from_analysis,
 };
 use cleanr_fs::{
     ResolvedScanRoots, ScanOptions, ScanPhase, ScanProgress, ScanReport, global_scan_evidence,
@@ -294,7 +294,14 @@ fn prepare_scan(
         progress.emit_stage(ScanStage::Plan);
         ensure_scan_active(cancellation)?;
         let planning = match evidence {
-            Ok(Some(evidence)) => prepare_plan(&report, evidence, &preparation).map(Some),
+            Ok(Some(evidence)) => prepare_plan(
+                &report,
+                evidence,
+                &preparation,
+                &explicit_roots,
+                &global_scan,
+            )
+            .map(Some),
             Ok(None) => Ok(None),
             Err(error) => Err(error),
         };
@@ -342,7 +349,7 @@ fn prepare_evidence(
     let recommendation_policy = RecommendationPolicy::new(preparation.preselect_after_days)
         .map_err(|error| error.to_string())?;
     let scan_roots = report.summary.roots.clone();
-    let mut analysis = build_analysis_report_with_scan_context(
+    let analysis = build_analysis_report_with_scan_context(
         report.as_of,
         chrono::Utc::now(),
         scan_roots.clone(),
@@ -352,11 +359,11 @@ fn prepare_evidence(
         AnalysisScanContext {
             budget_exceeded: &report.budget_exceeded,
             safety_policy: Some(&preparation.safety_policy),
+            global: Some(global_scan),
+            explicit_roots,
         },
     )
     .map_err(|error| error.to_string())?;
-    analysis.scan.global = global_scan.clone();
-    suppress_unrequested_global_candidates(&mut analysis, explicit_roots);
 
     let candidate_ids_by_path = analysis
         .candidates
@@ -376,13 +383,15 @@ fn prepare_plan(
     report: &ScanReport,
     evidence: PreparedEvidence,
     preparation: &ScanPreparation,
+    explicit_roots: &[PathBuf],
+    global_scan: &GlobalScanEvidence,
 ) -> std::result::Result<PreparedPlanning, String> {
     let PreparedEvidence {
         analysis,
         candidate_ids_by_path,
         selection,
     } = evidence;
-    let plan = build_cleanup_plan_from_analysis(
+    let mut plan = build_cleanup_plan_from_analysis(
         report.summary.roots.clone(),
         preparation.registry.versions(),
         &report.entries,
@@ -391,6 +400,12 @@ fn prepare_plan(
         &preparation.safety_policy,
     )
     .map_err(|error| error.to_string())?;
+    if let Some(source) = plan.source_scan.as_mut() {
+        source.scope = Some(CleanupPlanScanScope::new(
+            explicit_roots.to_vec(),
+            global_scan.requested_kinds.clone(),
+        ));
+    }
 
     Ok(PreparedPlanning {
         analysis,

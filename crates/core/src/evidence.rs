@@ -103,6 +103,8 @@ impl ScanBudgetLimits {
 pub struct AnalysisScanContext<'a> {
     pub budget_exceeded: &'a [ScanBudgetExceeded],
     pub safety_policy: Option<&'a SafetyPolicy>,
+    pub global: Option<&'a GlobalScanEvidence>,
+    pub explicit_roots: &'a [PathBuf],
 }
 
 /// A structured local scan condition. Its `path` is deliberately not a remote DTO.
@@ -224,7 +226,7 @@ pub struct RecommendationPolicy {
 impl Default for RecommendationPolicy {
     fn default() -> Self {
         Self {
-            version: "v1".to_string(),
+            version: "v2".to_string(),
             preselect_after_days: 90,
             strict_report_integrity: true,
         }
@@ -244,28 +246,59 @@ impl RecommendationPolicy {
 
     /// Reject thresholds that make an age recommendation unintelligible.
     pub fn validate(&self) -> Result<(), RecommendationPolicyError> {
+        if !matches!(self.version.as_str(), "v1" | "v2") {
+            return Err(RecommendationPolicyError::UnsupportedVersion {
+                found: self.version.clone(),
+            });
+        }
         if self.preselect_after_days > MAX_RECOMMENDATION_AGE_DAYS {
-            return Err(RecommendationPolicyError {
+            return Err(RecommendationPolicyError::InvalidAge {
                 supplied: self.preselect_after_days,
             });
         }
         Ok(())
     }
+
+    /// Whether complete observed modification evidence satisfies this inactivity threshold.
+    /// A zero threshold intentionally disables the display and preselection age gate.
+    #[must_use]
+    pub fn activity_meets_inactivity_threshold(&self, activity: &ActivityEvidence) -> bool {
+        self.preselect_after_days == 0
+            || (activity.status == ActivityStatus::Complete
+                && activity
+                    .age_days
+                    .is_some_and(|age| age >= u32::from(self.preselect_after_days)))
+    }
+
+    /// Policy v1 applied the inactivity threshold only to automatic preselection. Starting with
+    /// v2, the threshold also defines the normal candidate projection.
+    #[must_use]
+    pub fn filters_candidate_projection_by_inactivity(&self) -> bool {
+        self.version != "v1"
+    }
 }
 
-/// An invalid recommendation age threshold.
+/// An unsupported recommendation policy or invalid age threshold.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecommendationPolicyError {
-    supplied: u16,
+pub enum RecommendationPolicyError {
+    UnsupportedVersion { found: String },
+    InvalidAge { supplied: u16 },
 }
 
 impl fmt::Display for RecommendationPolicyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "recommendation preselect_after_days must be in 0..={MAX_RECOMMENDATION_AGE_DAYS}, got {}",
-            self.supplied
-        )
+        match self {
+            Self::UnsupportedVersion { found } => {
+                write!(
+                    formatter,
+                    "unsupported recommendation policy version: {found}"
+                )
+            }
+            Self::InvalidAge { supplied } => write!(
+                formatter,
+                "recommendation preselect_after_days must be in 0..={MAX_RECOMMENDATION_AGE_DAYS}, got {supplied}"
+            ),
+        }
     }
 }
 
@@ -463,9 +496,9 @@ impl GlobalScanEvidence {
     }
 }
 
-/// Suppress candidates whose most-specific named global location belongs only to a category the
-/// user did not request. Explicit roots remain user-owned overrides, and safety exclusions remain
-/// excluded rather than being weakened to suppression.
+/// Suppress candidates that are inside, or would recursively contain, a named global location
+/// whose category the user did not request. Explicit roots remain user-owned overrides, and safety
+/// exclusions remain excluded rather than being weakened to suppression.
 pub fn suppress_unrequested_global_candidates(
     report: &mut AnalysisReport,
     explicit_roots: &[PathBuf],
@@ -480,6 +513,25 @@ pub fn suppress_unrequested_global_candidates(
     if requested_kinds.is_empty() {
         return;
     }
+    let requested_location_paths = report
+        .scan
+        .global
+        .locations
+        .iter()
+        .filter(|location| requested_kinds.contains(&location.kind))
+        .map(|location| location.local_path.as_path())
+        .collect::<HashSet<_>>();
+    let unrequested_location_paths = report
+        .scan
+        .global
+        .locations
+        .iter()
+        .filter(|location| {
+            !requested_kinds.contains(&location.kind)
+                && !requested_location_paths.contains(location.local_path.as_path())
+        })
+        .map(|location| location.local_path.as_path())
+        .collect::<Vec<_>>();
 
     for candidate in &mut report.candidates {
         if explicit_roots
@@ -499,16 +551,19 @@ pub fn suppress_unrequested_global_candidates(
             })
             .map(|location| location.local_path.components().count())
             .max();
-        let Some(max_depth) = max_depth else {
-            continue;
-        };
-        let belongs_to_requested_kind = report.scan.global.locations.iter().any(|location| {
-            location.local_path.components().count() == max_depth
-                && (candidate.local_path == location.local_path
-                    || candidate.local_path.starts_with(&location.local_path))
-                && requested_kinds.contains(&location.kind)
+        let belongs_to_unrequested_kind = max_depth.is_some_and(|max_depth| {
+            !report.scan.global.locations.iter().any(|location| {
+                location.local_path.components().count() == max_depth
+                    && (candidate.local_path == location.local_path
+                        || candidate.local_path.starts_with(&location.local_path))
+                    && requested_kinds.contains(&location.kind)
+            })
         });
-        if belongs_to_requested_kind
+        let contains_unrequested_location = unrequested_location_paths.iter().any(|location| {
+            candidate.local_path.as_path() == *location
+                || location.starts_with(&candidate.local_path)
+        });
+        if (!belongs_to_unrequested_kind && !contains_unrequested_location)
             || candidate.recommendation.state == RecommendationState::Excluded
         {
             continue;
@@ -623,6 +678,7 @@ pub fn build_analysis_report_with_budget(
         AnalysisScanContext {
             budget_exceeded,
             safety_policy: None,
+            ..AnalysisScanContext::default()
         },
     )
 }
@@ -649,6 +705,7 @@ pub fn build_analysis_report_with_safety_policy(
         AnalysisScanContext {
             budget_exceeded: &[],
             safety_policy: Some(safety_policy),
+            ..AnalysisScanContext::default()
         },
     )
 }
@@ -734,9 +791,7 @@ fn build_analysis_report_inner(
         })
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| left.local_path.cmp(&right.local_path));
-    resolve_overlaps(&mut candidates);
-
-    Ok(AnalysisReport {
+    let mut report = AnalysisReport {
         schema_version: ANALYSIS_REPORT_SCHEMA_VERSION.to_string(),
         analysis_id: AnalysisId::new_random(),
         as_of,
@@ -747,10 +802,13 @@ fn build_analysis_report_inner(
             integrity,
             issues: issues.to_vec(),
             budget_exceeded: context.budget_exceeded.to_vec(),
-            global: GlobalScanEvidence::default(),
+            global: context.global.cloned().unwrap_or_default(),
         },
         candidates,
-    })
+    };
+    suppress_unrequested_global_candidates(&mut report, context.explicit_roots);
+    resolve_overlaps(&mut report.candidates, &report.policy);
+    Ok(report)
 }
 
 #[derive(Debug, Clone)]
@@ -1135,12 +1193,155 @@ fn decision(state: RecommendationState, codes: BTreeSet<DecisionCode>) -> Recomm
     }
 }
 
-fn resolve_overlaps(candidates: &mut [CandidateEvidence]) {
-    // Candidates are path-sorted by the caller. Every connected overlap cluster therefore starts
-    // with its shallowest candidate and occupies one contiguous descendant range. Walking those
-    // ranges avoids comparing every candidate with every other candidate.
+fn resolve_overlaps(candidates: &mut [CandidateEvidence], policy: &RecommendationPolicy) {
+    if !policy.filters_candidate_projection_by_inactivity() {
+        resolve_overlaps_v1(candidates);
+        return;
+    }
+    // Scope and age filters define the normal candidate projection before overlap is resolved.
+    // This prevents a hidden parent from suppressing visible children and allows non-overlapping
+    // siblings to remain independently reviewable.
+    let mut ordered = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, candidate)| {
+            (!matches!(
+                candidate.recommendation.state,
+                RecommendationState::Suppressed | RecommendationState::Excluded
+            ))
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        let left_candidate = &candidates[*left];
+        let right_candidate = &candidates[*right];
+        let left_qualified = policy.activity_meets_inactivity_threshold(&left_candidate.activity);
+        let right_qualified = policy.activity_meets_inactivity_threshold(&right_candidate.activity);
+        right_qualified
+            .cmp(&left_qualified)
+            .then_with(|| {
+                candidate_priority(left_candidate).cmp(&candidate_priority(right_candidate))
+            })
+            .then_with(|| {
+                left_candidate
+                    .local_path
+                    .components()
+                    .count()
+                    .cmp(&right_candidate.local_path.components().count())
+            })
+            .then_with(|| left_candidate.local_path.cmp(&right_candidate.local_path))
+    });
+
+    let mut kept = Vec::new();
+    let mut kept_by_path = HashMap::<PathBuf, (usize, usize)>::new();
+    let mut first_descendant_by_ancestor = HashMap::<PathBuf, (usize, usize)>::new();
+    let mut suppressed_by = vec![None; candidates.len()];
+    let mut alternatives_by_primary = vec![Vec::new(); candidates.len()];
+    for index in ordered {
+        let path = &candidates[index].local_path;
+        let kept_ancestor = path.ancestors().find_map(|ancestor| {
+            (!ancestor.as_os_str().is_empty())
+                .then(|| kept_by_path.get(ancestor).copied())
+                .flatten()
+        });
+        let kept_descendant = first_descendant_by_ancestor.get(path).copied();
+        let overlap = match (kept_ancestor, kept_descendant) {
+            (Some(ancestor), Some(descendant)) => Some(ancestor.min(descendant)),
+            (Some(overlap), None) | (None, Some(overlap)) => Some(overlap),
+            (None, None) => None,
+        };
+        if let Some((_, primary)) = overlap {
+            suppressed_by[index] = Some(primary);
+            alternatives_by_primary[primary].push(index);
+        } else {
+            let rank = kept.len();
+            kept.push(index);
+            kept_by_path.insert(path.clone(), (rank, index));
+            for ancestor in path
+                .ancestors()
+                .skip(1)
+                .filter(|ancestor| !ancestor.as_os_str().is_empty())
+            {
+                first_descendant_by_ancestor
+                    .entry(ancestor.to_path_buf())
+                    .or_insert((rank, index));
+            }
+        }
+    }
+
+    let primary_updates = kept
+        .iter()
+        .copied()
+        .filter_map(|primary| {
+            let alternatives = &alternatives_by_primary[primary];
+            (!alternatives.is_empty()).then(|| {
+                let descendant_has_blocker = alternatives.iter().copied().any(|index| {
+                    candidates[index]
+                        .local_path
+                        .starts_with(&candidates[primary].local_path)
+                        && recommendation_has_preselection_blocker(
+                            &candidates[index].recommendation,
+                        )
+                });
+                let alternative_ids = alternatives
+                    .iter()
+                    .copied()
+                    .map(|index| candidates[index].id.clone())
+                    .collect();
+                (primary, alternative_ids, descendant_has_blocker)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for (primary, alternative_ids, descendant_has_blocker) in primary_updates {
+        candidates[primary].overlap = OverlapEvidence::Primary {
+            alternatives: alternative_ids,
+        };
+        if descendant_has_blocker {
+            candidates[primary]
+                .recommendation
+                .codes
+                .push(DecisionCode::CoveredDescendantHasBlocker);
+            candidates[primary].recommendation.codes.sort();
+            candidates[primary].recommendation.codes.dedup();
+            candidates[primary].recommendation.state = RecommendationState::Review;
+            candidates[primary].recommendation.initial_selected = false;
+        }
+    }
+
+    for (index, primary) in suppressed_by.into_iter().enumerate() {
+        let Some(primary) = primary else {
+            continue;
+        };
+        candidates[index].overlap = OverlapEvidence::Suppressed {
+            by: candidates[primary].id.clone(),
+        };
+        if !policy.activity_meets_inactivity_threshold(&candidates[index].activity) {
+            continue;
+        }
+        candidates[index]
+            .recommendation
+            .codes
+            .push(DecisionCode::OverlapSuppressed);
+        candidates[index].recommendation.codes.sort();
+        candidates[index].recommendation.codes.dedup();
+        candidates[index].recommendation.state = RecommendationState::Suppressed;
+        candidates[index].recommendation.initial_selected = false;
+    }
+}
+
+/// Preserve the v1 projection for re-validating plans written before inactivity filtering became
+/// part of the candidate set. New reports use the indexed, age-aware resolver above.
+fn resolve_overlaps_v1(candidates: &mut [CandidateEvidence]) {
     let mut cluster_start = 0;
     while cluster_start < candidates.len() {
+        if matches!(
+            candidates[cluster_start].recommendation.state,
+            RecommendationState::Suppressed | RecommendationState::Excluded
+        ) {
+            cluster_start += 1;
+            continue;
+        }
         let mut cluster_end = cluster_start + 1;
         while cluster_end < candidates.len()
             && candidates[cluster_end]
@@ -1155,7 +1356,30 @@ fn resolve_overlaps(candidates: &mut [CandidateEvidence]) {
             cluster_start = cluster_end;
             continue;
         }
-        let primary_index = choose_primary(&cluster, candidates);
+        let primary_index = cluster
+            .iter()
+            .copied()
+            .filter(|index| {
+                !matches!(
+                    candidates[*index].recommendation.state,
+                    RecommendationState::Suppressed | RecommendationState::Excluded
+                )
+            })
+            .min_by(|left, right| {
+                let left_candidate = &candidates[*left];
+                let right_candidate = &candidates[*right];
+                candidate_priority(left_candidate)
+                    .cmp(&candidate_priority(right_candidate))
+                    .then_with(|| {
+                        left_candidate
+                            .local_path
+                            .components()
+                            .count()
+                            .cmp(&right_candidate.local_path.components().count())
+                    })
+                    .then_with(|| left_candidate.local_path.cmp(&right_candidate.local_path))
+            })
+            .expect("the eligible cluster root is always a primary candidate");
         let alternative_ids = cluster
             .iter()
             .copied()
@@ -1183,13 +1407,18 @@ fn resolve_overlaps(candidates: &mut [CandidateEvidence]) {
             candidates[primary_index].recommendation.state = RecommendationState::Review;
             candidates[primary_index].recommendation.initial_selected = false;
         }
+        let primary_id = candidates[primary_index].id.clone();
         for index in cluster {
             if index == primary_index {
                 continue;
             }
-            let primary_id = candidates[primary_index].id.clone();
-            candidates[index].overlap = OverlapEvidence::Suppressed { by: primary_id };
-            if candidates[index].recommendation.state == RecommendationState::Excluded {
+            candidates[index].overlap = OverlapEvidence::Suppressed {
+                by: primary_id.clone(),
+            };
+            if matches!(
+                candidates[index].recommendation.state,
+                RecommendationState::Suppressed | RecommendationState::Excluded
+            ) {
                 continue;
             }
             candidates[index]
@@ -1203,26 +1432,6 @@ fn resolve_overlaps(candidates: &mut [CandidateEvidence]) {
         }
         cluster_start = cluster_end;
     }
-}
-
-fn choose_primary(indices: &[usize], candidates: &[CandidateEvidence]) -> usize {
-    *indices
-        .iter()
-        .min_by(|left, right| {
-            let left_candidate = &candidates[**left];
-            let right_candidate = &candidates[**right];
-            candidate_priority(left_candidate)
-                .cmp(&candidate_priority(right_candidate))
-                .then_with(|| {
-                    left_candidate
-                        .local_path
-                        .components()
-                        .count()
-                        .cmp(&right_candidate.local_path.components().count())
-                })
-                .then_with(|| left_candidate.local_path.cmp(&right_candidate.local_path))
-        })
-        .expect("overlap clusters are never empty")
 }
 
 fn candidate_priority(candidate: &CandidateEvidence) -> (u8, u8, u8, u8) {
@@ -1314,6 +1523,20 @@ mod tests {
     fn policy_rejects_ages_larger_than_ten_years() {
         assert!(RecommendationPolicy::new(MAX_RECOMMENDATION_AGE_DAYS).is_ok());
         assert!(RecommendationPolicy::new(MAX_RECOMMENDATION_AGE_DAYS + 1).is_err());
+    }
+
+    #[test]
+    fn policy_rejects_unknown_algorithm_versions() {
+        let policy = RecommendationPolicy {
+            version: "future-v99".to_string(),
+            ..RecommendationPolicy::default()
+        };
+
+        assert!(matches!(
+            policy.validate(),
+            Err(RecommendationPolicyError::UnsupportedVersion { found })
+                if found == "future-v99"
+        ));
     }
 
     #[test]
@@ -1767,6 +1990,146 @@ mod tests {
     }
 
     #[test]
+    fn global_parent_candidate_cannot_cover_an_unrequested_named_location() {
+        let as_of = Utc::now();
+        let cache_root = PathBuf::from("/cache");
+        let vendor_cache = cache_root.join("vendor");
+        let browser_cache = vendor_cache.join("browser");
+        let global = GlobalScanEvidence {
+            requested_kinds: vec![GlobalScanKind::AppCaches],
+            locations: vec![
+                GlobalScanLocationEvidence {
+                    kind: GlobalScanKind::AppCaches,
+                    label: "Application caches".to_string(),
+                    local_path: cache_root.clone(),
+                    scan_root: cache_root.clone(),
+                },
+                GlobalScanLocationEvidence {
+                    kind: GlobalScanKind::BrowserCaches,
+                    label: "Browser cache".to_string(),
+                    local_path: browser_cache,
+                    scan_root: cache_root.clone(),
+                },
+            ],
+            os_managed: Vec::new(),
+        };
+        let entries = [entry(
+            vendor_cache.to_str().expect("UTF-8 test path"),
+            Some(as_of - Duration::days(100)),
+            vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+        )];
+
+        let report = build_analysis_report_with_scan_context(
+            as_of,
+            as_of,
+            vec![cache_root],
+            &entries,
+            &[],
+            RecommendationPolicy::default(),
+            AnalysisScanContext {
+                global: Some(&global),
+                ..AnalysisScanContext::default()
+            },
+        )
+        .expect("valid policy");
+
+        let candidate = &report.candidates[0];
+        assert_eq!(
+            candidate.recommendation.state,
+            RecommendationState::Suppressed
+        );
+        assert!(
+            candidate
+                .recommendation
+                .codes
+                .contains(&DecisionCode::GlobalKindNotRequested)
+        );
+        assert!(
+            UserSelection::from_recommendations(&report)
+                .candidate_ids
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn v1_overlap_cannot_revive_a_globally_suppressed_parent() {
+        let as_of = Utc::now();
+        let cache_root = PathBuf::from("/cache");
+        let vendor_cache = cache_root.join("vendor");
+        let allowed_child = vendor_cache.join("allowed-child");
+        let browser_cache = vendor_cache.join("browser");
+        let global = GlobalScanEvidence {
+            requested_kinds: vec![GlobalScanKind::AppCaches],
+            locations: vec![
+                GlobalScanLocationEvidence {
+                    kind: GlobalScanKind::AppCaches,
+                    label: "Application caches".to_string(),
+                    local_path: cache_root.clone(),
+                    scan_root: cache_root.clone(),
+                },
+                GlobalScanLocationEvidence {
+                    kind: GlobalScanKind::BrowserCaches,
+                    label: "Browser cache".to_string(),
+                    local_path: browser_cache,
+                    scan_root: cache_root.clone(),
+                },
+            ],
+            os_managed: Vec::new(),
+        };
+        let mut child_hit = hit(Confidence::Medium, false, RuleTrust::Untrusted);
+        child_hit.rule_id = "review-child".to_string();
+        let entries = [
+            entry(
+                vendor_cache.to_str().expect("UTF-8 test path"),
+                Some(as_of - Duration::days(100)),
+                vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+            ),
+            entry(
+                allowed_child.to_str().expect("UTF-8 test path"),
+                Some(as_of - Duration::days(100)),
+                vec![child_hit],
+            ),
+        ];
+
+        let report = build_analysis_report_with_scan_context(
+            as_of,
+            as_of,
+            vec![cache_root],
+            &entries,
+            &[],
+            RecommendationPolicy {
+                version: "v1".to_string(),
+                ..RecommendationPolicy::default()
+            },
+            AnalysisScanContext {
+                global: Some(&global),
+                ..AnalysisScanContext::default()
+            },
+        )
+        .expect("v1 policy remains supported");
+        let parent = report
+            .candidates
+            .iter()
+            .find(|candidate| candidate.local_path == vendor_cache)
+            .expect("parent candidate");
+        let child = report
+            .candidates
+            .iter()
+            .find(|candidate| candidate.local_path == allowed_child)
+            .expect("requested child candidate");
+
+        assert_eq!(parent.recommendation.state, RecommendationState::Suppressed);
+        assert!(
+            parent
+                .recommendation
+                .codes
+                .contains(&DecisionCode::GlobalKindNotRequested)
+        );
+        assert_eq!(child.recommendation.state, RecommendationState::Review);
+        assert!(!matches!(child.overlap, OverlapEvidence::Suppressed { .. }));
+    }
+
+    #[test]
     fn future_timestamp_and_rule_conflict_require_review() {
         let as_of = Utc::now();
         let mut conflicting_hit = hit(Confidence::Medium, false, RuleTrust::Builtin);
@@ -1953,6 +2316,134 @@ mod tests {
                 .codes
                 .contains(&DecisionCode::OverlapSuppressed)
         );
+    }
+
+    #[test]
+    fn inactive_siblings_survive_a_recent_parent_and_explicit_parent_stays_non_overlapping() {
+        let as_of = Utc::now();
+        let mut child_hit = hit(Confidence::Medium, false, RuleTrust::Untrusted);
+        child_hit.rule_id = "review-child".to_string();
+        let entries = vec![
+            entry(
+                "/repo/cache",
+                Some(as_of - Duration::days(1)),
+                vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+            ),
+            entry(
+                "/repo/cache/old-a",
+                Some(as_of - Duration::days(100)),
+                vec![child_hit.clone()],
+            ),
+            entry(
+                "/repo/cache/old-b",
+                Some(as_of - Duration::days(100)),
+                vec![child_hit],
+            ),
+        ];
+        let report = build_analysis_report(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/repo")],
+            &entries,
+            &[],
+            RecommendationPolicy::default(),
+        )
+        .expect("valid policy");
+        let parent = report
+            .candidates
+            .iter()
+            .find(|candidate| candidate.local_path == Path::new("/repo/cache"))
+            .expect("parent candidate");
+        let children = report
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.local_path != Path::new("/repo/cache"))
+            .collect::<Vec<_>>();
+
+        assert!(matches!(parent.overlap, OverlapEvidence::Suppressed { .. }));
+        assert_eq!(parent.recommendation.state, RecommendationState::Available);
+        assert_eq!(children.len(), 2);
+        assert!(
+            children
+                .iter()
+                .all(|child| !matches!(child.overlap, OverlapEvidence::Suppressed { .. }))
+        );
+        assert!(
+            children
+                .iter()
+                .all(|child| child.recommendation.state == RecommendationState::Review)
+        );
+        let first_child_id = children[0].id.clone();
+
+        let mut selection = UserSelection::from_recommendations(&report);
+        let plan = crate::build_cleanup_plan_from_analysis(
+            vec![PathBuf::from("/repo")],
+            Vec::new(),
+            &entries,
+            &report,
+            &selection,
+            &crate::SafetyPolicy::default(),
+        )
+        .expect("inactive children remain reviewable");
+        assert_eq!(plan.items.len(), 2);
+        assert!(plan.items.iter().all(|item| !item.selected));
+
+        selection.select(parent.id.clone());
+        let explicit_parent_plan = crate::build_cleanup_plan_from_analysis(
+            vec![PathBuf::from("/repo")],
+            Vec::new(),
+            &entries,
+            &report,
+            &selection,
+            &crate::SafetyPolicy::default(),
+        )
+        .expect("explicit recent parent remains non-overlapping");
+        assert_eq!(explicit_parent_plan.items.len(), 1);
+        assert_eq!(explicit_parent_plan.items[0].path, Path::new("/repo/cache"));
+        assert!(explicit_parent_plan.items[0].selected);
+
+        let mut overlapping_selection = UserSelection::default();
+        overlapping_selection.select(parent.id.clone());
+        overlapping_selection.select(first_child_id);
+        let error = crate::build_cleanup_plan_from_analysis(
+            vec![PathBuf::from("/repo")],
+            Vec::new(),
+            &entries,
+            &report,
+            &overlapping_selection,
+            &crate::SafetyPolicy::default(),
+        )
+        .expect_err("overlapping selected targets must be rejected");
+        assert!(matches!(
+            error,
+            crate::CleanupPlanBuildError::OverlappingSelection { .. }
+        ));
+
+        let legacy_report = build_analysis_report(
+            as_of,
+            as_of,
+            vec![PathBuf::from("/repo")],
+            &entries,
+            &[],
+            RecommendationPolicy {
+                version: "v1".to_string(),
+                ..RecommendationPolicy::default()
+            },
+        )
+        .expect("v1 policy remains supported");
+        let legacy_parent = legacy_report
+            .candidates
+            .iter()
+            .find(|candidate| candidate.local_path == Path::new("/repo/cache"))
+            .expect("legacy parent candidate");
+        assert!(matches!(
+            legacy_parent.overlap,
+            OverlapEvidence::Primary { .. }
+        ));
+        assert!(legacy_report.candidates.iter().all(|candidate| {
+            candidate.local_path == Path::new("/repo/cache")
+                || candidate.recommendation.state == RecommendationState::Suppressed
+        }));
     }
 
     #[test]

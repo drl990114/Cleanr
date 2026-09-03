@@ -285,20 +285,20 @@ impl Workbench {
             return Ok(());
         }
         let safety = self.safety_policy();
-        let mut analysis = build_analysis_report_with_scan_context(
+        let analysis = build_analysis_report_with_scan_context(
             self.scan_as_of,
             Utc::now(),
             self.roots.clone(),
             &self.entries,
             &self.scan_issues,
-            RecommendationPolicy::new(self.config.recommendations.preselect_after_days)?,
+            RecommendationPolicy::new(self.effective_inactive_days(None))?,
             AnalysisScanContext {
                 budget_exceeded: &self.scan_budget_exceeded,
                 safety_policy: Some(&safety),
+                global: Some(&self.scan_global_evidence),
+                explicit_roots: &self.scan_explicit_roots,
             },
         )?;
-        analysis.scan.global = self.scan_global_evidence.clone();
-        suppress_unrequested_global_candidates(&mut analysis, &self.scan_explicit_roots);
         self.candidate_ids_by_path = analysis
             .candidates
             .iter()
@@ -330,7 +330,8 @@ impl Workbench {
         let Some(analysis) = &self.analysis else {
             return;
         };
-        let plan = match build_cleanup_plan_from_analysis(
+        let inactive_days = analysis.policy.preselect_after_days;
+        let mut plan = match build_cleanup_plan_from_analysis(
             self.roots.clone(),
             self.registry.versions(),
             &self.entries,
@@ -345,18 +346,40 @@ impl Workbench {
                 return;
             }
         };
-        self.status = self.i18n.format(
-            "status_plan_ready",
-            &[
-                ("candidates", plan.summary.candidate_count.to_string()),
-                ("selected", plan.summary.selected_count.to_string()),
-                ("size", format_bytes(plan.summary.selected_size_bytes)),
-            ],
-        );
+        if let Some(source) = plan.source_scan.as_mut() {
+            source.scope = Some(CleanupPlanScanScope::new(
+                self.scan_explicit_roots.clone(),
+                analysis.scan.global.requested_kinds.clone(),
+            ));
+        }
+        self.status = self.plan_ready_status(&plan, inactive_days);
         self.plan = Some(plan);
         if self.view == View::Scan {
             self.select_first();
         }
+    }
+
+    pub(crate) fn plan_ready_status(&self, plan: &CleanupPlan, inactive_days: u16) -> String {
+        let key = if inactive_days == 0 {
+            "status_plan_ready"
+        } else {
+            "status_plan_ready_filtered"
+        };
+        self.i18n.format(
+            key,
+            &[
+                ("candidates", plan.summary.candidate_count.to_string()),
+                ("selected", plan.summary.selected_count.to_string()),
+                ("size", format_bytes(plan.summary.selected_size_bytes)),
+                ("days", inactive_days.to_string()),
+            ],
+        )
+    }
+
+    pub(crate) fn effective_inactive_days(&self, scan_override: Option<u16>) -> u16 {
+        scan_override
+            .or(self.session_inactive_days)
+            .unwrap_or(self.config.recommendations.preselect_after_days)
     }
 
     pub(crate) fn safety_policy(&self) -> SafetyPolicy {
@@ -522,21 +545,16 @@ impl Workbench {
             return;
         }
         let view = self.view;
-        let include_global = !self.scan_global_evidence.requested_kinds.is_empty()
-            || !self.scan_global_evidence.locations.is_empty();
-        let paths = if self.scan_explicit_roots.is_empty() && !include_global {
-            self.roots.clone()
-        } else {
-            self.scan_explicit_roots.clone()
+        let inactive_days = self
+            .analysis
+            .as_ref()
+            .map(|analysis| analysis.policy.preselect_after_days);
+        let mut request = ScanRequest {
+            inactive_days,
+            ..ScanRequest::default()
         };
-        self.start_scan_for_view(
-            ScanRequest {
-                paths,
-                include_global,
-                global_kinds: self.scan_global_evidence.requested_kinds.clone(),
-            },
-            view,
-        );
+        self.reuse_scan_scope_if_unspecified(&mut request);
+        self.start_scan_for_view(request, view);
         if self.scan_rx.is_some() {
             self.status_after_scan = Some(completed_status);
         }

@@ -13,6 +13,12 @@ description: 了解 Cleanr 的扫描、审阅、清理、恢复、快捷键和�
 cleanr ~/projects/app-one ~/projects/app-two
 ```
 
+使用 `--inactive-days <天数>` 可以只覆盖本次运行的候选年龄，不修改配置文件：
+
+```bash
+cleanr --inactive-days 30 ~/projects/app-one
+```
+
 不传路径时使用当前目录。启动 Cleanr 不会立即扫描；需要按 `s` 或运行
 `/scan`。
 
@@ -37,6 +43,12 @@ cleanr ~/projects/app-one ~/projects/app-two
 /scan --global-kind browser-caches
 ```
 
+只为一次扫描覆盖配置的修改时间年龄门槛：
+
+```text
+/scan --inactive-days 30
+```
+
 Windows 常规审阅建议使用更窄、仅包含普通文件的范围：
 
 ```text
@@ -54,14 +66,15 @@ TUI 中输入的路径不会经过 Shell 展开，因此 `~` 和环境变量会�
 ## 审阅和选择候选项
 
 扫描完成后按 `r` 或运行 `/review`。审阅页面会显示候选路径、大小、置信度、
-匹配原因和风险说明。
+匹配原因和风险说明。默认只包含候选目录树中最新观测修改时间达到配置门槛的条目；
+门槛默认是 90 天。
 
 来自内置规则或可信插件的高置信度条目可能会被预选。中低置信度条目，以及
 未信任插件的所有匹配，默认不会选中。
 
-TUI、`cleanr analyze`、`cleanr plan` 和 `cleanr dry-run` 使用同一项
-`[recommendations].preselect_after_days` 策略。默认值是 90 天；设为 `0` 可关闭
-年龄门槛。
+长期门槛通过 `[recommendations].preselect_after_days` 修改；单次运行可使用
+`--inactive-days <天数>` 覆盖。设为 `0` 会移除年龄过滤，显示其他方面仍符合条件的
+全部候选项。修改时间只是文件系统元数据，并不能证明最后访问时间。
 
 审阅时常用快捷键：
 
@@ -111,6 +124,7 @@ Cleanr 不会覆盖已经存在的恢复目标。
 cleanr scan --json /path/to/project
 cleanr analyze /path/to/project
 cleanr plan --output cleanr-plan.json /path/to/project
+cleanr --inactive-days 30 plan --output cleanr-plan.json /path/to/project
 cleanr plan --output cleanr-plan.json --select /exact/candidate /path/to/project
 cleanr dry-run --json /path/to/project
 cleanr clean --plan cleanr-plan.json --plan-sha256 <reviewed-sha256> --authorized-by-user
@@ -118,21 +132,25 @@ cleanr restore list
 cleanr restore run <run-id> --confirm
 ```
 
-`analyze` 始终输出带版本、仅限本地的 `AnalysisReport` JSON；不会创建清理计划或
-移动文件。输出包含真实本地路径，除非自行完成脱敏，否则只应交给本地 Agent。它与
-TUI、`plan` 和 `dry-run` 共用 `[recommendations].preselect_after_days`。`dry-run`
-和 `plan` 只生成清理计划。
+`analyze` 始终输出带版本、仅限本地的 `AnalysisReport` JSON，并保留完整候选证据，
+包括未达到年龄门槛的条目；它不会创建清理计划或移动文件。输出包含真实本地路径，
+除非自行完成脱敏，否则只应交给本地 Agent。`dry-run` 和 `plan` 只生成清理计划。
 
-`plan` 和 `dry-run` 会从确定性推荐开始。可以重复使用 `--select <路径>` 或
-`--deselect <路径>`，记录证据审阅中对确切候选路径作出的选择。目标路径必须存在、
-属于本次扫描的候选项，并且没有被重叠处理抑制或被安全策略排除。需审阅候选项也可以
-用这种方式选中，但 Agent 只有在当前用户对该确切候选路径明确作出决定后才能这样做。
-不要编辑生成的计划文件。
+人类可读的 `cleanr scan` 候选数量会应用当前年龄门槛；`cleanr scan --json` 仍保留
+原始扫描条目。
+
+`plan` 和 `dry-run` 通常只保留满足当前修改时间年龄门槛的候选项。可以重复使用
+`--select <路径>` 或 `--deselect <路径>`，记录证据审阅中对确切候选路径作出的选择。
+显式 `--select` 可以纳入其他方面仍可选择、但修改时间较新或缺失的需审阅候选项。
+目标路径必须存在、属于本次扫描的候选项，并且没有被重叠处理抑制或被安全策略排除。
+Agent 只有在当前用户对该确切候选路径明确作出决定后，才能选择需审阅候选项。不要
+编辑生成的计划文件。
 
 `plan` 写入文件时会打印该文件的 SHA-256。`clean` 只用于当前用户已经审阅并明确
 授权的确切计划。它会校验传入的摘要，重新扫描计划根目录，重新生成确定性计划，并在
-计划发生变化时拒绝执行。重新生成时会保留已审阅的确切选择。它只会把通过校验的条目
-移动到系统回收站并记录执行清单，不会永久删除。恢复仍然要求显式传入 `--confirm`。
+已选目标、扫描来源或安全策略发生变化时拒绝执行。重新生成时会保留已审阅的确切
+选择；仅限未选候选项的变化不会使这些动作失效。它只会把通过校验的条目移动到系统
+回收站并记录执行清单，不会永久删除。恢复仍然要求显式传入 `--confirm`。
 
 ## 斜杠命令
 
@@ -140,9 +158,9 @@ TUI、`plan` 和 `dry-run` 共用 `[recommendations].preselect_after_days`。`dr
 
 | 命令 | 作用 |
 | --- | --- |
-| `/scan [path...] [--global] [--global-kind=<kind>]` | 扫描路径或已知系统清理位置 |
+| `/scan [path...] [--global] [--global-kind=<kind>] [--inactive-days=<天数>]` | 扫描路径或已知系统清理位置，可覆盖本次扫描的年龄门槛 |
 | `/scan --global` | 扫描所有已知系统清理位置 |
-| `/usage [path...] [--global] [--global-kind=<kind>]` | 扫描并打开磁盘用量摘要 |
+| `/usage [path...] [--global] [--global-kind=<kind>] [--inactive-days=<天数>]` | 扫描并打开磁盘用量摘要，可覆盖本次扫描的推荐摘要年龄门槛 |
 | `/usage --global` | 扫描已知系统清理位置并打开用量摘要 |
 | `/review` | 生成并显示清理候选项 |
 | `/plan` | 生成当前清理计划 |
@@ -163,7 +181,8 @@ TUI、`plan` 和 `dry-run` 共用 `[recommendations].preselect_after_days`。`dr
 ## 只查看磁盘用量
 
 按 `u` 或运行 `/usage`。它会执行扫描并打开以大小为主的视图，不会移动文件，
-也不会自动执行清理计划。
+也不会自动执行清理计划。该视图保留完整用量条目；候选和已选摘要指标会应用当前
+年龄门槛，`/usage --inactive-days <天数>` 可为本次扫描覆盖该门槛。
 
 ## 安全取消或退出
 

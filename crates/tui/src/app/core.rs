@@ -12,6 +12,7 @@ impl Workbench {
         Self {
             roots,
             config,
+            session_inactive_days: None,
             registry: Arc::new(registry),
             i18n,
             theme,

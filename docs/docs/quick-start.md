@@ -59,6 +59,13 @@ You can also choose one or more scan roots when launching:
 cleanr ~/projects ~/Downloads
 ```
 
+For a one-time candidate threshold without changing the configuration, add
+`--inactive-days <DAYS>`:
+
+```bash
+cleanr --inactive-days 30 ~/projects
+```
+
 Cleanr opens on its home screen. It does **not** scan or clean anything until
 you start an action.
 
@@ -67,7 +74,8 @@ you start an action.
 Inside the TUI:
 
 1. Press `s` to scan the configured roots.
-2. When the scan finishes, press `r` to review cleanup candidates.
+2. When the scan finishes, press `r` to review candidates that meet the
+   effective observed modification-age threshold.
 3. Move with `j`/`k` or the arrow keys.
 4. Press `space` to select or deselect an item.
 5. Press `c` to review the selected total and open confirmation.
@@ -110,13 +118,15 @@ facts rather than drive the TUI:
 cleanr analyze ~/projects > cleanr-analysis.json
 ```
 
-The command only scans and prints a versioned JSON report. It does not create a
-cleanup plan or move files. The output contains real local paths, so keep it on
-your machine unless you have independently removed sensitive details. See
-[Evidence and privacy](./evidence-and-privacy) for the contract and boundary.
-It shares the TUI, `plan`, and `dry-run` recommendation policy. Change the
-default 90-day age gate in `[recommendations].preselect_after_days` in the
-configuration file when needed.
+The command only scans and prints a versioned JSON report with complete
+candidate evidence, including items outside the age threshold. It does not
+create a cleanup plan or move files. The output contains real local paths, so
+keep it on your machine unless you have independently removed sensitive
+details. See [Evidence and privacy](./evidence-and-privacy) for the contract and
+boundary. The long-term threshold is
+`[recommendations].preselect_after_days` (90 days by default); use
+`--inactive-days <DAYS>` for one invocation. Modification time is filesystem
+metadata, not proof of last access.
 
 Install the repository's cross-agent skill directly from GitHub:
 
