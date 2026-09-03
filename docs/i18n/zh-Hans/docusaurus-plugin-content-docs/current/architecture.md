@@ -12,42 +12,57 @@ description: 面向贡献者的 Cleanr crate、数据流和安全边界说明。
 | Crate | 路径 | 职责 |
 | --- | --- | --- |
 | `cleanr-core` | `crates/core` | 扫描条目、规则命中、证据报告、清理计划、安全策略和清单模型 |
-| `cleanr-cli` | `crates/cli` | 命令行入口、参数解析、只读分析、配置命令和插件管理 |
-| `cleanr-tui` | `crates/tui` | 终端应用、状态机、页面和后台任务编排 |
+| `cleanr-cli` | `crates/cli` | 命令行适配、参数解析、只读输出、分发命令和插件管理 |
+| `cleanr-tui` | `crates/tui` | 终端应用、状态机、页面和后台工作流适配 |
 | `cleanr-fs` | `crates/fs` | 文件系统扫描、元数据收集、取消和 `ScanReport` 生成 |
 | `cleanr-rules` | `crates/rules` | 内置与插件规则加载、校验、匹配和 `RuleRegistry` |
 | `cleanr-plugin-api` | `crates/plugin-api` | 带版本 manifest、发现、兼容性、信任、Schema 和诊断 |
 | `cleanr-config` | `crates/config` | 配置 Schema、默认值、校验和原子写入 |
-| `cleanr-i18n` | `crates/i18n` | 内置与外部语言包、回退和运行时语言切换 |
-| `cleanr-tasks` | `crates/tasks` | 清理执行、系统回收站、恢复和清单持久化 |
+| `cleanr-i18n` | `crates/i18n` | 纯语言包解析、校验、回退和运行时语言切换 |
+| `cleanr-tasks` | `crates/tasks` | 共享扫描/证据/计划工作流、受保护的清理入口、恢复、平台回收站适配和清单持久化 |
 
 ## 运行时数据流
 
 ```text
-CLI 参数 + 配置
-        │
-        ▼
-TUI 状态机 ── 启动扫描任务
-        │               │
-        │               ▼
-        │         cleanr-fs 条目
-        │               │
-        │               ▼
-        │         cleanr-rules 命中
-        │               │
-        ▼               ▼
-用户审阅 ◄──────── 清理计划
-        │
-        ▼
-Workflow 服务 / 本地授权
-        │
-        ▼
-pending 清单 → cleanr-tasks 校验 → 系统回收站 → 清单更新
-        │
-        └────────────────────→ 恢复 → 恢复清单
+CLI 或 TUI 适配 + 配置
+             │
+             ▼
+      cleanr-tasks 工作流
+解析范围 → 扫描 → 规则 → 证据 → 计划
+   │        │      │       │
+   │        │      │       └── cleanr-core
+   │        │      └────────── cleanr-rules
+   │        └───────────────── cleanr-fs
+   ▼
+用户审阅
+   │          │
+   │          └── 委托执行：精确摘要 + 重扫 + 来源校验
+   └───────────── 本地 TUI：明确确认
+                         │
+                         ▼
+pending 清单 → 目标重校验 → 系统回收站 → 清单更新
+                         │
+                         └──────────────→ 恢复 → 恢复清单
 ```
 
 计划生成器会先移除重叠候选项，再计算已选空间和候选项总空间。
+
+仅接收条目列表的 `build_cleanup_plan*` 函数保留为已弃用的兼容 API。产品代码必须
+通过共享工作流使用基于分析报告的构建器，以保留扫描完整性和来源信息。
+
+`cleanr-tasks` 导出的共享工作流是解析范围、扫描、规则标注、生成证据和计划的唯一产品级
+编排层。CLI 与 TUI 只适配参数、进度和展示，不再各自组合底层 crate。
+
+## 内部模块边界
+
+- `cleanr-core` 分离序列化模型、证据、计划、安全策略和执行/恢复清单；
+- `cleanr-fs` 分离范围发现、扫描遍历、预算记账和平台文件身份；
+- `cleanr-rules` 分离 Schema、插件加载、Registry/索引所有权和匹配；
+- `cleanr-tasks` 分离工作流编排、清理、恢复、清单存储和操作系统适配。
+
+CI 中的 `node scripts/check-architecture.mjs` 会守住这些边界：禁止 CLI/TUI 绕过
+共享工作流，禁止公开原始清理执行器，并禁止 `cleanr-i18n` 引入仅分发阶段需要的
+网络依赖。
 
 ## TUI 边界
 
@@ -79,7 +94,10 @@ pending 清单 → cleanr-tasks 校验 → 系统回收站 → 清单更新
 
 - `cleanr-rules` 只允许高置信度可信规则自动选择；
 - `cleanr-core` 在生成计划时排除受保护和重叠候选项，并为选中目录记录指纹；
-- `cleanr-tasks` 要求本地授权，在移动文件前写入 journal，并在执行时重新校验每个目标；
+- `cleanr-tasks` 分别提供本地确认与委托清理入口，原始执行器保持 crate-private；
+  移动文件前会写入 journal，并在执行时重新校验每个目标；
+- 委托清理将授权绑定到已审阅计划的精确 SHA-256 摘要，重建保存的扫描范围和
+  推荐策略，重新扫描，并在计划或来源漂移时拒绝执行；
 - 回收站后端在平台支持时记录回滚信息；
 - `cleanr analyze` 只读，不能创建清理授权或调用清理；
 - 这个接口不会把扫描证据交给内置模型或 Provider。

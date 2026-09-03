@@ -8,7 +8,10 @@ mod theme;
 mod views;
 
 pub use app::Workbench;
-pub use terminal::{TuiOptions, UpdateNotice, run, run_with_inactivity_override};
+pub use terminal::{
+    TuiOptions, UpdateNotice, run, run_with_config_path_and_inactivity_override,
+    run_with_inactivity_override,
+};
 pub use theme::Theme;
 
 #[cfg(test)]

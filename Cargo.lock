@@ -320,12 +320,10 @@ dependencies = [
  "anyhow",
  "cleanr-config",
  "cleanr-plugin-api",
- "reqwest",
  "rust-i18n",
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2",
  "tempfile",
 ]
 
@@ -366,10 +364,14 @@ version = "0.13.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "cleanr-config",
  "cleanr-core",
+ "cleanr-fs",
+ "cleanr-rules",
  "objc2-foundation",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "trash",
  "uuid",

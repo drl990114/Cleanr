@@ -12,11 +12,9 @@ use std::{
 use chrono::{DateTime, Utc};
 use cleanr_config::{Config, default_config_path, default_state_dir};
 use cleanr_core::{
-    AnalysisReport, AnalysisScanContext, CandidateId, CleanupPlan, CleanupPlanScanScope,
-    ExecutionManifest, GlobalScanEvidence, RecommendationPolicy, RecommendationPolicyError,
-    RecommendationState, SafetyPolicy, ScanBudgetExceeded, ScanEntry, ScanIssue, ScanRequest,
-    ScanSummary, UserSelection, build_analysis_report_with_scan_context,
-    build_cleanup_plan_from_analysis,
+    AnalysisReport, CandidateId, CleanupPlan, ExecutionManifest, GlobalScanEvidence,
+    RecommendationPolicy, RecommendationPolicyError, RecommendationState, SafetyPolicy,
+    ScanBudgetExceeded, ScanEntry, ScanIssue, ScanRequest, ScanSummary, UserSelection,
 };
 use cleanr_fs::ScanOptions;
 use cleanr_i18n::I18n;
@@ -24,7 +22,10 @@ use cleanr_plugin_api::PluginDiagnostic;
 use cleanr_rules::RuleRegistry;
 #[cfg(test)]
 use cleanr_tasks::CleanupExecutor;
-use cleanr_tasks::restored_run_ids;
+use cleanr_tasks::{
+    build_workflow_analysis_from_parts, build_workflow_plan, restored_run_ids,
+    safety_policy_for_config,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::ListState;
 
@@ -114,6 +115,7 @@ impl DurationRecorder {
 pub struct Workbench {
     pub(crate) roots: Vec<PathBuf>,
     pub(crate) config: Config,
+    pub(crate) config_path: Option<PathBuf>,
     /// One-process override supplied at TUI startup; never written back to `Config`.
     pub(crate) session_inactive_days: Option<u16>,
     pub(crate) registry: Arc<RuleRegistry>,

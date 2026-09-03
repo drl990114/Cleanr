@@ -12,21 +12,19 @@ use std::{
 use anyhow::{Context, Result};
 use cleanr_config::Config;
 use cleanr_core::{
-    AnalysisReport, AnalysisScanContext, CandidateId, CleanupPlan, CleanupPlanScanScope, EntryKind,
-    ExecutionManifest, GlobalScanEvidence, GlobalScanKind, RecommendationPolicy, RestoreManifest,
-    SafetyPolicy, ScanEntry, ScanRequest, UserSelection, build_analysis_report_with_scan_context,
-    build_cleanup_plan_from_analysis,
+    AnalysisReport, CandidateId, CleanupPlan, EntryKind, ExecutionManifest, GlobalScanEvidence,
+    GlobalScanKind, RecommendationPolicy, RestoreManifest, SafetyPolicy, ScanEntry, ScanRequest,
+    UserSelection,
 };
-use cleanr_fs::{
-    ResolvedScanRoots, ScanOptions, ScanPhase, ScanProgress, ScanReport, global_scan_evidence,
-    resolve_scan_roots_with_locations, scan_resolved_paths_with_progress_cancellable_started_at,
-};
+use cleanr_fs::{ScanOptions, ScanPhase, ScanProgress, ScanReport};
 use cleanr_i18n::I18n;
 use cleanr_plugin_api::discover_bundles;
 use cleanr_rules::RuleRegistry;
 use cleanr_tasks::{
-    CleanupAuthorization, CleanupExecutor, ManifestRepository, SystemRestoreExecutor,
-    execute_cleanup_plan, restore_execution_manifest, write_cleanup_plan,
+    CleanupExecutor, ManifestRepository, ScanPreparationMode as WorkflowPreparationMode,
+    ScanWorkflowError, ScanWorkflowInput, ScanWorkflowObserver, ScanWorkflowStage,
+    SystemRestoreExecutor, execute_locally_confirmed_plan_with_executor,
+    restore_execution_manifest, run_scan_workflow, write_cleanup_plan,
 };
 
 pub(crate) enum TaskEvent {
@@ -204,215 +202,68 @@ fn run_scan_worker(
     cancellation: &AtomicBool,
     progress: &mut ScanProgressRecorder<'_>,
 ) -> std::result::Result<PreparedScan, ScanFailure> {
-    progress.emit_stage(ScanStage::Resolving);
-    ensure_scan_active(cancellation)?;
-    let mut explicit_roots = Vec::with_capacity(request.paths.len());
-    for path in &request.paths {
-        ensure_scan_active(cancellation)?;
-        explicit_roots.push(path.canonicalize().unwrap_or_else(|_| path.clone()));
-    }
-    let resolved = resolve_scan_roots_with_locations(
-        &request,
-        &configured_global_kinds,
-        preparation.registry.scan_locations(),
-    )
-    .map_err(|error| scan_failure(error, cancellation))?;
-    ensure_scan_active(cancellation)?;
-    if resolved.roots.is_empty() {
-        return Err(ScanFailure::NoGlobalRoots);
-    }
-    progress.emit_stage(ScanStage::Scanning);
-    ensure_scan_active(cancellation)?;
-    let report = scan_resolved_scope(&resolved, &options, cancellation, progress)?;
-    ensure_scan_active(cancellation)?;
-    let global_scan = global_scan_evidence(
-        &request,
-        &configured_global_kinds,
-        &resolved,
-        &report.completed_roots,
-    );
-
-    prepare_scan(
-        report,
-        explicit_roots,
-        global_scan,
-        preparation,
-        cancellation,
+    let recommendation_policy = RecommendationPolicy::new(preparation.preselect_after_days)
+        .map_err(|error| ScanFailure::Message(error.to_string()))?;
+    let prepared = run_scan_workflow(
+        ScanWorkflowInput {
+            request,
+            configured_global_kinds,
+            options,
+            registry: Arc::clone(&preparation.registry),
+            safety_policy: preparation.safety_policy,
+            recommendation_policy,
+            preparation_mode: WorkflowPreparationMode::Interactive,
+        },
+        Some(cancellation),
         progress,
     )
-}
+    .map_err(workflow_scan_failure)?;
 
-fn scan_resolved_scope(
-    resolved: &ResolvedScanRoots,
-    options: &ScanOptions,
-    cancellation: &AtomicBool,
-    progress: &mut ScanProgressRecorder<'_>,
-) -> std::result::Result<ScanReport, ScanFailure> {
-    scan_resolved_paths_with_progress_cancellable_started_at(
-        resolved,
-        options,
-        cancellation,
-        progress.started_at,
-        |sample| progress.emit_filesystem_progress(sample),
-    )
-    .map_err(|error| scan_failure(error, cancellation))
-}
-
-fn prepare_scan(
-    mut report: ScanReport,
-    explicit_roots: Vec<PathBuf>,
-    global_scan: GlobalScanEvidence,
-    preparation: ScanPreparation,
-    cancellation: &AtomicBool,
-    progress: &mut ScanProgressRecorder<'_>,
-) -> std::result::Result<PreparedScan, ScanFailure> {
-    progress.emit_stage(ScanStage::Rules);
-    ensure_scan_active(cancellation)?;
-    preparation
-        .registry
-        .annotate_entries_at(&mut report.entries, report.as_of);
-    ensure_scan_active(cancellation)?;
-
-    let candidate_entry_indices = report
-        .entries
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| (!entry.rule_hits.is_empty()).then_some(index))
-        .collect::<Vec<_>>();
-    let candidate_count = candidate_entry_indices.len();
-
-    let planning = if report.budget_exceeded.is_empty() {
-        progress.emit_stage(ScanStage::Evidence);
-        ensure_scan_active(cancellation)?;
-        let evidence = if report.entries.is_empty() {
-            Ok(None)
-        } else {
-            prepare_evidence(&report, &explicit_roots, &global_scan, &preparation).map(Some)
-        };
-        ensure_scan_active(cancellation)?;
-
-        progress.emit_stage(ScanStage::Plan);
-        ensure_scan_active(cancellation)?;
-        let planning = match evidence {
-            Ok(Some(evidence)) => prepare_plan(
-                &report,
-                evidence,
-                &preparation,
-                &explicit_roots,
-                &global_scan,
-            )
-            .map(Some),
-            Ok(None) => Ok(None),
-            Err(error) => Err(error),
-        };
-        ensure_scan_active(cancellation)?;
-        planning
-    } else {
-        // Budget-limited evidence is useful for review but can never produce a plan. Avoid the
-        // otherwise O(N) analysis/selection pass that would immediately be discarded.
-        Ok(None)
+    let planning = match (prepared.analysis, prepared.plan) {
+        (Some(analysis), Some(plan)) => {
+            let candidate_ids_by_path = analysis
+                .candidates
+                .iter()
+                .map(|candidate| (candidate.local_path.clone(), candidate.id.clone()))
+                .collect();
+            Ok(Some(PreparedPlanning {
+                analysis,
+                candidate_ids_by_path,
+                selection: prepared.selection,
+                plan,
+            }))
+        }
+        (None, None) => Ok(None),
+        _ => Err("scan workflow returned incomplete planning state".to_string()),
     };
-
     let usage = if preparation.prepare_usage {
         progress.emit_stage(ScanStage::Usage);
         ensure_scan_active(cancellation)?;
-        let usage = build_usage_projection(&report.entries, &report.summary.roots);
-        ensure_scan_active(cancellation)?;
-        Some(usage)
+        Some(build_usage_projection(
+            &prepared.report.entries,
+            &prepared.report.summary.roots,
+        ))
     } else {
         None
     };
 
     Ok(PreparedScan {
-        report,
-        explicit_roots,
-        global_scan,
-        candidate_count,
-        candidate_entry_indices,
+        report: prepared.report,
+        explicit_roots: prepared.explicit_roots,
+        global_scan: prepared.global_scan,
+        candidate_count: prepared.candidate_count,
+        candidate_entry_indices: prepared.candidate_entry_indices,
         usage,
         planning,
     })
 }
 
-struct PreparedEvidence {
-    analysis: AnalysisReport,
-    candidate_ids_by_path: HashMap<PathBuf, CandidateId>,
-    selection: UserSelection,
-}
-
-fn prepare_evidence(
-    report: &ScanReport,
-    explicit_roots: &[PathBuf],
-    global_scan: &GlobalScanEvidence,
-    preparation: &ScanPreparation,
-) -> std::result::Result<PreparedEvidence, String> {
-    let recommendation_policy = RecommendationPolicy::new(preparation.preselect_after_days)
-        .map_err(|error| error.to_string())?;
-    let scan_roots = report.summary.roots.clone();
-    let analysis = build_analysis_report_with_scan_context(
-        report.as_of,
-        chrono::Utc::now(),
-        scan_roots.clone(),
-        &report.entries,
-        &report.issues,
-        recommendation_policy,
-        AnalysisScanContext {
-            budget_exceeded: &report.budget_exceeded,
-            safety_policy: Some(&preparation.safety_policy),
-            global: Some(global_scan),
-            explicit_roots,
-        },
-    )
-    .map_err(|error| error.to_string())?;
-
-    let candidate_ids_by_path = analysis
-        .candidates
-        .iter()
-        .map(|candidate| (candidate.local_path.clone(), candidate.id.clone()))
-        .collect();
-    let selection = UserSelection::from_recommendations(&analysis);
-
-    Ok(PreparedEvidence {
-        analysis,
-        candidate_ids_by_path,
-        selection,
-    })
-}
-
-fn prepare_plan(
-    report: &ScanReport,
-    evidence: PreparedEvidence,
-    preparation: &ScanPreparation,
-    explicit_roots: &[PathBuf],
-    global_scan: &GlobalScanEvidence,
-) -> std::result::Result<PreparedPlanning, String> {
-    let PreparedEvidence {
-        analysis,
-        candidate_ids_by_path,
-        selection,
-    } = evidence;
-    let mut plan = build_cleanup_plan_from_analysis(
-        report.summary.roots.clone(),
-        preparation.registry.versions(),
-        &report.entries,
-        &analysis,
-        &selection,
-        &preparation.safety_policy,
-    )
-    .map_err(|error| error.to_string())?;
-    if let Some(source) = plan.source_scan.as_mut() {
-        source.scope = Some(CleanupPlanScanScope::new(
-            explicit_roots.to_vec(),
-            global_scan.requested_kinds.clone(),
-        ));
+fn workflow_scan_failure(error: ScanWorkflowError) -> ScanFailure {
+    match error {
+        ScanWorkflowError::Cancelled => ScanFailure::Cancelled,
+        ScanWorkflowError::NoRoots => ScanFailure::NoGlobalRoots,
+        ScanWorkflowError::Message(message) => ScanFailure::Message(message),
     }
-
-    Ok(PreparedPlanning {
-        analysis,
-        candidate_ids_by_path,
-        selection,
-        plan,
-    })
 }
 
 fn ensure_scan_active(cancellation: &AtomicBool) -> std::result::Result<(), ScanFailure> {
@@ -420,14 +271,6 @@ fn ensure_scan_active(cancellation: &AtomicBool) -> std::result::Result<(), Scan
         Err(ScanFailure::Cancelled)
     } else {
         Ok(())
-    }
-}
-
-fn scan_failure(error: anyhow::Error, cancellation: &AtomicBool) -> ScanFailure {
-    if cleanr_fs::is_scan_cancelled(&error) || cancellation.load(Ordering::Relaxed) {
-        ScanFailure::Cancelled
-    } else {
-        ScanFailure::Message(error.to_string())
     }
 }
 
@@ -442,6 +285,23 @@ struct ScanProgressRecorder<'a> {
     phases: Vec<ScanPhaseTiming>,
     longest_progress_gap: Duration,
     latest: ScanTaskProgress,
+}
+
+impl ScanWorkflowObserver for ScanProgressRecorder<'_> {
+    fn stage_changed(&mut self, stage: ScanWorkflowStage) {
+        let stage = match stage {
+            ScanWorkflowStage::Resolving => ScanStage::Resolving,
+            ScanWorkflowStage::Scanning => ScanStage::Scanning,
+            ScanWorkflowStage::Rules => ScanStage::Rules,
+            ScanWorkflowStage::Evidence => ScanStage::Evidence,
+            ScanWorkflowStage::Plan => ScanStage::Plan,
+        };
+        self.emit_stage(stage);
+    }
+
+    fn filesystem_progress(&mut self, progress: &ScanProgress) {
+        self.emit_filesystem_progress(progress.clone());
+    }
 }
 
 impl<'a> ScanProgressRecorder<'a> {
@@ -678,8 +538,10 @@ pub(crate) fn execute_cleanup(
     state_dir: &Path,
     user_authorized: bool,
 ) -> Result<ExecutionManifest> {
-    let authorization = user_authorized.then(CleanupAuthorization::explicit_user_confirmation);
-    execute_cleanup_plan(plan, executor, state_dir, authorization.as_ref())
+    if !user_authorized {
+        anyhow::bail!("cleanup requires explicit local user authorization");
+    }
+    execute_locally_confirmed_plan_with_executor(plan, executor, state_dir)
 }
 
 pub(crate) fn restore_cleanup(
@@ -703,13 +565,14 @@ mod tests {
 
     #[test]
     fn scan_failure_distinguishes_typed_cancellation_from_matching_text() {
-        let cancellation = AtomicBool::new(false);
         assert!(matches!(
-            scan_failure(anyhow::Error::new(cleanr_fs::ScanCancelled), &cancellation),
+            workflow_scan_failure(ScanWorkflowError::Cancelled),
             ScanFailure::Cancelled
         ));
 
-        let failure = scan_failure(anyhow::anyhow!(cleanr_fs::SCAN_CANCELLED), &cancellation);
+        let failure = workflow_scan_failure(ScanWorkflowError::Message(
+            cleanr_fs::SCAN_CANCELLED.to_string(),
+        ));
         assert!(matches!(
             failure,
             ScanFailure::Message(message) if message == cleanr_fs::SCAN_CANCELLED
@@ -719,33 +582,26 @@ mod tests {
     #[test]
     fn budget_limited_scan_skips_analysis_and_plan_preparation() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let report = ScanReport {
-            entries: vec![ScanEntry {
-                path: temp.path().join("candidate"),
-                kind: EntryKind::Directory,
-                size_bytes: 1024,
-                modified_at: None,
-                rule_hits: Vec::new(),
-            }],
-            budget_exceeded: vec![cleanr_core::ScanBudgetExceeded::EntryCount {
-                limit: 1,
-                observed: 2,
-            }],
-            ..ScanReport::default()
-        };
+        std::fs::write(temp.path().join("one"), b"one").expect("first entry");
+        std::fs::write(temp.path().join("two"), b"two").expect("second entry");
         let (sender, _receiver) = mpsc::channel();
         let (sample_sender, _sample_receiver) = mpsc::sync_channel(1);
         let mut progress = ScanProgressRecorder::new(9, &sender, &sample_sender);
 
-        let prepared = prepare_scan(
-            report,
+        let prepared = run_scan_worker(
+            ScanRequest::paths(vec![temp.path().to_path_buf()]),
             Vec::new(),
-            GlobalScanEvidence::default(),
+            ScanOptions {
+                budgets: cleanr_core::ScanBudgetLimits {
+                    entries: 1,
+                    ..cleanr_core::ScanBudgetLimits::default()
+                },
+                ..ScanOptions::default()
+            },
             ScanPreparation {
                 registry: Arc::new(RuleRegistry::builtin().expect("builtin rules")),
                 safety_policy: SafetyPolicy::new(Vec::new(), true),
-                // This would fail RecommendationPolicy validation if evidence preparation ran.
-                preselect_after_days: u16::MAX,
+                preselect_after_days: 90,
                 prepare_usage: false,
             },
             &AtomicBool::new(false),
@@ -757,48 +613,7 @@ mod tests {
     }
 
     #[test]
-    fn resolved_scan_preserves_prepared_roots_without_second_normalization() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        std::fs::write(temp.path().join("entry"), b"data").expect("write");
-        let prepared_root = temp.path().join(".");
-        let resolved = ResolvedScanRoots {
-            // A user-provided scan entry would canonicalize and deduplicate this list. The
-            // resolved entry point must preserve it exactly because resolution already happened.
-            roots: vec![prepared_root.clone(), prepared_root],
-            ..ResolvedScanRoots::default()
-        };
-        let (sender, _receiver) = mpsc::channel();
-        let (sample_sender, _sample_receiver) = mpsc::sync_channel(1);
-        let mut progress = ScanProgressRecorder::new(1, &sender, &sample_sender);
-
-        let report = scan_resolved_scope(
-            &resolved,
-            &ScanOptions::default(),
-            &AtomicBool::new(false),
-            &mut progress,
-        )
-        .expect("resolved scan");
-
-        assert_eq!(report.summary.roots, resolved.roots);
-        assert_eq!(report.summary.roots.len(), 2);
-    }
-
-    #[test]
     fn empty_resolved_scope_never_falls_back_to_current_directory() {
-        let empty = ResolvedScanRoots::default();
-        let (sender, _receiver) = mpsc::channel();
-        let (sample_sender, _sample_receiver) = mpsc::sync_channel(1);
-        let mut progress = ScanProgressRecorder::new(2, &sender, &sample_sender);
-        let report = scan_resolved_scope(
-            &empty,
-            &ScanOptions::default(),
-            &AtomicBool::new(false),
-            &mut progress,
-        )
-        .expect("empty resolved scan");
-        assert!(report.summary.roots.is_empty());
-        assert!(report.entries.is_empty());
-
         let (sender, _receiver) = mpsc::channel();
         let (sample_sender, _sample_receiver) = mpsc::sync_channel(1);
         let mut progress = ScanProgressRecorder::new(3, &sender, &sample_sender);

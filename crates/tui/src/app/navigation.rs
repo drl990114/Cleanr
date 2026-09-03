@@ -334,7 +334,7 @@ impl Workbench {
         let new_locale = pack.locale.clone();
         self.i18n.set_locale(&new_locale);
         self.config.i18n.locale = Some(new_locale);
-        if let Some(path) = default_config_path()
+        if let Some(path) = self.config_path.clone()
             && let Err(error) = save_config(&self.config, &path)
         {
             self.status = error.to_string();

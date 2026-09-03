@@ -285,19 +285,16 @@ impl Workbench {
             return Ok(());
         }
         let safety = self.safety_policy();
-        let analysis = build_analysis_report_with_scan_context(
+        let analysis = build_workflow_analysis_from_parts(
             self.scan_as_of,
-            Utc::now(),
             self.roots.clone(),
             &self.entries,
             &self.scan_issues,
+            &self.scan_budget_exceeded,
             RecommendationPolicy::new(self.effective_inactive_days(None))?,
-            AnalysisScanContext {
-                budget_exceeded: &self.scan_budget_exceeded,
-                safety_policy: Some(&safety),
-                global: Some(&self.scan_global_evidence),
-                explicit_roots: &self.scan_explicit_roots,
-            },
+            &safety,
+            &self.scan_explicit_roots,
+            &self.scan_global_evidence,
         )?;
         self.candidate_ids_by_path = analysis
             .candidates
@@ -331,13 +328,15 @@ impl Workbench {
             return;
         };
         let inactive_days = analysis.policy.preselect_after_days;
-        let mut plan = match build_cleanup_plan_from_analysis(
+        let plan = match build_workflow_plan(
             self.roots.clone(),
             self.registry.versions(),
             &self.entries,
             analysis,
             &self.selection,
             &policy,
+            &self.scan_explicit_roots,
+            &self.scan_global_evidence,
         ) {
             Ok(plan) => plan,
             Err(error) => {
@@ -346,12 +345,6 @@ impl Workbench {
                 return;
             }
         };
-        if let Some(source) = plan.source_scan.as_mut() {
-            source.scope = Some(CleanupPlanScanScope::new(
-                self.scan_explicit_roots.clone(),
-                analysis.scan.global.requested_kinds.clone(),
-            ));
-        }
         self.status = self.plan_ready_status(&plan, inactive_days);
         self.plan = Some(plan);
         if self.view == View::Scan {
@@ -383,17 +376,11 @@ impl Workbench {
     }
 
     pub(crate) fn safety_policy(&self) -> SafetyPolicy {
-        let mut protected = Vec::new();
-        protected.extend(cleanr_config::home_dir());
-        protected.extend(default_config_path());
-        if let Ok(executable) = std::env::current_exe() {
-            protected.push(executable);
-        }
-        let mut protected_subtrees = vec![self.state_dir.clone()];
-        protected_subtrees.extend(self.config.plugins.dirs.iter().cloned());
-        protected_subtrees.extend(self.config.i18n.dirs.iter().cloned());
-        SafetyPolicy::new(protected, self.config.cleanup.require_confirm)
-            .with_protected_subtrees(protected_subtrees)
+        safety_policy_for_config(
+            &self.config,
+            self.config_path.clone(),
+            self.state_dir.clone(),
+        )
     }
 
     pub(crate) fn export_plan(&mut self, path: Option<PathBuf>) {

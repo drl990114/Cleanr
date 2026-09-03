@@ -1,28 +1,29 @@
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::{borrow::Cow, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
-use chrono::Utc;
-use cleanr_config::{Config, default_config_path, default_state_dir};
+#[cfg(test)]
+use cleanr_config::Config;
+use cleanr_config::default_state_dir;
 use cleanr_core::{
-    AnalysisReport, AnalysisScanContext, CleanupPlan, CleanupPlanBuildError, CleanupPlanScanScope,
-    GlobalScanEvidence, RecommendationPolicy, RecommendationState, SafetyPolicy, ScanRequest,
-    UserSelection, build_analysis_report_with_scan_context, build_cleanup_plan_from_analysis,
+    AnalysisReport, CleanupPlan, GlobalScanEvidence, RecommendationPolicy, RecommendationState,
+    RulesetVersion, SafetyPolicy, ScanRequest,
 };
-use cleanr_fs::{
-    ResolvedScanRoots, ScanOptions, ScanReport, global_scan_evidence,
-    resolve_scan_roots_with_locations, scan_resolved_paths_started_at,
-};
-use cleanr_rules::RuleRegistry;
+use cleanr_fs::ScanReport;
 use cleanr_tasks::{
-    CleanupAuthorization, ManifestRepository, SystemRestoreExecutor, TrashExecutor,
-    execute_cleanup_plan, restore_execution_manifest, restored_run_ids, write_cleanup_plan,
+    DelegatedCleanupRequest, ManifestRepository, ScanPreparationMode, SystemRestoreExecutor,
+    build_workflow_analysis, build_workflow_plan, execute_delegated_cleanup,
+    restore_execution_manifest, restored_run_ids, run_configured_scan, selection_with_overrides,
+    write_cleanup_plan,
+};
+#[cfg(test)]
+use cleanr_tasks::{
+    exact_selection, recommendation_policy, recommendation_policy_for_plan_rescan,
+    validate_plan_sha256 as validate_sha256, verify_plan_unchanged as ensure_plan_unchanged,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
+
+pub use cleanr_tasks::SelectionOverrides;
 
 pub struct ScanCommand {
     pub config_path: Option<PathBuf>,
@@ -51,12 +52,6 @@ pub struct DryRunCommand {
     pub output: Option<PathBuf>,
 }
 
-#[derive(Debug, Default)]
-pub struct SelectionOverrides {
-    pub select_paths: Vec<PathBuf>,
-    pub deselect_paths: Vec<PathBuf>,
-}
-
 pub struct CleanCommand {
     pub config_path: Option<PathBuf>,
     pub plan_path: PathBuf,
@@ -65,13 +60,15 @@ pub struct CleanCommand {
 }
 
 struct WorkflowScan {
+    #[cfg(test)]
     config: Config,
-    config_path: Option<PathBuf>,
     recommendation_policy: RecommendationPolicy,
-    registry: RuleRegistry,
+    ruleset_versions: Vec<RulesetVersion>,
     roots: Vec<PathBuf>,
     explicit_roots: Vec<PathBuf>,
     global_scan: GlobalScanEvidence,
+    analysis: Option<AnalysisReport>,
+    safety_policy: SafetyPolicy,
     report: ScanReport,
 }
 
@@ -111,9 +108,8 @@ pub fn analyze(command: AnalyzeCommand) -> Result<()> {
         command.request,
         ScanPreparationMode::Evidence,
     )?;
-    let safety = safety_policy(&scan.config, scan.config_path.clone());
-    let report = build_analysis_report(&scan, &safety)?;
-    println!("{}", serde_json::to_string_pretty(&report)?);
+    let report = build_analysis_report(&scan, &scan.safety_policy)?;
+    println!("{}", serde_json::to_string_pretty(report.as_ref())?);
     Ok(())
 }
 
@@ -152,71 +148,12 @@ pub fn dry_run(command: DryRunCommand) -> Result<()> {
 }
 
 pub fn clean(command: CleanCommand) -> Result<()> {
-    if !command.authorized_by_user {
-        bail!("cleanup requires --authorized-by-user for the exact reviewed plan");
-    }
-    validate_sha256(&command.plan_sha256)?;
-    let plan_bytes = std::fs::read(&command.plan_path).with_context(|| {
-        format!(
-            "failed to read cleanup plan {}",
-            command.plan_path.display()
-        )
+    let manifest = execute_delegated_cleanup(DelegatedCleanupRequest {
+        config_path: command.config_path,
+        plan_path: command.plan_path,
+        plan_sha256: command.plan_sha256,
+        authorized_by_user: command.authorized_by_user,
     })?;
-    let actual_sha256 = format!("{:x}", Sha256::digest(&plan_bytes));
-    if !actual_sha256.eq_ignore_ascii_case(&command.plan_sha256) {
-        bail!(
-            "cleanup plan SHA-256 changed after authorization: expected {}, found {}",
-            command.plan_sha256,
-            actual_sha256
-        );
-    }
-    let expected_plan: CleanupPlan = serde_json::from_slice(&plan_bytes).with_context(|| {
-        format!(
-            "failed to parse cleanup plan {}",
-            command.plan_path.display()
-        )
-    })?;
-    ensure_plan_source_scan_is_executable(&expected_plan)?;
-    if expected_plan.summary.selected_count == 0 {
-        bail!("cleanup plan has no selected items");
-    }
-
-    let recommendation_policy = expected_plan
-        .source_scan
-        .as_ref()
-        .and_then(|source| source.recommendation_policy.clone());
-    let rescan_request = expected_plan
-        .source_scan
-        .as_ref()
-        .and_then(|source| source.scope.as_ref())
-        .map_or_else(
-            || ScanRequest::paths(expected_plan.scan_roots.clone()),
-            CleanupPlanScanScope::to_scan_request,
-        );
-    let mut scan = run_scan_with_recommendation_policy(
-        command.config_path,
-        rescan_request,
-        ScanPreparationMode::Planning,
-        recommendation_policy,
-    )?;
-    apply_legacy_plan_policy_compatibility(&expected_plan, &mut scan);
-    let selected_paths = expected_plan
-        .items
-        .iter()
-        .filter(|item| item.selected)
-        .map(|item| item.path.clone())
-        .collect();
-    let current_plan = build_plan(&scan, PlanSelection::ExactPaths(selected_paths))?;
-    ensure_plan_unchanged(&expected_plan, &current_plan)?;
-
-    let authorization = CleanupAuthorization::explicit_user_delegation();
-    let state_dir = default_state_dir();
-    let manifest = execute_cleanup_plan(
-        &current_plan,
-        &TrashExecutor,
-        &state_dir,
-        Some(&authorization),
-    )?;
     println!(
         "Cleanup run {} moved {} item(s) to trash; {} failed. Restore with `cleanr restore run {} --confirm`.",
         manifest.run_id, manifest.summary.succeeded, manifest.summary.failed, manifest.run_id
@@ -267,15 +204,6 @@ pub fn restore_run(run_id: &str, confirm: bool) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ScanPreparationMode {
-    /// Preserve rule-derived candidates for read-only scan and analysis output, including partial
-    /// budget evidence.
-    Evidence,
-    /// Planning can never consume budget-limited evidence, so avoid rule annotation in that case.
-    Planning,
-}
-
 fn run_scan(
     config_path: Option<PathBuf>,
     request: ScanRequest,
@@ -290,84 +218,50 @@ fn run_scan_with_recommendation_policy(
     preparation_mode: ScanPreparationMode,
     policy_override: Option<RecommendationPolicy>,
 ) -> Result<WorkflowScan> {
-    let config_path_for_policy = config_path.clone().or_else(default_config_path);
-    let config = load_config(config_path)?;
-    let recommendation_policy = match policy_override {
-        Some(policy) => {
-            policy.validate()?;
-            policy
-        }
-        None => recommendation_policy(&config, request.inactive_days)?,
-    };
-    let registry = RuleRegistry::load(&config)?;
-    let scan_started_at = Instant::now();
-    let resolved = resolve_scan_roots_with_locations(
-        &request,
-        &config.scan.global_kinds,
-        registry.scan_locations(),
-    )?;
-    let explicit_roots = semantic_explicit_roots(&request, &resolved);
-    let options = ScanOptions {
-        stay_on_filesystem: config.scan.stay_on_filesystem,
-        ignore_dirs: config.scan.ignore_dirs.clone(),
-        ignore_patterns: config.scan.ignore_patterns.clone(),
-        budgets: config.scan.budgets.limits()?,
-        ..ScanOptions::default()
-    };
-    let mut report = scan_resolved_paths_started_at(&resolved, &options, scan_started_at)?;
-    if preparation_mode == ScanPreparationMode::Evidence || report.budget_exceeded.is_empty() {
-        registry.annotate_entries_at(&mut report.entries, report.as_of);
-    }
-    let roots = report.summary.roots.clone();
-    let global_scan = global_scan_evidence(
-        &request,
-        &config.scan.global_kinds,
-        &resolved,
-        &report.completed_roots,
-    );
+    let mut observer = ();
+    let configured = run_configured_scan(
+        config_path,
+        request,
+        preparation_mode,
+        policy_override,
+        None,
+        &mut observer,
+    )
+    .map_err(anyhow::Error::new)?;
+    let prepared = configured.prepared;
+    let roots = prepared.report.summary.roots.clone();
     Ok(WorkflowScan {
-        config,
-        config_path: config_path_for_policy,
-        recommendation_policy,
-        registry,
+        #[cfg(test)]
+        config: configured.config,
+        recommendation_policy: prepared.recommendation_policy,
+        ruleset_versions: prepared.ruleset_versions,
         roots,
-        explicit_roots,
-        global_scan,
-        report,
+        explicit_roots: prepared.explicit_roots,
+        global_scan: prepared.global_scan,
+        analysis: prepared.analysis,
+        safety_policy: prepared.safety_policy,
+        report: prepared.report,
     })
 }
 
-fn semantic_explicit_roots(request: &ScanRequest, resolved: &ResolvedScanRoots) -> Vec<PathBuf> {
-    if request.paths.is_empty() && !request.include_global {
-        return resolved.roots.clone();
+fn build_analysis_report<'a>(
+    scan: &'a WorkflowScan,
+    safety: &SafetyPolicy,
+) -> Result<Cow<'a, AnalysisReport>> {
+    if let Some(analysis) = &scan.analysis {
+        return Ok(Cow::Borrowed(analysis));
     }
-    request
-        .paths
-        .iter()
-        .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
-        .collect()
-}
-
-fn build_analysis_report(scan: &WorkflowScan, safety: &SafetyPolicy) -> Result<AnalysisReport> {
-    Ok(build_analysis_report_with_scan_context(
-        scan.report.as_of,
-        Utc::now(),
-        scan.roots.clone(),
-        &scan.report.entries,
-        &scan.report.issues,
+    Ok(Cow::Owned(build_workflow_analysis(
+        &scan.report,
         scan.recommendation_policy.clone(),
-        AnalysisScanContext {
-            budget_exceeded: &scan.report.budget_exceeded,
-            safety_policy: Some(safety),
-            global: Some(&scan.global_scan),
-            explicit_roots: &scan.explicit_roots,
-        },
-    )?)
+        safety,
+        &scan.explicit_roots,
+        &scan.global_scan,
+    )?))
 }
 
 fn inactivity_qualified_candidate_count(scan: &WorkflowScan) -> Result<usize> {
-    let safety = safety_policy(&scan.config, scan.config_path.clone());
-    let analysis = build_analysis_report(scan, &safety)?;
+    let analysis = build_analysis_report(scan, &scan.safety_policy)?;
     Ok(analysis
         .candidates
         .iter()
@@ -384,250 +278,34 @@ fn inactivity_qualified_candidate_count(scan: &WorkflowScan) -> Result<usize> {
 
 enum PlanSelection {
     Recommendations(SelectionOverrides),
+    #[cfg(test)]
     ExactPaths(Vec<PathBuf>),
 }
 
 fn build_plan(scan: &WorkflowScan, requested_selection: PlanSelection) -> Result<CleanupPlan> {
     if !scan.report.budget_exceeded.is_empty() {
-        return Err(CleanupPlanBuildError::ScanBudgetExceeded.into());
+        bail!("scan budget was exceeded; partial evidence cannot produce a cleanup plan");
     }
-    let safety = safety_policy(&scan.config, scan.config_path.clone());
-    let analysis = build_analysis_report(scan, &safety)?;
+    let analysis = build_analysis_report(scan, &scan.safety_policy)?;
     let selection = match requested_selection {
         PlanSelection::Recommendations(overrides) => {
-            selection_with_overrides(&analysis, overrides)?
+            selection_with_overrides(analysis.as_ref(), overrides)?
         }
-        PlanSelection::ExactPaths(paths) => exact_selection(&analysis, &paths)?,
+        #[cfg(test)]
+        PlanSelection::ExactPaths(paths) => exact_selection(analysis.as_ref(), &paths)?,
     };
-    let mut plan = build_cleanup_plan_from_analysis(
+    let plan = build_workflow_plan(
         scan.roots.clone(),
-        scan.registry.versions(),
+        scan.ruleset_versions.clone(),
         &scan.report.entries,
-        &analysis,
+        analysis.as_ref(),
         &selection,
-        &safety,
+        &scan.safety_policy,
+        &scan.explicit_roots,
+        &scan.global_scan,
     )
     .context("failed to build cleanup plan from analysis")?;
-    if let Some(source) = plan.source_scan.as_mut() {
-        source.scope = Some(CleanupPlanScanScope::new(
-            scan.explicit_roots.clone(),
-            scan.global_scan.requested_kinds.clone(),
-        ));
-    }
     Ok(plan)
-}
-
-fn selection_with_overrides(
-    analysis: &AnalysisReport,
-    overrides: SelectionOverrides,
-) -> Result<UserSelection> {
-    let select_paths = normalize_selection_paths(&overrides.select_paths)?;
-    let deselect_paths = normalize_selection_paths(&overrides.deselect_paths)?;
-    if let Some(path) = select_paths.intersection(&deselect_paths).next() {
-        bail!(
-            "candidate path cannot be both selected and deselected: {}",
-            path.display()
-        );
-    }
-    reject_overlapping_explicit_selections(&select_paths)?;
-
-    let mut selection = UserSelection::from_recommendations(analysis);
-    for path in deselect_paths {
-        let candidate = candidate_for_path(analysis, &path)?;
-        selection.deselect(&candidate.id);
-    }
-    for path in select_paths {
-        let candidate = selectable_candidate_for_path(analysis, &path)?;
-        let overlapping_ids = analysis
-            .candidates
-            .iter()
-            .filter(|overlapping| {
-                overlapping.id != candidate.id
-                    && selection.candidate_ids.contains(&overlapping.id)
-                    && cleanup_paths_overlap(&candidate.local_path, &overlapping.local_path)
-            })
-            .map(|overlapping| overlapping.id.clone())
-            .collect::<Vec<_>>();
-        for overlapping_id in overlapping_ids {
-            selection.deselect(&overlapping_id);
-        }
-        selection.select(candidate.id.clone());
-    }
-    Ok(selection)
-}
-
-fn reject_overlapping_explicit_selections(paths: &BTreeSet<PathBuf>) -> Result<()> {
-    let paths = paths.iter().collect::<Vec<_>>();
-    for (index, left) in paths.iter().enumerate() {
-        if let Some(right) = paths
-            .iter()
-            .skip(index + 1)
-            .find(|right| cleanup_paths_overlap(left, right))
-        {
-            bail!(
-                "explicitly selected candidate paths overlap: {} and {}",
-                left.display(),
-                right.display()
-            );
-        }
-    }
-    Ok(())
-}
-
-fn cleanup_paths_overlap(left: &Path, right: &Path) -> bool {
-    left.starts_with(right) || right.starts_with(left)
-}
-
-fn exact_selection(analysis: &AnalysisReport, paths: &[PathBuf]) -> Result<UserSelection> {
-    let mut selection = UserSelection::default();
-    for path in normalize_selection_paths(paths)? {
-        let candidate = selectable_candidate_for_path(analysis, &path)?;
-        selection.select(candidate.id.clone());
-    }
-    Ok(selection)
-}
-
-fn normalize_selection_paths(paths: &[PathBuf]) -> Result<BTreeSet<PathBuf>> {
-    paths
-        .iter()
-        .map(|path| normalize_selection_path(path))
-        .collect()
-}
-
-fn normalize_selection_path(path: &Path) -> Result<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .context("failed to resolve the current directory for candidate selection")?
-            .join(path)
-    };
-    absolute
-        .canonicalize()
-        .with_context(|| format!("selected candidate path does not exist: {}", path.display()))
-}
-
-fn candidate_for_path<'a>(
-    analysis: &'a AnalysisReport,
-    normalized_path: &Path,
-) -> Result<&'a cleanr_core::CandidateEvidence> {
-    analysis
-        .candidates
-        .iter()
-        .find(|candidate| {
-            candidate
-                .local_path
-                .canonicalize()
-                .unwrap_or_else(|_| candidate.local_path.clone())
-                == normalized_path
-        })
-        .with_context(|| {
-            format!(
-                "path is not a cleanup candidate in this scan: {}",
-                normalized_path.display()
-            )
-        })
-}
-
-fn selectable_candidate_for_path<'a>(
-    analysis: &'a AnalysisReport,
-    normalized_path: &Path,
-) -> Result<&'a cleanr_core::CandidateEvidence> {
-    let candidate = candidate_for_path(analysis, normalized_path)?;
-    if matches!(
-        candidate.recommendation.state,
-        RecommendationState::Suppressed | RecommendationState::Excluded
-    ) {
-        bail!(
-            "candidate cannot be selected because its recommendation state is {}: {}",
-            candidate.recommendation.state,
-            normalized_path.display()
-        );
-    }
-    Ok(candidate)
-}
-
-fn ensure_plan_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> Result<()> {
-    let unchanged = expected.schema_version == current.schema_version
-        && expected.scan_roots == current.scan_roots
-        && expected.ruleset_versions == current.ruleset_versions
-        && source_scan_provenance_unchanged(expected, current)
-        && selected_plan_projection_unchanged(expected, current)
-        && expected.safety == current.safety;
-    if !unchanged {
-        bail!(
-            "selected cleanup targets or safety provenance changed after authorization; generate, review, and authorize a new plan"
-        );
-    }
-    Ok(())
-}
-
-fn selected_plan_projection_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> bool {
-    expected.summary.selected_count == current.summary.selected_count
-        && expected.summary.selected_size_bytes == current.summary.selected_size_bytes
-        && expected
-            .items
-            .iter()
-            .filter(|item| item.selected)
-            .eq(current.items.iter().filter(|item| item.selected))
-}
-
-fn ensure_plan_source_scan_is_executable(plan: &CleanupPlan) -> Result<()> {
-    if plan
-        .source_scan
-        .as_ref()
-        .is_some_and(|source| !source.budget_exceeded.is_empty())
-    {
-        bail!(
-            "cleanup plan came from a scan that exceeded a budget and is read-only; generate, review, and authorize a new complete plan"
-        );
-    }
-    Ok(())
-}
-
-fn apply_legacy_plan_policy_compatibility(expected: &CleanupPlan, scan: &mut WorkflowScan) {
-    if expected
-        .source_scan
-        .as_ref()
-        .is_none_or(|source| source.recommendation_policy.is_none())
-    {
-        // Policy v1 filtered only automatic preselection. Rebuild that projection when validating
-        // an older plan, while every selected item and fingerprint still must match exactly.
-        scan.recommendation_policy.version = "v1".to_string();
-    }
-}
-
-fn source_scan_provenance_unchanged(expected: &CleanupPlan, current: &CleanupPlan) -> bool {
-    match (&expected.source_scan, &current.source_scan) {
-        (None, None) => true,
-        (Some(expected), Some(current)) => {
-            expected.integrity == current.integrity
-                && expected.budget_exceeded == current.budget_exceeded
-                && expected
-                    .recommendation_policy
-                    .as_ref()
-                    .is_none_or(|policy| current.recommendation_policy.as_ref() == Some(policy))
-                && expected
-                    .scope
-                    .as_ref()
-                    .is_none_or(|scope| current.scope.as_ref() == Some(scope))
-        }
-        // Plans written before source-scan provenance was added remain executable only when the
-        // fresh scan has no budget ledger. The current builder already refuses budget-limited
-        // analysis, while the rest of `ensure_plan_unchanged` still compares every selected plan
-        // item and safety field. A new plan losing provenance remains a downgrade and is rejected.
-        (None, Some(current)) => current.budget_exceeded.is_empty(),
-        (Some(_), None) => false,
-    }
-}
-
-fn recommendation_policy(
-    config: &Config,
-    inactive_days: Option<u16>,
-) -> Result<RecommendationPolicy> {
-    Ok(RecommendationPolicy::new(
-        inactive_days.unwrap_or(config.recommendations.preselect_after_days),
-    )?)
 }
 
 fn write_or_print_plan(plan: &CleanupPlan, output: Option<PathBuf>) -> Result<()> {
@@ -642,13 +320,6 @@ fn write_or_print_plan(plan: &CleanupPlan, output: Option<PathBuf>) -> Result<()
         );
     } else {
         println!("{}", serde_json::to_string_pretty(plan)?);
-    }
-    Ok(())
-}
-
-fn validate_sha256(value: &str) -> Result<()> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        bail!("--plan-sha256 must be exactly 64 hexadecimal characters");
     }
     Ok(())
 }
@@ -685,25 +356,9 @@ fn scan_json_value(report: &ScanReport) -> serde_json::Value {
     })
 }
 
-fn load_config(path: Option<PathBuf>) -> Result<Config> {
-    match path {
-        Some(path) => Config::load_from(path),
-        None => Config::load(),
-    }
-}
-
+#[cfg(test)]
 fn safety_policy(config: &Config, config_path: Option<PathBuf>) -> SafetyPolicy {
-    let mut protected = Vec::new();
-    protected.extend(cleanr_config::home_dir());
-    protected.extend(config_path);
-    if let Ok(executable) = std::env::current_exe() {
-        protected.push(executable);
-    }
-    let mut protected_subtrees = vec![default_state_dir()];
-    protected_subtrees.extend(config.plugins.dirs.iter().cloned());
-    protected_subtrees.extend(config.i18n.dirs.iter().cloned());
-    SafetyPolicy::new(protected, config.cleanup.require_confirm)
-        .with_protected_subtrees(protected_subtrees)
+    cleanr_tasks::safety_policy_for_config(config, config_path, default_state_dir())
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -724,12 +379,15 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use cleanr_core::{
-        CleanupItem, CleanupItemFingerprint, Confidence, DecisionCode, EntryKind, GlobalScanKind,
-        PlanSummary, PlannedAction, ReportIntegrity, RuleHit, RuleMatchRole, RuleTrust,
-        ScanBudgetExceeded, ScanEntry, ScanIssue, ScanIssueCode,
+        CleanupItem, CleanupItemFingerprint, CleanupPlanScanScope, Confidence, DecisionCode,
+        EntryKind, GlobalScanKind, PlanSummary, PlannedAction, ReportIntegrity, RuleHit,
+        RuleMatchRole, RuleTrust, ScanBudgetExceeded, ScanEntry, ScanIssue, ScanIssueCode,
     };
-    use cleanr_fs::{GlobalScanRoot, ScanError};
+    use cleanr_fs::{GlobalScanRoot, ResolvedScanRoots, ScanError, global_scan_evidence};
+    use cleanr_rules::RuleRegistry;
+    use cleanr_tasks::semantic_explicit_roots;
 
     #[test]
     fn scan_json_separates_structured_issues_from_local_diagnostics() {
@@ -843,8 +501,10 @@ mod tests {
             ..ResolvedScanRoots::default()
         };
 
-        let scope =
-            CleanupPlanScanScope::new(semantic_explicit_roots(&request, &resolved), Vec::new());
+        let scope = CleanupPlanScanScope::new(
+            semantic_explicit_roots(&request, &resolved.roots),
+            Vec::new(),
+        );
         let rescan_request = scope.to_scan_request();
 
         assert_eq!(scope.explicit_roots, vec![original_working_directory]);
@@ -877,12 +537,13 @@ mod tests {
         config.recommendations.preselect_after_days = 180;
         let scan = WorkflowScan {
             config: config.clone(),
-            config_path: None,
             recommendation_policy: RecommendationPolicy::new(30)?,
-            registry: RuleRegistry::builtin()?,
+            ruleset_versions: RuleRegistry::builtin()?.versions(),
             roots: vec![temp.path().to_path_buf()],
             explicit_roots: vec![temp.path().to_path_buf()],
             global_scan: GlobalScanEvidence::default(),
+            analysis: None,
+            safety_policy: SafetyPolicy::default(),
             report: ScanReport {
                 as_of,
                 entries: vec![
@@ -1031,12 +692,13 @@ mod tests {
         let make_scan = |recommendation_policy: RecommendationPolicy| -> Result<WorkflowScan> {
             Ok(WorkflowScan {
                 config: Config::default(),
-                config_path: None,
                 recommendation_policy,
-                registry: RuleRegistry::builtin()?,
+                ruleset_versions: RuleRegistry::builtin()?.versions(),
                 roots: vec![root.clone()],
                 explicit_roots: vec![root.clone()],
                 global_scan: GlobalScanEvidence::default(),
+                analysis: None,
+                safety_policy: SafetyPolicy::default(),
                 report: ScanReport {
                     as_of,
                     entries: entries.clone(),
@@ -1063,7 +725,8 @@ mod tests {
         source.scope = None;
 
         let mut current_scan = make_scan(RecommendationPolicy::default())?;
-        apply_legacy_plan_policy_compatibility(&expected, &mut current_scan);
+        current_scan.recommendation_policy =
+            recommendation_policy_for_plan_rescan(&current_scan.config, &expected)?;
         assert_eq!(current_scan.recommendation_policy.version, "v1");
         let current = build_plan(
             &current_scan,
@@ -1130,12 +793,15 @@ mod tests {
         let config = Config::default();
         let scan = WorkflowScan {
             config: config.clone(),
-            config_path: None,
             recommendation_policy: RecommendationPolicy::default(),
-            registry: RuleRegistry::builtin().expect("builtin registry"),
+            ruleset_versions: RuleRegistry::builtin()
+                .expect("builtin registry")
+                .versions(),
             roots: resolved.roots,
             explicit_roots: Vec::new(),
             global_scan,
+            analysis: None,
+            safety_policy: SafetyPolicy::default(),
             report: ScanReport::default(),
         };
 
@@ -1192,12 +858,15 @@ mod tests {
         let config = Config::default();
         let scan = WorkflowScan {
             config: config.clone(),
-            config_path: None,
             recommendation_policy: RecommendationPolicy::default(),
-            registry: RuleRegistry::builtin().expect("builtin registry"),
+            ruleset_versions: RuleRegistry::builtin()
+                .expect("builtin registry")
+                .versions(),
             roots: resolved.roots,
             explicit_roots: Vec::new(),
             global_scan,
+            analysis: None,
+            safety_policy: SafetyPolicy::default(),
             report: ScanReport {
                 as_of,
                 entries: vec![ScanEntry {
@@ -1269,12 +938,15 @@ mod tests {
         let config = Config::default();
         let scan = WorkflowScan {
             config: config.clone(),
-            config_path: None,
             recommendation_policy: RecommendationPolicy::default(),
-            registry: RuleRegistry::builtin().expect("builtin registry"),
+            ruleset_versions: RuleRegistry::builtin()
+                .expect("builtin registry")
+                .versions(),
             roots,
             explicit_roots: vec![PathBuf::from("/tmp/project")],
             global_scan: evidence.clone(),
+            analysis: None,
+            safety_policy: SafetyPolicy::default(),
             report: ScanReport::default(),
         };
         let report =
@@ -1293,12 +965,15 @@ mod tests {
         let config = Config::default();
         let scan = WorkflowScan {
             config: config.clone(),
-            config_path: None,
             recommendation_policy: RecommendationPolicy::default(),
-            registry: RuleRegistry::builtin().expect("builtin registry"),
+            ruleset_versions: RuleRegistry::builtin()
+                .expect("builtin registry")
+                .versions(),
             roots: Vec::new(),
             explicit_roots: Vec::new(),
             global_scan,
+            analysis: None,
+            safety_policy: SafetyPolicy::default(),
             report: ScanReport::default(),
         };
 
@@ -1695,12 +1370,13 @@ mod tests {
         let config = Config::default();
         let scan = WorkflowScan {
             config,
-            config_path: None,
             recommendation_policy: RecommendationPolicy::default(),
-            registry: RuleRegistry::builtin()?,
+            ruleset_versions: RuleRegistry::builtin()?.versions(),
             roots: vec![PathBuf::from("/repo")],
             explicit_roots: vec![PathBuf::from("/repo")],
             global_scan: GlobalScanEvidence::default(),
+            analysis: None,
+            safety_policy: SafetyPolicy::default(),
             report: ScanReport::default(),
         };
         build_plan(

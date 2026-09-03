@@ -8,10 +8,22 @@ impl Workbench {
         i18n: I18n,
         theme: Theme,
     ) -> Self {
+        Self::new_with_config_path(roots, config, default_config_path(), registry, i18n, theme)
+    }
+
+    pub fn new_with_config_path(
+        roots: Vec<PathBuf>,
+        config: Config,
+        config_path: Option<PathBuf>,
+        registry: RuleRegistry,
+        i18n: I18n,
+        theme: Theme,
+    ) -> Self {
         let status = i18n.t("status_ready");
         Self {
             roots,
             config,
+            config_path,
             session_inactive_days: None,
             registry: Arc::new(registry),
             i18n,

@@ -12,12 +12,10 @@ rust-version.workspace = true
 anyhow.workspace = true
 cleanr-config = { version = "0.13.0", path = "../config" }
 cleanr-plugin-api = { version = "0.13.0", path = "../plugin-api" }
-reqwest.workspace = true
 rust-i18n.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-sha2.workspace = true
 tempfile.workspace = true
 
 [lints]

@@ -3,10 +3,9 @@
 use std::{
     collections::BTreeMap,
     fs,
-    io::{Read, Write},
+    io::Write,
     path::{Path, PathBuf},
     sync::OnceLock,
-    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
@@ -16,7 +15,6 @@ use cleanr_plugin_api::{
 };
 use serde::Deserialize;
 use serde_yaml::Value;
-use sha2::{Digest, Sha256};
 
 rust_i18n::i18n!("locales", fallback = "en-US");
 
@@ -278,66 +276,6 @@ pub fn load_language_file(
         },
     );
     Ok(())
-}
-
-pub fn install_github_language(
-    locale: &str,
-    repo: &str,
-    reference: &str,
-    output_dir: impl AsRef<Path>,
-    expected_sha256: Option<&str>,
-) -> Result<PathBuf> {
-    let normalized = normalize_locale(locale);
-    validate_locale(&normalized)?;
-    if let Some(expected) = expected_sha256
-        && (expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()))
-    {
-        bail!("expected language SHA-256 must contain exactly 64 hexadecimal characters");
-    }
-    let url = github_raw_language_url(repo, reference, &normalized)?;
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(20))
-        .build()
-        .context("failed to create language download client")?;
-    let response = client
-        .get(&url)
-        .send()
-        .with_context(|| format!("failed to GET {url}"))?;
-    if !response.status().is_success() {
-        bail!("failed to download {url}: HTTP {}", response.status());
-    }
-    const MAX_LANGUAGE_BYTES: u64 = 1024 * 1024;
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_LANGUAGE_BYTES)
-    {
-        bail!("language file exceeds the 1 MiB size limit");
-    }
-    let mut body = Vec::new();
-    response
-        .take(MAX_LANGUAGE_BYTES + 1)
-        .read_to_end(&mut body)
-        .with_context(|| format!("failed to read response body from {url}"))?;
-    if body.len() as u64 > MAX_LANGUAGE_BYTES {
-        bail!("language file exceeds the 1 MiB size limit");
-    }
-    let body = String::from_utf8(body).context("language file is not valid UTF-8")?;
-    parse_language_yaml(&body)
-        .with_context(|| format!("downloaded language file {url} is invalid"))?;
-    if let Some(expected) = expected_sha256 {
-        let actual = format!("{:x}", Sha256::digest(body.as_bytes()));
-        if !actual.eq_ignore_ascii_case(expected) {
-            bail!("language file SHA-256 mismatch: expected {expected}, got {actual}");
-        }
-    }
-
-    let output_dir = output_dir.as_ref();
-    fs::create_dir_all(output_dir)
-        .with_context(|| format!("failed to create {}", output_dir.display()))?;
-    let path = output_dir.join(format!("{normalized}.yml"));
-    atomic_write(&path, body.as_bytes())?;
-    Ok(path)
 }
 
 pub fn seed_builtin_language(locale: &str, output_dir: impl AsRef<Path>) -> Result<PathBuf> {
@@ -751,13 +689,5 @@ label_status: Ship
 
         assert_eq!(i18n.diagnostics().len(), 1);
         assert_eq!(i18n.diagnostics()[0].code, "language-pack-invalid");
-    }
-
-    #[test]
-    fn rejects_malformed_sha256_before_downloading() {
-        let error =
-            install_github_language("en-US", "owner/repo", "main", ".", Some("not-a-sha256"))
-                .expect_err("invalid hash must fail");
-        assert!(error.to_string().contains("64 hexadecimal"));
     }
 }

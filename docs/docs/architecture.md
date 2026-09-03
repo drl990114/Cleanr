@@ -13,43 +13,65 @@ Cleanr's behavior lives. If you only want to use the application, start with
 | Crate | Path | Responsibility |
 | --- | --- | --- |
 | `cleanr-core` | `crates/core` | Scan entries, rule hits, evidence reports, cleanup plans, safety policy, and manifest models |
-| `cleanr-cli` | `crates/cli` | Command-line entry point, argument parsing, read-only analysis, config commands, and plugin management |
-| `cleanr-tui` | `crates/tui` | Interactive terminal application, state machine, views, and background task orchestration |
+| `cleanr-cli` | `crates/cli` | Command-line adapters, argument parsing, read-only output, distribution commands, and plugin management |
+| `cleanr-tui` | `crates/tui` | Interactive terminal application, state machine, views, and background workflow adapters |
 | `cleanr-fs` | `crates/fs` | Filesystem scanning, metadata collection, cancellation, and `ScanReport` generation |
 | `cleanr-rules` | `crates/rules` | Built-in and plugin rule loading, validation, matching, and the `RuleRegistry` |
 | `cleanr-plugin-api` | `crates/plugin-api` | Versioned manifests, discovery, compatibility, trust, schemas, and diagnostics |
 | `cleanr-config` | `crates/config` | Configuration schema, defaults, validation, and atomic persistence |
-| `cleanr-i18n` | `crates/i18n` | Built-in and external language packs, fallback, and runtime locale switching |
-| `cleanr-tasks` | `crates/tasks` | Cleanup execution, system trash integration, restore, and manifest persistence |
+| `cleanr-i18n` | `crates/i18n` | Pure language-pack parsing, validation, fallback, and runtime locale switching |
+| `cleanr-tasks` | `crates/tasks` | Shared scan/evidence/plan workflow, guarded cleanup entry points, restore, platform trash integration, and manifest persistence |
 
 ## Runtime data flow
 
 ```text
-CLI arguments + config
-        │
-        ▼
-TUI state machine ── starts scan worker
-        │                    │
-        │                    ▼
-        │              cleanr-fs entries
-        │                    │
-        │                    ▼
-        │              cleanr-rules hits
-        │                    │
-        ▼                    ▼
-User review ◄──────── cleanup plan
-        │
-        ▼
-Workflow service / local authorization
-        │
-        ▼
-pending manifest → cleanr-tasks validation → system trash → manifest update
-        │
-        └────────────────────→ restore → restore manifest
+CLI or TUI adapter + config
+             │
+             ▼
+      cleanr-tasks workflow
+ resolve scope → scan → rules → evidence → plan
+       │          │       │         │
+       │          │       │         └── cleanr-core
+       │          │       └──────────── cleanr-rules
+       │          └──────────────────── cleanr-fs
+       ▼
+       user review
+       │          │
+       │          └── delegated: exact digest + re-scan + provenance check
+       └───────────── local TUI: explicit confirmation
+                         │
+                         ▼
+pending manifest → target revalidation → system trash → manifest update
+                         │
+                         └──────────────→ restore → restore manifest
 ```
 
 The plan builder removes overlapping candidates before it computes selected and
 total reclaimable space.
+
+The entry-only `build_cleanup_plan*` functions remain deprecated compatibility
+APIs. Product code must retain scan integrity and provenance through the
+analysis-backed builder used by the shared workflow.
+
+The shared workflow exported by `cleanr-tasks` is the only product-facing orchestrator for scope
+resolution, scanning, rule annotation, evidence generation, and plan creation.
+The CLI and TUI adapt arguments, progress, and presentation; they do not compose
+those lower-level crates independently.
+
+## Internal module boundaries
+
+- `cleanr-core` separates serialized models, evidence, planning, safety policy,
+  and execution/restore manifests;
+- `cleanr-fs` separates scope discovery, scan traversal, budget accounting, and
+  platform file identity;
+- `cleanr-rules` separates schemas, plugin loading, registry/index ownership,
+  and matching;
+- `cleanr-tasks` separates workflow orchestration, cleanup, restore, manifest
+  storage, and operating-system adapters.
+
+`node scripts/check-architecture.mjs` guards these boundaries in CI. It rejects
+CLI or TUI calls that bypass the shared workflow, a public raw cleanup executor,
+and distribution-only network dependencies in `cleanr-i18n`.
 
 ## TUI boundaries
 
@@ -85,8 +107,12 @@ Safety is enforced in more than one layer:
 - `cleanr-rules` limits automatic selection to high-confidence trusted rules;
 - `cleanr-core` excludes protected and overlapping candidates while building
   the plan and records directory fingerprints for selected trees;
-- `cleanr-tasks` requires local authorization, journals cleanup before moving
-  files, and revalidates each target at execution time;
+- `cleanr-tasks` exposes separate local-confirmation and delegated-cleanup
+  entry points, keeps the raw executor crate-private, journals cleanup before
+  moving files, and revalidates each target at execution time;
+- delegated cleanup binds authorization to the exact reviewed SHA-256 digest,
+  reconstructs the saved scan scope and recommendation policy, re-scans, and
+  rejects plan or provenance drift before execution;
 - the trash backend records rollback information where the platform supports
   it;
 - `cleanr analyze` is read-only and cannot mint cleanup authorization or invoke

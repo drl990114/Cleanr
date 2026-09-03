@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod config_cmd;
+mod language_cmd;
 mod plugin_cmd;
 mod update;
 mod workflow;
@@ -595,7 +596,8 @@ fn main() -> Result<()> {
         };
     }
 
-    let config = match args.config {
+    let config_path = args.config.clone();
+    let config = match config_path.as_ref() {
         Some(path) => cleanr_config::Config::load_from(path)?,
         None => cleanr_config::Config::load()?,
     };
@@ -620,12 +622,13 @@ fn main() -> Result<()> {
     });
 
     let _ = args.log_file;
-    cleanr_tui::run_with_inactivity_override(
+    cleanr_tui::run_with_config_path_and_inactivity_override(
         cleanr_tui::TuiOptions {
             roots,
             config,
             update_available,
         },
+        config_path,
         args.inactive_days,
     )
 }
@@ -686,7 +689,7 @@ fn init(
     };
 
     let language_file = if from_github {
-        cleanr_i18n::install_github_language(
+        language_cmd::install_github_language(
             &locale,
             &language_repo,
             &language_ref,

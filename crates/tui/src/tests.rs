@@ -92,6 +92,35 @@ fn app(root: PathBuf) -> Workbench {
     )
 }
 
+#[test]
+fn custom_config_path_is_protected_and_receives_language_updates() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let config_path = temp.path().join("profiles").join("cleanr.toml");
+    let mut app = Workbench::new_with_config_path(
+        vec![temp.path().to_path_buf()],
+        Config::default(),
+        Some(config_path.clone()),
+        RuleRegistry::builtin().expect("builtin rules"),
+        I18n::new("en-US", BTreeMap::new(), builtin_language_packs()),
+        Theme::dark(),
+    );
+
+    assert!(!app.safety_policy().allows_candidate(&config_path));
+
+    app.show_languages();
+    let chinese = app
+        .i18n
+        .packs()
+        .iter()
+        .position(|pack| pack.locale == "zh-CN")
+        .expect("built-in Chinese pack");
+    app.list_state.select(Some(chinese));
+    app.switch_language();
+
+    let persisted = Config::load_from(&config_path).expect("custom config was persisted");
+    assert_eq!(persisted.i18n.locale.as_deref(), Some("zh-CN"));
+}
+
 fn render_text(app: &mut Workbench, width: u16, height: u16) -> String {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("terminal");
