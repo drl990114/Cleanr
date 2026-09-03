@@ -1,5 +1,5 @@
 id = "builtin-system-global-locations"
-version = "0.13.1"
+version = "0.14.0"
 
 [[locations]]
 id = "windows-chrome-cache-root"

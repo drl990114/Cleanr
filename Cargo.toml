@@ -15,7 +15,7 @@ default-members = ["crates/cli"]
 
 [workspace.package]
 edition = "2024"
-version = "0.13.0"
+version = "0.14.0"
 description = "TUI-first, safe local disk cleanup for developer caches"
 license = "MIT"
 authors = ["cleanr contributors"]

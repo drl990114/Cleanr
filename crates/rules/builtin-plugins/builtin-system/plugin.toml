@@ -1,7 +1,7 @@
 api_version = "1"
 id = "cleanr.builtin.system"
 name = "Cleanr system cleanup rules"
-version = "0.13.1"
+version = "0.14.0"
 description = "Reviewable macOS, Windows, and cross-platform cleanup candidates from known user-level system locations."
 cleanr_version = ">=0.1.0"
 capabilities = ["rules", "scan-locations"]
