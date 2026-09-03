@@ -61,7 +61,7 @@ pub(crate) fn normalize_protected_paths(mut paths: Vec<PathBuf>) -> Vec<PathBuf>
     paths
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
+pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     absolute.canonicalize().unwrap_or(absolute)
 }

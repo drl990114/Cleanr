@@ -10,7 +10,9 @@ use crate::{
     CleanupItem, CleanupItemEvidence, CleanupItemFingerprint, CleanupPlan, CleanupPlanBuildError,
     CleanupPlanSourceScan, Confidence, EntryKind, PlanSafety, PlanSummary, PlannedAction,
     RecommendationState, RuleHit, RuleTrust, RulesetVersion, SafetyPolicy, ScanEntry,
-    UserSelection, evidence::resolve_rules, safety::normalize_protected_paths,
+    UserSelection,
+    evidence::resolve_rules,
+    safety::{normalize_path, normalize_protected_paths},
 };
 
 /// Legacy entry-only builder for callers that already proved their scan is complete.
@@ -57,10 +59,7 @@ pub fn build_cleanup_plan_with_policy(
         .iter()
         .filter_map(|entry| {
             let hit = best_hit(entry)?;
-            let normalized_path = entry
-                .path
-                .canonicalize()
-                .unwrap_or_else(|_| entry.path.clone());
+            let normalized_path = normalize_path(&entry.path);
             if normalized_scan_roots
                 .iter()
                 .any(|root| root == &normalized_path)
@@ -182,10 +181,7 @@ pub fn build_cleanup_plan_from_analysis(
             {
                 return None;
             }
-            let normalized_path = candidate
-                .local_path
-                .canonicalize()
-                .unwrap_or_else(|_| candidate.local_path.clone());
+            let normalized_path = normalize_path(&candidate.local_path);
             if normalized_scan_roots
                 .iter()
                 .any(|root| root == &normalized_path)

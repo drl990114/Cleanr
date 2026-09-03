@@ -780,29 +780,38 @@ mod tests {
 
     #[test]
     fn scan_root_itself_is_never_a_cleanup_candidate() {
-        let entry = ScanEntry {
-            path: PathBuf::from("/repo"),
-            kind: EntryKind::Directory,
-            size_bytes: 100,
-            modified_at: None,
-            rule_hits: vec![RuleHit {
-                rule_pack_id: "trusted".into(),
-                rule_id: "broad".into(),
-                label: "Broad".into(),
-                category: "cache".into(),
-                confidence: Confidence::High,
-                reason: "generated".into(),
-                risk_note: "dangerous".into(),
-                default_selected: true,
-                trust: RuleTrust::Trusted,
-                match_role: RuleMatchRole::Primary,
-                sources: Vec::new(),
-            }],
-        };
+        for scan_root in [
+            PathBuf::from("/repo"),
+            PathBuf::from("cleanr-core-missing-scan-root-fixture"),
+        ] {
+            let entry = ScanEntry {
+                path: scan_root.clone(),
+                kind: EntryKind::Directory,
+                size_bytes: 100,
+                modified_at: None,
+                rule_hits: vec![RuleHit {
+                    rule_pack_id: "trusted".into(),
+                    rule_id: "broad".into(),
+                    label: "Broad".into(),
+                    category: "cache".into(),
+                    confidence: Confidence::High,
+                    reason: "generated".into(),
+                    risk_note: "dangerous".into(),
+                    default_selected: true,
+                    trust: RuleTrust::Trusted,
+                    match_role: RuleMatchRole::Primary,
+                    sources: Vec::new(),
+                }],
+            };
 
-        let plan = build_cleanup_plan(vec![PathBuf::from("/repo")], vec![], &[entry]);
+            let plan = build_cleanup_plan(vec![scan_root.clone()], vec![], &[entry]);
 
-        assert!(plan.items.is_empty());
+            assert!(
+                plan.items.is_empty(),
+                "scan root became a cleanup candidate: {}",
+                scan_root.display()
+            );
+        }
     }
 
     #[test]
