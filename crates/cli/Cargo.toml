@@ -16,14 +16,14 @@ path = "src/main.rs"
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
-cleanr-config = { version = "0.12.0", path = "../config" }
-cleanr-core = { version = "0.12.0", path = "../core" }
-cleanr-fs = { version = "0.12.0", path = "../fs" }
-cleanr-i18n = { version = "0.12.0", path = "../i18n" }
-cleanr-plugin-api = { version = "0.12.0", path = "../plugin-api" }
-cleanr-rules = { version = "0.12.0", path = "../rules" }
-cleanr-tasks = { version = "0.12.0", path = "../tasks" }
-cleanr-tui = { version = "0.12.0", path = "../tui" }
+cleanr-config = { version = "0.13.0", path = "../config" }
+cleanr-core = { version = "0.13.0", path = "../core" }
+cleanr-fs = { version = "0.13.0", path = "../fs" }
+cleanr-i18n = { version = "0.13.0", path = "../i18n" }
+cleanr-plugin-api = { version = "0.13.0", path = "../plugin-api" }
+cleanr-rules = { version = "0.13.0", path = "../rules" }
+cleanr-tasks = { version = "0.13.0", path = "../tasks" }
+cleanr-tui = { version = "0.13.0", path = "../tui" }
 reqwest.workspace = true
 semver.workspace = true
 serde.workspace = true
