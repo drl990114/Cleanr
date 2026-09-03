@@ -12,9 +12,10 @@ use std::{
 use chrono::{DateTime, Utc};
 use cleanr_config::{Config, default_config_path, default_state_dir};
 use cleanr_core::{
-    AnalysisReport, CandidateId, CleanupPlan, ExecutionManifest, GlobalScanEvidence,
-    RecommendationPolicy, RecommendationPolicyError, RecommendationState, SafetyPolicy,
-    ScanBudgetExceeded, ScanEntry, ScanIssue, ScanRequest, ScanSummary, UserSelection,
+    AnalysisReport, CandidateId, CleanupPlan, ExecutionManifest, ExecutionStatus,
+    GlobalScanEvidence, RecommendationPolicy, RecommendationPolicyError, RecommendationState,
+    SafetyPolicy, ScanBudgetExceeded, ScanEntry, ScanIssue, ScanRequest, ScanSummary,
+    UserSelection,
 };
 use cleanr_fs::ScanOptions;
 use cleanr_i18n::I18n;
@@ -86,6 +87,14 @@ pub(crate) struct DurationSummary {
     pub max: Duration,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CleanupResult {
+    pub(crate) succeeded: usize,
+    pub(crate) failed: usize,
+    pub(crate) cleaned_size_bytes: u64,
+    pub(crate) first_path: Option<PathBuf>,
+}
+
 impl DurationRecorder {
     pub(crate) fn record(&mut self, duration: Duration) {
         if self.samples.len() == DURATION_SAMPLE_CAPACITY {
@@ -150,6 +159,9 @@ pub struct Workbench {
     pub(crate) selection: UserSelection,
     pub(crate) plan: Option<CleanupPlan>,
     pub(crate) task_log: Vec<String>,
+    /// Result of the latest cleanup completed in this process. Sizes come from the reviewed plan;
+    /// persisted execution manifests intentionally remain backward-compatible.
+    pub(crate) last_cleanup_result: Option<CleanupResult>,
     pub(crate) execution_manifests: Vec<cleanr_core::ExecutionManifest>,
     pub(crate) restore_manifests: Vec<cleanr_core::RestoreManifest>,
     pub(crate) scan_rx: Option<Receiver<TaskEvent>>,

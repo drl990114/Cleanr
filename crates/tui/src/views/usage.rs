@@ -2,7 +2,7 @@ use super::*;
 
 pub(crate) fn render_usage(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench) {
     if app.is_scan_running() {
-        render_scan_progress(frame, area, app, app.i18n.t("label_usage"));
+        render_scan_progress(frame, area, app);
         return;
     }
 

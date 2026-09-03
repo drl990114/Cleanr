@@ -1,126 +1,104 @@
 use super::*;
 
 pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
-    let content = fluid_content_rect(area, 160, 14);
+    let mut content = fluid_content_rect(area, 120, 10);
+    if area.height > content.height {
+        content.y = content.y.saturating_add(1);
+    }
 
     let candidate_count = app.plan.as_ref().map_or_else(
         || app.candidate_count_cached(),
         |plan| plan.summary.candidate_count,
     );
-    let (selected_count, selected_size) = app.plan.as_ref().map_or((0, 0), |plan| {
-        (
-            plan.summary.selected_count,
-            plan.summary.selected_size_bytes,
-        )
-    });
 
-    let (title, subtitle, subtitle_color, actions, details) = if app.scan_summary.entries_seen == 0
-    {
-        (
-            app.i18n.t("home_welcome"),
-            app.i18n.t("home_subtitle"),
-            app.theme.fg_dim,
-            vec![
+    let (title, summary, primary, secondary, detail) =
+        if let Some(result) = &app.last_cleanup_result {
+            let mut summary = app.i18n.format(
+                "cleanup_result_summary",
+                &[
+                    ("count", result.succeeded.to_string()),
+                    ("size", format_bytes(result.cleaned_size_bytes)),
+                ],
+            );
+            if result.failed > 0 {
+                summary.push_str("  ·  ");
+                summary.push_str(&app.i18n.format(
+                    "cleanup_result_failed",
+                    &[("count", result.failed.to_string())],
+                ));
+            }
+            (
+                app.i18n.t("cleanup_result_title"),
+                summary,
+                home_action_line(app.theme, "s", app.i18n.t("home_action_rescan"), true),
+                home_secondary_actions(
+                    app.theme,
+                    "u",
+                    app.i18n.t("home_action_usage"),
+                    "/",
+                    app.i18n.t("home_action_more"),
+                ),
+                cleanup_result_path_line(app, 76),
+            )
+        } else if app.scan_summary.entries_seen == 0 {
+            (
+                app.i18n.t("home_welcome"),
+                app.i18n.t("home_subtitle"),
                 home_action_line(app.theme, "s", app.i18n.t("home_action_scan"), true),
-                home_action_line(app.theme, "u", app.i18n.t("home_action_usage"), false),
-                home_action_line(app.theme, "/", app.i18n.t("home_action_more"), false),
-            ],
-            vec![
+                home_secondary_actions(
+                    app.theme,
+                    "u",
+                    app.i18n.t("home_action_usage"),
+                    "/",
+                    app.i18n.t("home_action_more"),
+                ),
                 home_detail_line(
                     app.i18n.t("home_detail_scope"),
-                    truncate_text(&join_paths(&app.roots), 34),
-                    app.theme.fg,
-                    app.theme,
-                ),
-                home_detail_line(
-                    app.i18n.t("home_detail_state"),
-                    app.i18n.t("home_state_ready"),
-                    app.theme.ok,
-                    app.theme,
-                ),
-                home_detail_line(
-                    app.i18n.t("home_detail_policy"),
-                    app.i18n.t("home_policy_review"),
+                    truncate_text(&join_paths(&app.roots), 76),
                     app.theme.fg_dim,
                     app.theme,
                 ),
-            ],
-        )
-    } else if candidate_count == 0 {
-        (
-            app.i18n.t("home_result_title"),
-            app.i18n.t("home_result_empty"),
-            app.theme.ok,
-            vec![
+            )
+        } else if candidate_count == 0 {
+            (
+                app.i18n.t("home_result_title"),
+                app.i18n.t("home_result_empty"),
                 home_action_line(app.theme, "s", app.i18n.t("home_action_rescan"), true),
-                home_action_line(app.theme, "u", app.i18n.t("home_action_usage"), false),
-                home_action_line(app.theme, "/", app.i18n.t("home_action_more"), false),
-            ],
-            vec![
+                home_secondary_actions(
+                    app.theme,
+                    "u",
+                    app.i18n.t("home_action_usage"),
+                    "/",
+                    app.i18n.t("home_action_more"),
+                ),
                 home_detail_line(
                     app.i18n.t("home_detail_scanned"),
-                    app.i18n.format(
-                        "home_result_scanned",
-                        &[("size", format_bytes(app.scan_summary.total_size_bytes))],
-                    ),
-                    app.theme.cyan,
-                    app.theme,
-                ),
-                home_detail_line(
-                    app.i18n.t("home_detail_state"),
-                    app.i18n.t("home_result_empty"),
-                    app.theme.ok,
-                    app.theme,
-                ),
-                home_detail_line(
-                    app.i18n.t("home_detail_policy"),
-                    app.i18n.t("home_policy_review"),
+                    format_bytes(app.scan_summary.total_size_bytes),
                     app.theme.fg_dim,
                     app.theme,
                 ),
-            ],
-        )
-    } else {
-        let reclaimable = format_bytes(
-            app.plan
+            )
+        } else {
+            let reclaimable = app
+                .plan
                 .as_ref()
-                .map_or(0, |plan| plan.summary.total_candidate_size_bytes),
-        );
-        (
-            app.i18n.t("home_result_title"),
-            format!(
-                "{}{}{}",
-                app.i18n.t("home_result_reclaimable"),
-                reclaimable,
+                .map_or(0, |plan| plan.summary.total_candidate_size_bytes);
+            (
+                app.i18n.t("home_result_title"),
                 app.i18n.format(
-                    "home_result_candidates",
-                    &[("count", candidate_count.to_string())],
-                )
-            ),
-            app.theme.fg_dim,
-            vec![
-                home_action_line(app.theme, "r", app.i18n.t("home_action_review"), true),
-                home_action_line(app.theme, "u", app.i18n.t("home_action_usage"), false),
-                home_action_line(app.theme, "s", app.i18n.t("home_action_rescan"), false),
-            ],
-            vec![
-                home_detail_line(
-                    app.i18n.t("home_detail_reclaimable"),
-                    reclaimable,
-                    app.theme.cyan,
-                    app.theme,
+                    "home_result_summary",
+                    &[
+                        ("size", format_bytes(reclaimable)),
+                        ("count", candidate_count.to_string()),
+                    ],
                 ),
-                home_detail_line(
-                    app.i18n.t("home_detail_selected"),
-                    app.i18n.format(
-                        "home_result_selected",
-                        &[
-                            ("count", selected_count.to_string()),
-                            ("size", format_bytes(selected_size)),
-                        ],
-                    ),
-                    app.theme.ok,
+                home_action_line(app.theme, "r", app.i18n.t("home_action_review"), true),
+                home_secondary_actions(
                     app.theme,
+                    "s",
+                    app.i18n.t("home_action_rescan"),
+                    "/",
+                    app.i18n.t("home_action_more"),
                 ),
                 home_detail_line(
                     app.i18n.t("home_detail_scanned"),
@@ -135,62 +113,25 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
                     app.theme.fg_dim,
                     app.theme,
                 ),
-            ],
-        )
-    };
+            )
+        };
 
-    let block = Block::default()
-        .borders(Borders::TOP | Borders::BOTTOM)
-        .border_style(Style::default().fg(app.theme.border))
-        .padding(Padding::new(2, 2, 1, 1));
-    let inner = block.inner(content);
-    frame.render_widget(block, content);
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(2),
-            Constraint::Length(1),
-            Constraint::Length(5),
-            Constraint::Length(1),
-        ])
-        .split(inner);
-    frame.render_widget(Paragraph::new(home_title(title, app.theme)), rows[0]);
+    let lines = vec![
+        home_title(title, app.theme),
+        Line::from(Span::styled(summary, Style::default().fg(app.theme.fg_dim))),
+        Line::from(""),
+        primary,
+        secondary,
+        Line::from(""),
+        detail,
+        home_safety_line(app),
+    ];
     frame.render_widget(
-        Paragraph::new(Span::styled(subtitle, Style::default().fg(subtitle_color)))
-            .wrap(Wrap { trim: true }),
-        rows[1],
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::default().padding(Padding::horizontal(2))),
+        content,
     );
-
-    let columns = if rows[3].width >= 72 {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-            .split(rows[3])
-    } else {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(100), Constraint::Percentage(0)])
-            .split(rows[3])
-    };
-    render_home_section(
-        frame,
-        columns[0],
-        app.theme,
-        app.i18n.t("home_section_start"),
-        actions,
-    );
-    if columns[1].width > 0 {
-        render_home_section(
-            frame,
-            columns[1],
-            app.theme,
-            app.i18n.t("home_section_workspace"),
-            details,
-        );
-    }
-    frame.render_widget(Paragraph::new(home_safety_line(app)), rows[4]);
 }
 
 pub(crate) fn home_title(title: String, theme: Theme) -> Line<'static> {
@@ -198,23 +139,6 @@ pub(crate) fn home_title(title: String, theme: Theme) -> Line<'static> {
         title,
         Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
     ))
-}
-
-fn render_home_section(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    theme: Theme,
-    heading: String,
-    mut lines: Vec<Line<'static>>,
-) {
-    let mut content = vec![Line::from(Span::styled(
-        heading,
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD),
-    ))];
-    content.append(&mut lines);
-    frame.render_widget(Paragraph::new(content).wrap(Wrap { trim: true }), area);
 }
 
 pub(crate) fn home_detail_line(
@@ -254,6 +178,67 @@ pub(crate) fn home_action_line(
         Span::styled(format!("[{key}]  "), key_style),
         Span::styled(description, description_style),
     ])
+}
+
+fn home_secondary_actions(
+    theme: Theme,
+    first_key: &'static str,
+    first_label: String,
+    second_key: &'static str,
+    second_label: String,
+) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("[{first_key}]  "),
+            Style::default()
+                .fg(theme.fg_dim)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(first_label, Style::default().fg(theme.fg_dim)),
+        Span::raw("    "),
+        Span::styled(
+            format!("[{second_key}]  "),
+            Style::default()
+                .fg(theme.fg_dim)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(second_label, Style::default().fg(theme.fg_dim)),
+    ])
+}
+
+fn cleanup_result_path_line(app: &Workbench, max_width: usize) -> Line<'static> {
+    let Some(result) = &app.last_cleanup_result else {
+        return Line::from("");
+    };
+    let Some(first) = result.first_path.as_ref() else {
+        return home_detail_line(
+            app.i18n.t("home_detail_state"),
+            app.i18n.format(
+                "cleanup_result_failed",
+                &[("count", result.failed.to_string())],
+            ),
+            app.theme.warn,
+            app.theme,
+        );
+    };
+    let first = compact_path(first, &app.roots);
+    let value = if result.succeeded == 1 {
+        first
+    } else {
+        app.i18n.format(
+            "cleanup_result_paths_more",
+            &[
+                ("path", first),
+                ("count", result.succeeded.saturating_sub(1).to_string()),
+            ],
+        )
+    };
+    home_detail_line(
+        app.i18n.t("cleanup_result_items"),
+        truncate_text(&value, max_width),
+        app.theme.fg,
+        app.theme,
+    )
 }
 
 pub(crate) fn home_safety_line(app: &Workbench) -> Line<'static> {

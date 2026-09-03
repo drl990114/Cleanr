@@ -40,7 +40,7 @@ use home::*;
 use restore::*;
 pub(crate) use root::render;
 #[cfg(test)]
-pub(crate) use scan::scan_loading_bar_sample;
+pub(crate) use scan::scan_loading_indicator_sample;
 use scan::*;
 use usage::render_usage;
 #[cfg(test)]

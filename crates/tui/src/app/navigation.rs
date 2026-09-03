@@ -234,73 +234,47 @@ impl Workbench {
         if self.plan.is_none() && !self.entries.is_empty() {
             self.build_plan();
         }
-        let (target, eligible_count, review_count, updates) = {
+        let (target, item_count, review_count, updates) = {
             let Some(plan) = &mut self.plan else {
                 self.status = self.i18n.t("status_no_scan_results");
                 return;
             };
-            let eligible_count = plan
+            if plan.items.is_empty() {
+                self.status = self.i18n.t("status_no_scan_results");
+                return;
+            }
+            let target = plan.items.iter().any(|item| !item.selected);
+            let item_count = plan.items.len();
+            let review_count = plan
                 .items
                 .iter()
                 .filter(|item| {
-                    item.evidence.as_ref().is_none_or(|evidence| {
-                        matches!(
-                            evidence.recommendation_state,
-                            RecommendationState::Preselected | RecommendationState::Available
-                        )
+                    item.evidence.as_ref().is_some_and(|evidence| {
+                        evidence.recommendation_state == RecommendationState::Review
                     })
                 })
                 .count();
-            if eligible_count == 0 {
-                self.status = self.i18n.t("status_bulk_no_eligible");
-                return;
-            }
-            let target = plan.items.iter().any(|item| {
-                !item.selected
-                    && item.evidence.as_ref().is_none_or(|evidence| {
-                        matches!(
-                            evidence.recommendation_state,
-                            RecommendationState::Preselected | RecommendationState::Available
-                        )
-                    })
-            });
-            let mut updates = Vec::with_capacity(eligible_count);
-            let mut review_count = 0;
+            let mut updates = Vec::with_capacity(item_count);
             plan.summary.selected_size_bytes = 0;
             for item in &mut plan.items {
-                let eligible = item.evidence.as_ref().is_none_or(|evidence| {
-                    matches!(
-                        evidence.recommendation_state,
-                        RecommendationState::Preselected | RecommendationState::Available
-                    )
-                });
-                if eligible {
-                    item.selected = target;
-                    updates.push((item.path.clone(), target));
-                } else {
-                    review_count += 1;
-                }
+                item.selected = target;
+                updates.push((item.path.clone(), target));
                 if item.selected {
                     plan.summary.selected_size_bytes += item.size_bytes;
                 }
             }
-            plan.summary.selected_count = plan.items.iter().filter(|item| item.selected).count();
-            (target, eligible_count, review_count, updates)
+            plan.summary.selected_count = if target { item_count } else { 0 };
+            (target, item_count, review_count, updates)
         };
 
         for (path, selected) in updates {
             self.set_analysis_selection_for_path(&path, selected);
         }
-        self.status = if review_count > 0 {
-            let key = if target {
-                "status_bulk_selected_review_unchanged"
-            } else {
-                "status_bulk_deselected_review_unchanged"
-            };
+        self.status = if target && review_count > 0 {
             self.i18n.format(
-                key,
+                "status_all_toggled_selected_review",
                 &[
-                    ("eligible", eligible_count.to_string()),
+                    ("count", item_count.to_string()),
                     ("review", review_count.to_string()),
                 ],
             )

@@ -52,6 +52,7 @@ impl Workbench {
             selection: UserSelection::default(),
             plan: None,
             task_log: Vec::new(),
+            last_cleanup_result: None,
             execution_manifests: Vec::new(),
             restore_manifests: Vec::new(),
             scan_rx: None,

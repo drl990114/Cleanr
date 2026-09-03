@@ -281,7 +281,11 @@ impl Workbench {
     }
 
     pub(crate) fn start_scan(&mut self, request: ScanRequest) {
+        let previous_job_id = self.next_scan_job_id;
         self.start_scan_for_view(request, View::Scan);
+        if self.next_scan_job_id != previous_job_id {
+            self.last_cleanup_result = None;
+        }
     }
 
     pub(crate) fn start_scan_for_view(&mut self, mut request: ScanRequest, view: View) {
@@ -412,7 +416,11 @@ impl Workbench {
             return;
         }
         self.usage_after_scan = true;
+        let previous_job_id = self.next_scan_job_id;
         self.start_scan_for_view(request, View::Usage);
+        if self.next_scan_job_id != previous_job_id {
+            self.last_cleanup_result = None;
+        }
     }
 
     pub(crate) fn scan_progress_status(&self, progress: &ScanTaskProgress) -> String {

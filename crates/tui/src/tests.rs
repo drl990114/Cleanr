@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    app::{ConfirmChoice, DurationRecorder, Mode, View},
+    app::{CleanupResult, ConfirmChoice, DurationRecorder, Mode, View},
     commands::{ActionRequest, CleanupIntent, palette_command_invocation, parse_slash_command},
     effects::{
         PreparedScan, ScanDiagnostics, ScanFailure, ScanStage, ScanTaskProgress, TaskEvent,
@@ -8,8 +8,8 @@ use crate::{
     },
     views::{
         bottom_bounded_rect, centered_bounded_rect, command_cursor_position, command_input_view,
-        display_width, fluid_content_rect, ime_guard_position, render, scan_loading_bar_sample,
-        truncate_text, usage_descendant_count, visible_list_window,
+        display_width, fluid_content_rect, ime_guard_position, render,
+        scan_loading_indicator_sample, truncate_text, usage_descendant_count, visible_list_window,
     },
 };
 use cleanr_config::Config;
@@ -205,6 +205,7 @@ fn home_layout_has_one_clear_primary_action() {
     assert!(screen.contains("Safe intelligent disk organization"));
     assert!(screen.contains("[s]  Scan & analyze"));
     assert!(screen.contains("Every item is reviewed first"));
+    assert!(!screen.contains("command menu"));
     assert!(!screen.contains('›'));
     assert!(!screen.contains("Recent activity"));
     assert!(!screen.contains("No scan yet"));
@@ -249,7 +250,7 @@ fn home_layout_switches_to_a_concise_scan_result() {
     println!("{screen}");
 
     assert!(screen.contains("Scan result"));
-    assert!(screen.contains("Reclaimable"));
+    assert!(screen.contains("2.00 MiB reclaimable"));
     assert!(screen.contains("Review cleanup items"));
     assert!(!screen.contains("Recent activity"));
 }
@@ -312,16 +313,19 @@ fn scan_layout_keeps_selection_and_details_distinct() {
     println!("{screen}");
 
     assert!(screen.contains("[✓]"));
-    assert!(screen.contains("Preview"));
+    assert!(screen.contains("Details"));
     assert!(screen.contains("space select"));
     assert!(screen.contains("Current item"));
-    assert!(screen.contains("Matched rules"));
-    assert!(screen.contains("Rule resolution"));
+    assert!(screen.contains("Reason"));
+    assert!(screen.contains("Risk"));
+    assert!(!screen.contains("Matched rules"));
+    assert!(!screen.contains("Rule resolution"));
+    assert!(!screen.contains("Decision codes"));
     assert!(!screen.contains("i inspect"));
 }
 
 #[test]
-fn bulk_selection_leaves_review_items_unchanged() {
+fn bulk_selection_includes_review_items_and_toggles_the_whole_plan() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut review_hit = test_rule_hit("review");
     review_hit.confidence = Confidence::Medium;
@@ -374,17 +378,60 @@ fn bulk_selection_leaves_review_items_unchanged() {
             .iter()
             .all(|item| item.selected)
     );
-    assert!(app.status().contains("review item(s) unchanged"));
+    assert!(app.status().contains("Selected all 2 item(s)"));
+    assert!(app.status().contains("1 require review"));
 
     app.toggle_all_scan_selection();
     let plan = app.plan().expect("plan");
     assert!(!plan.items[eligible_index].selected);
-    assert!(plan.items[review_index].selected);
-    assert_eq!(plan.summary.selected_count, 1);
+    assert!(!plan.items[review_index].selected);
+    assert_eq!(plan.summary.selected_count, 0);
 }
 
 #[test]
-fn scan_layout_truncates_long_paths_without_hiding_decision_columns() {
+fn a_selects_and_deselects_a_review_only_scan_plan() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut review_hit = test_rule_hit("review-only");
+    review_hit.confidence = Confidence::Medium;
+    review_hit.default_selected = false;
+    let mut app = app(temp.path().to_path_buf());
+    app.entries = vec![ScanEntry {
+        path: temp.path().join("target").join("aarch64-apple-darwin"),
+        kind: EntryKind::Directory,
+        size_bytes: 414 * 1024 * 1024,
+        modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
+        rule_hits: vec![review_hit],
+    }];
+    app.build_plan();
+    app.view = View::Scan;
+
+    assert_eq!(app.plan().expect("plan").summary.selected_count, 0);
+    app.handle_key(key(KeyCode::Char('a')));
+    let selected = app.plan().expect("plan");
+    assert!(selected.items[0].selected);
+    assert_eq!(selected.summary.selected_count, 1);
+    assert_eq!(selected.summary.selected_size_bytes, 414 * 1024 * 1024);
+    assert!(app.status().contains("Selected all 1 item(s)"));
+    assert!(app.status().contains("1 require review"));
+    app.build_plan();
+    assert!(app.plan().expect("rebuilt plan").items[0].selected);
+    let selected_screen = render_text(&mut app, 120, 24);
+    assert!(selected_screen.contains("[✓]"), "{selected_screen}");
+    assert!(
+        selected_screen.contains("1 / 1 selected"),
+        "{selected_screen}"
+    );
+    assert!(selected_screen.contains("414.00 MiB"), "{selected_screen}");
+
+    app.handle_key(key(KeyCode::Char('%')));
+    let deselected = app.plan().expect("plan");
+    assert!(!deselected.items[0].selected);
+    assert_eq!(deselected.summary.selected_count, 0);
+    assert_eq!(deselected.summary.selected_size_bytes, 0);
+}
+
+#[test]
+fn scan_layout_truncates_long_paths_without_hiding_size_or_confidence() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
     app.entries = vec![ScanEntry {
@@ -411,7 +458,7 @@ fn scan_layout_truncates_long_paths_without_hiding_decision_columns() {
 }
 
 #[test]
-fn chinese_scan_layout_uses_translations_for_preview_labels() {
+fn chinese_scan_layout_uses_translations_for_details_labels() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = Workbench::new(
         vec![temp.path().to_path_buf()],
@@ -437,13 +484,13 @@ fn chinese_scan_layout_uses_translations_for_preview_labels() {
         .filter(|ch| !ch.is_whitespace())
         .collect::<String>();
 
-    assert!(compact.contains("预览"));
+    assert!(compact.contains("详情"));
     assert!(compact.contains("当前项"));
     assert!(compact.contains("路径"));
 }
 
 #[test]
-fn chinese_scan_progress_uses_refined_thin_rail_layout() {
+fn chinese_scan_progress_keeps_loading_compact_and_focused() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = Workbench::new(
         vec![temp.path().to_path_buf()],
@@ -480,10 +527,14 @@ fn chinese_scan_progress_uses_refined_thin_rail_layout() {
     assert!(compact.contains("已扫描155840个条目"));
     assert!(compact.contains("已读取12.74GiB"));
     assert!(compact.contains("当前路径"));
-    assert!(screen.contains('━'));
-    assert!(screen.contains('─'));
-    assert!(!screen.contains('█'));
+    assert_eq!(compact.matches("正在扫描文件").count(), 1);
+    assert_eq!(compact.matches("已扫描155840个条目").count(), 1);
+    assert_eq!(compact.matches("取消").count(), 1);
+    assert!(!screen.contains('━'));
+    assert!(!screen.contains('○'));
+    assert!(!screen.contains("证据"));
     assert!(!screen.contains("155840 / 0"));
+    assert!(screen.contains("node_modules/@babel/traverse/lib/context.js"));
 }
 
 #[test]
@@ -1239,6 +1290,62 @@ fn cleanup_success_starts_background_refresh_scan() {
 
     assert!(app.is_scan_running());
     assert!(app.status_after_scan.is_some());
+    assert!(
+        app.status_after_scan
+            .as_deref()
+            .is_some_and(|status| status.contains("2.00 MiB"))
+    );
+    let result = app
+        .last_cleanup_result
+        .as_ref()
+        .expect("cleanup result should be retained while the refresh runs");
+    assert_eq!(result.succeeded, 1);
+    assert_eq!(result.failed, 0);
+    assert_eq!(result.cleaned_size_bytes, 2 * 1024 * 1024);
+    assert!(
+        result
+            .first_path
+            .as_ref()
+            .is_some_and(|path| path.ends_with("node_modules"))
+    );
+}
+
+#[test]
+fn cleanup_result_highlights_count_size_and_path_on_scan_and_home() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let cleaned_path = temp.path().join("target").join("artifact-cache");
+    let mut app = app(temp.path().to_path_buf());
+    app.last_cleanup_result = Some(CleanupResult {
+        succeeded: 1,
+        failed: 0,
+        cleaned_size_bytes: 414 * 1024 * 1024,
+        first_path: Some(cleaned_path),
+    });
+    app.view = View::Scan;
+
+    let scan = render_text(&mut app, 120, 24);
+    println!("{scan}");
+    assert!(scan.contains("Cleanup complete"), "{scan}");
+    assert!(
+        scan.contains("1 item(s)  ·  414.00 MiB moved to Trash"),
+        "{scan}"
+    );
+    assert!(scan.contains("target/artifact-cache"), "{scan}");
+    assert!(!scan.contains("Candidates"), "{scan}");
+    assert!(!scan.contains("No cleanup plan"), "{scan}");
+    let narrow_scan = render_text(&mut app, 60, 12);
+    assert!(narrow_scan.contains("Cleanup complete"), "{narrow_scan}");
+    assert!(narrow_scan.contains("414.00 MiB"), "{narrow_scan}");
+
+    app.view = View::Home;
+    let home = render_text(&mut app, 120, 24);
+    println!("{home}");
+    assert!(home.contains("Cleanup complete"), "{home}");
+    assert!(
+        home.contains("1 item(s)  ·  414.00 MiB moved to Trash"),
+        "{home}"
+    );
+    assert!(home.contains("Cleaned  target/artifact-cache"), "{home}");
 }
 
 #[test]
@@ -1272,9 +1379,17 @@ fn cleanup_failure_surfaces_item_error_without_starting_refresh_scan() {
     assert!(!app.is_scan_running());
     assert!(target.exists());
     assert!(app.status().contains("simulated trash failure"));
-    assert!(app.status().contains("Nothing was moved to trash"));
+    assert!(app.status().contains("Nothing was moved to Trash"));
     assert_eq!(app.execution_manifests[0].summary.succeeded, 0);
     assert_eq!(app.execution_manifests[0].summary.failed, 1);
+    let result = app
+        .last_cleanup_result
+        .as_ref()
+        .expect("failed cleanup should still produce a result");
+    assert_eq!(result.succeeded, 0);
+    assert_eq!(result.failed, 1);
+    assert_eq!(result.cleaned_size_bytes, 0);
+    assert!(result.first_path.is_none());
 }
 
 #[test]
@@ -1600,18 +1715,15 @@ fn text_truncation_respects_terminal_display_width() {
 }
 
 #[test]
-fn scan_loading_bar_is_continuous_activity_not_percent_progress() {
-    let samples = [
-        scan_loading_bar_sample(40, 0, Theme::dark()),
-        scan_loading_bar_sample(40, 4, Theme::dark()),
-        scan_loading_bar_sample(40, 16, Theme::dark()),
-    ];
+fn scan_loading_indicator_is_compact_stable_and_deliberately_slow() {
+    let samples = (0..16)
+        .map(scan_loading_indicator_sample)
+        .collect::<Vec<_>>();
 
-    assert!(samples.iter().all(|sample| display_width(sample) == 40));
-    assert!(samples.iter().all(|sample| sample.contains('─')));
-    assert!(samples.iter().all(|sample| sample.contains('━')));
-    assert!(samples.iter().all(|sample| !sample.contains('█')));
-    assert_ne!(samples[0], samples[1]);
+    assert!(samples.iter().all(|sample| display_width(sample) == 1));
+    assert!(samples.iter().all(|sample| !sample.contains('─')));
+    assert!(samples.windows(2).step_by(2).all(|pair| pair[0] == pair[1]));
+    assert_ne!(samples[1], samples[2]);
 }
 
 #[test]

@@ -57,31 +57,9 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
     );
     let list_len = app.list_len();
     let mut right = Vec::new();
-    if app.is_scan_running() {
-        let progress = app.scan_progress.as_ref();
-        let compact = progress.map_or_else(
-            || app.i18n.t("scan_preparing"),
-            |value| match value.stage {
-                ScanStage::Scanning if value.entries_total == 0 => app.i18n.format(
-                    "scan_progress_unbounded",
-                    &[("scanned", value.entries_scanned.to_string())],
-                ),
-                ScanStage::Scanning => app.i18n.format(
-                    "scan_progress_count",
-                    &[
-                        ("scanned", value.entries_scanned.to_string()),
-                        ("total", value.entries_total.to_string()),
-                    ],
-                ),
-                ScanStage::Aggregating => app.i18n.t("scan_progress_aggregating"),
-                stage => app.scan_stage_label(stage),
-            },
-        );
-        right.push(Span::styled(
-            format!("{compact} "),
-            Style::default().fg(app.theme.accent),
-        ));
-    } else if let Some(plan) = &app.plan {
+    if let Some(plan) = &app.plan
+        && !app.is_scan_running()
+    {
         right.extend([
             Span::styled(
                 plan.summary.selected_count.to_string(),
@@ -97,7 +75,7 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
                 Style::default().fg(app.theme.fg_dim),
             ),
         ]);
-    } else if list_len > 0 {
+    } else if list_len > 0 && !app.is_scan_running() {
         let current = app.list_state.selected().map_or(0, |index| index + 1);
         right.push(Span::styled(
             format!("{current} / {list_len} "),
@@ -114,23 +92,18 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
         ])
         .split(area);
     let hint_budget = chunks[0].width as usize;
-    let mode = match app.mode {
-        Mode::Normal => app.i18n.t("label_mode_normal"),
-        Mode::Command => app.i18n.t("label_mode_command"),
-    };
-    let mode_color = match app.mode {
-        Mode::Normal => app.theme.accent,
-        Mode::Command => app.theme.magenta,
-    };
-    let mut hints = vec![
-        Span::styled(
-            format!("  {mode}"),
-            Style::default().fg(mode_color).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  ·  ", Style::default().fg(app.theme.border)),
-    ];
+    let mut hints = Vec::new();
     match app.mode {
         Mode::Command => {
+            hints.extend([
+                Span::styled(
+                    format!("  {}", app.i18n.t("label_mode_command")),
+                    Style::default()
+                        .fg(app.theme.magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ·  ", Style::default().fg(app.theme.border)),
+            ]);
             push_hint_if_fits(
                 &mut hints,
                 key_hint("↑↓", app.i18n.t("hint_choose"), app.theme),
@@ -157,12 +130,17 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
             } else if app.view == View::Home {
                 push_hint_if_fits(
                     &mut hints,
-                    key_hint("s", app.i18n.t("hint_scan"), app.theme),
+                    key_hint("/", app.i18n.t("hint_commands"), app.theme),
                     hint_budget,
                 );
                 push_hint_if_fits(
                     &mut hints,
-                    key_hint("u", app.i18n.t("hint_usage"), app.theme),
+                    key_hint("?", app.i18n.t("hint_help"), app.theme),
+                    hint_budget,
+                );
+                push_hint_if_fits(
+                    &mut hints,
+                    key_hint("q", app.i18n.t("hint_quit"), app.theme),
                     hint_budget,
                 );
             } else if app.view == View::Scan {
@@ -190,6 +168,11 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
                         );
                     }
                 }
+                push_hint_if_fits(
+                    &mut hints,
+                    key_hint("/", app.i18n.t("hint_commands"), app.theme),
+                    hint_budget,
+                );
             } else if list_len > 0 {
                 push_hint_if_fits(
                     &mut hints,
@@ -203,22 +186,18 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
                         hint_budget,
                     );
                 }
+                push_hint_if_fits(
+                    &mut hints,
+                    key_hint("/", app.i18n.t("hint_commands"), app.theme),
+                    hint_budget,
+                );
+            } else {
+                push_hint_if_fits(
+                    &mut hints,
+                    key_hint("/", app.i18n.t("hint_commands"), app.theme),
+                    hint_budget,
+                );
             }
-            push_hint_if_fits(
-                &mut hints,
-                key_hint("/", app.i18n.t("hint_commands"), app.theme),
-                hint_budget,
-            );
-            push_hint_if_fits(
-                &mut hints,
-                key_hint("q", app.i18n.t("hint_quit"), app.theme),
-                hint_budget,
-            );
-            push_hint_if_fits(
-                &mut hints,
-                key_hint("?", app.i18n.t("hint_help"), app.theme),
-                hint_budget,
-            );
         }
     }
     frame.render_widget(Paragraph::new(Line::from(hints)), chunks[0]);

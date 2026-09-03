@@ -40,7 +40,7 @@ impl Workbench {
         if self.plan.is_none() {
             self.build_plan();
         }
-        let Some(plan) = &self.plan else {
+        let Some(plan) = self.plan.clone() else {
             return;
         };
         if plan.summary.selected_count == 0 {
@@ -65,7 +65,8 @@ impl Workbench {
 
         let count = plan.summary.selected_count;
         let size = format_bytes(plan.summary.selected_size_bytes);
-        match spawn_cleanup(plan.clone(), self.state_dir.clone()) {
+        self.last_cleanup_result = None;
+        match spawn_cleanup(plan, self.state_dir.clone()) {
             Ok(effect) => {
                 self.clean_waiting_for_confirmation = false;
                 self.operation_kind = Some(effect.kind);
@@ -88,7 +89,7 @@ impl Workbench {
         if self.plan.is_none() {
             self.build_plan();
         }
-        let Some(plan) = &self.plan else {
+        let Some(plan) = self.plan.clone() else {
             return;
         };
         if plan.summary.selected_count == 0 {
@@ -112,7 +113,8 @@ impl Workbench {
             return;
         }
 
-        match execute_cleanup(plan, executor, &self.state_dir, true) {
+        self.last_cleanup_result = None;
+        match execute_cleanup(&plan, executor, &self.state_dir, true) {
             Ok(manifest) => self.finish_cleanup_manifest(manifest),
             Err(err) => self.status = err.to_string(),
         }
@@ -120,8 +122,10 @@ impl Workbench {
 
     pub(crate) fn finish_cleanup_manifest(&mut self, manifest: ExecutionManifest) {
         self.clean_waiting_for_confirmation = false;
-        let status = self.cleanup_manifest_status(&manifest);
+        let result = self.cleanup_result(&manifest);
+        let status = self.cleanup_manifest_status(&manifest, result.cleaned_size_bytes);
         let succeeded = manifest.summary.succeeded;
+        self.last_cleanup_result = Some(result);
         self.task_log.push(status.clone());
         if !self
             .execution_manifests
@@ -137,14 +141,45 @@ impl Workbench {
         }
     }
 
-    fn cleanup_manifest_status(&self, manifest: &ExecutionManifest) -> String {
+    fn cleanup_result(&self, manifest: &ExecutionManifest) -> CleanupResult {
+        let sizes_by_path = self.plan.as_ref().map_or_else(HashMap::new, |plan| {
+            plan.items
+                .iter()
+                .map(|item| (&item.path, item.size_bytes))
+                .collect::<HashMap<_, _>>()
+        });
+        let mut first_path = None;
+        let mut cleaned_size_bytes = 0u64;
+        for item in &manifest.items {
+            if item.status != ExecutionStatus::Trashed {
+                continue;
+            }
+            cleaned_size_bytes = cleaned_size_bytes
+                .saturating_add(sizes_by_path.get(&item.path).copied().unwrap_or_default());
+            if first_path.is_none() {
+                first_path = Some(item.path.clone());
+            }
+        }
+
+        CleanupResult {
+            succeeded: manifest.summary.succeeded,
+            failed: manifest.summary.failed,
+            cleaned_size_bytes,
+            first_path,
+        }
+    }
+
+    fn cleanup_manifest_status(
+        &self,
+        manifest: &ExecutionManifest,
+        cleaned_size_bytes: u64,
+    ) -> String {
         if manifest.summary.failed == 0 {
             return self.i18n.format(
                 "status_cleaned",
                 &[
                     ("succeeded", manifest.summary.succeeded.to_string()),
-                    ("failed", manifest.summary.failed.to_string()),
-                    ("run_id", manifest.run_id.clone()),
+                    ("size", format_bytes(cleaned_size_bytes)),
                 ],
             );
         }
@@ -165,8 +200,8 @@ impl Workbench {
             &[
                 ("succeeded", manifest.summary.succeeded.to_string()),
                 ("failed", manifest.summary.failed.to_string()),
+                ("size", format_bytes(cleaned_size_bytes)),
                 ("error", error),
-                ("run_id", manifest.run_id.clone()),
             ],
         )
     }
