@@ -1,10 +1,23 @@
 # cleanr-cli
 
-Review developer caches. Choose what goes to Trash.
+AI-friendly disk cleanup. Safety comes first.
 
-Cleanr helps you inspect project dependencies, build output, and package-manager
-caches from a terminal. Candidates include reasons and risk notes; selected
-items are revalidated and moved to system Trash with a local restore record.
+Cleanr is an AI-friendly, cross-platform disk cleanup tool. Review application
+and browser caches, logs, temporary files, downloads, and development artifacts.
+Candidates include reasons and risk notes; confirmed items are revalidated and
+moved to system Trash with a local restore record. Choose folders or known cleanup
+locations with the [scanning options](https://drl990114.github.io/Cleanr/docs/using-cleanr).
+
+AI agents can use structured, read-only analysis to explain candidates and help
+prepare a reviewable plan. You make the final cleanup decision. See the
+[agent workflow](https://drl990114.github.io/Cleanr/docs/quick-start#ai-agent),
+or review candidates directly in the terminal.
+
+**Safety comes first.** Analysis is read-only and cleanup confirmation is on by
+default. Agent execution checks the reviewed plan against a fresh scan; selected
+paths and file state are rechecked before each move. Protected paths and
+symbolic-link targets are rejected. See
+[safety checks and recovery limits](https://drl990114.github.io/Cleanr/docs/safety-and-recovery).
 
 Requires Node.js 18 or later. The package includes a launcher and selects a native
 binary for your OS and CPU; see the [platform matrix](https://drl990114.github.io/Cleanr/docs/support-matrix).
@@ -17,8 +30,9 @@ cleanr /path/to/project
 
 Use an existing project path. Press `s` to scan, `r` to review, and `q` to leave;
 this first walkthrough does not require cleanup. Review defaults to a 90-day
-observed modification threshold, so an empty list is possible. A coding agent
-can instead use the read-only `cleanr analyze /path/to/project` command.
+observed modification threshold, so an empty list is possible. An AI agent
+can use the read-only `cleanr analyze /path/to/folder` command for a chosen folder
+or add explicit global categories for known cleanup locations.
 
 Moving files to Trash usually does not immediately increase free disk space.
 Restore is best-effort while the Trash item and local manifest still exist.

@@ -58,15 +58,20 @@ cleanr --inactive-days 30 ~/projects/app-one
 /scan --inactive-days 30
 ```
 
-Windows 常规审阅建议使用更窄、仅包含普通文件的范围：
+Windows 常规审阅可以明确选择应用缓存与临时文件分类：
 
 ```text
 /scan --global-kind app-caches --global-kind temp-files
 ```
 
-在 Windows 上，这个范围只发现当前用户的 DirectX `D3DSCache` 和用户 Temp 目录。
-对应的高置信度 Windows 规则只匹配至少 30 天未修改的普通文件，绝不匹配这两个目录
-本身。只有用户希望审阅浏览器或开发者缓存时，才应额外加入 `browser-caches` 或
+在 Windows 上，`app-caches` 会发现 Slack、Discord、VS Code、Cursor、Signal、
+Notion、Obsidian 的已知缓存目录，以及当前用户的 DirectX `D3DSCache`。
+已命名应用的目录限于 `Cache`、`Code Cache`、`GPUCache` 和 `CachedData`；清理其
+缓存前应退出对应应用。`temp-files` 则加入用户 Temp 目录。
+
+针对 Temp 和 `D3DSCache` 的两条通用 Windows 规则则只匹配普通文件：要求至少
+30 天未修改，不匹配这两个目录本身或子目录。普通审阅与计划生成仍使用当前推荐年龄
+门槛。只有用户希望审阅浏览器或开发者缓存时，才应额外加入 `browser-caches` 或
 `developer-caches`。
 
 TUI 中输入的路径不会经过 Shell 展开，因此 `~` 和环境变量会被当成普通文字。

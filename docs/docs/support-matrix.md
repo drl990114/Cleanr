@@ -82,16 +82,23 @@ read-only analysis or simulated backend tests do not authorize it.
 
 ## Before promoting
 
-Lead with developer caches: one old project, reasons for each candidate, human
-selection, and a recoverable move to Trash. Use a short real walkthrough with
-synthetic or redacted paths, showing review and recovery as separate actions.
-Identify the app version and platform; label repository-only visuals Unreleased.
+Present Cleanr as AI-friendly disk cleanup under the user's control: application
+and browser caches, logs, temporary files, downloads, and development artifacts.
+Show how structured, read-only evidence helps an agent explain candidates and
+prepare a reviewable plan, alongside the direct terminal workflow. Explain safety
+through default confirmation, plan and target checks, system Trash, and local
+recovery records. For each
+walkthrough, choose one scope and show the candidate reasons, human selection,
+and a recoverable move to Trash. Use synthetic or redacted paths, show review and
+recovery as separate actions, and identify the app version and platform. Label
+repository-only visuals Unreleased.
 
 Show candidate bytes and moved bytes accurately. Do not equate them with newly
 available disk space or promise guaranteed recovery. Present the TUI and agent
 entry points together, with the cloud-agent data boundary visible.
 
-Start with a small developer audience. Track installation success, time to the
+Start with a small audience comfortable with terminal tools, covering both
+everyday cleanup and development use cases. Track installation success, time to the
 first understood review, empty-result confusion, unexpected rule matches, and
 restore failures through voluntary feedback. Baselines and real-user demand are
 **not yet measured** here; local scenario success cannot replace that evidence.

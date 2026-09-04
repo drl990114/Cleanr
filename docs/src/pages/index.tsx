@@ -14,23 +14,23 @@ export default function Home(): ReactNode {
   const recording = useBaseUrl('/media/cleanr-first-scan.mp4');
   return (
     <Layout
-      title={translate({id: 'home.title', message: 'Understand your developer caches'})}
-      description={translate({id: 'home.description', message: 'Review developer caches in your terminal, understand each candidate, and move only confirmed items to system trash. Open source, with an optional agent workflow.'})}>
+      title={translate({id: 'home.title', message: 'AI-friendly disk cleanup with safety checks'})}
+      description={translate({id: 'home.description', message: 'AI-friendly disk cleanup with read-only scans, plan validation, and system Trash. Review caches, logs, temporary files, downloads, and build artifacts.'})}>
       <header className={styles.heroBanner}>
         <div className="container">
           <p className={styles.eyebrow}>Cleanr · <Translate id="home.eyebrow">Open source · Terminal first</Translate></p>
           <Heading as="h1" className={styles.title}>
-            <Translate id="home.heading">Understand your caches. Review before you clean.</Translate>
+            <Translate id="home.heading">AI-friendly disk cleanup. Safety comes first.</Translate>
           </Heading>
           <p className={styles.subtitle}>
-            <Translate id="home.subtitle">Find generated files across old projects and developer tools. See why they matched, choose what goes, and keep a path back through system trash.</Translate>
+            <Translate id="home.subtitle">Give your AI agent structured, read-only analysis of app and browser caches, logs, temporary files, downloads, and development artifacts. Review the reasons and risks, then choose what moves to system Trash.</Translate>
           </p>
           <div className={styles.buttons}>
-            <Link className="button button--primary button--lg" to="/docs/quick-start">
-              <Translate id="home.start">Start with a read-only scan</Translate>
+            <Link className="button button--primary button--lg" to="/docs/quick-start#ai-agent">
+              <Translate id="home.agent">Use with an AI agent</Translate>
             </Link>
-            <Link className="button button--outline button--primary button--lg" to="/docs/evidence-and-privacy">
-              <Translate id="home.agent">Use with an agent</Translate>
+            <Link className="button button--outline button--primary button--lg" to="/docs/quick-start">
+              <Translate id="home.start">Try the terminal</Translate>
             </Link>
           </div>
           <div className={styles.install}>
@@ -62,7 +62,7 @@ export default function Home(): ReactNode {
         </section>
         <section className={styles.boundary}>
           <div className="container">
-            <Heading as="h2"><Translate id="home.boundaryTitle">Know what happens next</Translate></Heading>
+            <Heading as="h2"><Translate id="home.boundaryTitle">Safety and recovery</Translate></Heading>
             <p><Translate id="home.trashBoundary">Confirmed items move to system trash. Space is not necessarily freed until you empty it yourself; after that, Cleanr cannot restore those items.</Translate>{' '}<Link to="/docs/safety-and-recovery"><Translate id="home.safetyLink">Recovery limits</Translate></Link></p>
             <p><Translate id="home.aiBoundary">Cleanr does not upload your analysis. If you use a hosted AI agent, the agent may send tool output to its provider. Decide what it may read before sharing a report.</Translate>{' '}<Link to="/docs/evidence-and-privacy"><Translate id="home.privacyLink">Agent data boundary</Translate></Link></p>
           </div>

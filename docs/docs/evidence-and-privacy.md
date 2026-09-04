@@ -69,8 +69,8 @@ user approves that scope. Add `developer-caches` explicitly for Homebrew,
 package-manager, and Xcode targets. Add `downloads` only when the user
 explicitly asks to review personal files in Downloads.
 
-For a routine Windows review, keep the default scope to the two conservative
-file-only categories:
+For a routine Windows review, explicitly choose application caches and temporary
+files with the user:
 
 ```bash
 cleanr analyze --global \
@@ -78,12 +78,20 @@ cleanr analyze --global \
   --global-kind temp-files
 ```
 
-This discovers the current user's Temp and DirectX `D3DSCache` locations. The
-Windows-specific rules match only regular files that have not been modified for
-at least 30 days; they do not select either directory. Ask separately before
-adding browser or developer caches. Crash dumps, Explorer thumbnail databases,
-Windows Update data, Prefetch, Downloads, registry data, the Recycle Bin, and
-system-owned roots are outside this routine scope.
+The built-in `app-caches` locations include known `Cache`, `Code Cache`,
+`GPUCache`, and `CachedData` directories for Slack, Discord, VS Code, Cursor,
+Signal, Notion, and Obsidian, as well as the current user's DirectX `D3DSCache`.
+`temp-files` adds the user's Temp directory. Application-cache candidates can
+be directories; quit the owning application before cleaning them.
+
+The two generic Windows rules for Temp and `D3DSCache` match only regular files
+that have not been modified for at least 30 days, never either directory or its
+subdirectories. Normal review and planning also apply the effective
+recommendation-age threshold.
+Ask separately before adding browser or developer caches. The dedicated
+`CrashDumps` directory, Explorer thumbnail databases, Windows Update data,
+Prefetch, Downloads, registry data, the Recycle Bin, and system-owned roots are
+outside this scan and cleanup scope.
 
 Set `preselect_after_days` to `0` to remove the age filter, or to an integer
 from `1` through `3650`. The normal TUI review, `cleanr plan`, and

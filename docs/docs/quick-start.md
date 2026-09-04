@@ -1,12 +1,12 @@
 ---
 sidebar_position: 2
-description: Install Cleanr and complete a first read-only review of a project.
+description: Install Cleanr and complete a first read-only review of a folder or known cleanup location.
 ---
 
 # Quick start
 
-Start with one project you recognize. The first goal is to see and understand
-candidates; no cleanup is required.
+Start with one folder you recognize, such as Downloads or an old project. The
+first goal is to see and understand candidates; no cleanup is required.
 
 ## 1. Install and verify
 
@@ -55,17 +55,17 @@ unless that release documents it; do not disable your OS's security protections.
 
 ## 2. Review without cleaning
 
-Launch with a real project directory, quoting paths that contain spaces:
+Launch with a real directory, quoting paths that contain spaces:
 
 ```bash
-cleanr "/path/to/project"
+cleanr "/path/to/folder"
 ```
 
 For example, use `cleanr "$HOME/projects/my-app"` in a POSIX shell or
 `cleanr "$HOME\projects\my-app"` in PowerShell, if that directory exists.
 Startup sets the root; it does not scan automatically.
 
-1. Press `s` to scan the project.
+1. Press `s` to scan the folder.
 2. When the scan finishes, press `r` to review candidates.
 3. Move with the arrow keys or `j` / `k`, and read the reason and risk note.
 4. Press `?` for help or `q` to leave.
@@ -83,7 +83,7 @@ as the root. This does not establish that the whole computer is clean.
 To inspect complete rule evidence without moving files:
 
 ```bash
-cleanr analyze "/path/to/project"
+cleanr analyze "/path/to/folder"
 ```
 
 `analyze` includes below-threshold candidates. If you intentionally want a
@@ -105,7 +105,7 @@ or moved-byte total is not measured free space. `/restore` opens cleanup
 history; recovery needs the Trash item and manifest and cannot overwrite an
 existing path. See [Safety and recovery](./safety-and-recovery.md) before cleanup.
 
-### Review with a coding agent
+### Review with an AI agent {#ai-agent}
 
 Install the optional cross-agent skill:
 
@@ -113,7 +113,8 @@ Install the optional cross-agent skill:
 npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
 ```
 
-Ask the agent to explain one project's candidates before you choose any action.
+Ask the agent to explain the candidates in your chosen cleanup scope before you
+choose any action, such as application caches and temporary files.
 The skill installs a missing CLI, but does not upgrade an existing one.
 `cleanr analyze` is read-only. Cleanr does not upload its report; an agent may
 send tool output to a cloud model even when its tools run on your computer.
@@ -123,19 +124,20 @@ If saving a report, put it outside the scan roots. Shell redirection creates or
 truncates its output file; it is a separate write from Cleanr's read-only scan.
 Do not post the original JSON to an issue or an external service.
 
-### Scan known cache locations
+### Scan known cleanup locations
 
 Use the TUI command palette (`/`) and enter a narrow scope:
 
 ```text
-/scan --global-kind developer-caches
+/scan --global-kind app-caches --global-kind temp-files
 ```
 
-`--global` means known user-level locations, not the whole disk. Select browser,
-application, log, temporary-file, or download categories only when you want to
-review them. Routine Windows `app-caches` and `temp-files` coverage is limited
-to stale regular files in user Temp and DirectX `D3DSCache`; it is not a Windows
-system optimizer. See [Using Cleanr](./using-cleanr.md).
+`--global` means known user-level locations, not the whole disk. Add browser,
+log, developer-cache, or download categories when you want to review them.
+Coverage varies by platform. On Windows, `app-caches` includes named application
+cache folders; the generic rules for user Temp and DirectX `D3DSCache` select
+stale regular files, never those two directories themselves. See
+[Using Cleanr](./using-cleanr.md).
 
 ## Update, roll back, or uninstall
 

@@ -58,7 +58,7 @@ cleanr analyze --global \
 `developer-caches`。只有用户明确要求审阅 Downloads 中的个人文件时，才加入
 `downloads`。
 
-Windows 常规审阅应把默认范围限制在两个保守、仅包含普通文件的分类：
+Windows 常规审阅应与用户明确选择应用缓存与临时文件分类：
 
 ```bash
 cleanr analyze --global \
@@ -66,10 +66,16 @@ cleanr analyze --global \
   --global-kind temp-files
 ```
 
-这个范围会发现当前用户的 Temp 与 DirectX `D3DSCache` 位置。Windows 专属规则只
-匹配至少 30 天未修改的普通文件，不会选择这两个目录本身。加入浏览器或开发者缓存前
-应另行询问用户。崩溃转储、Explorer 缩略图数据库、Windows Update 数据、Prefetch、
-Downloads、注册表数据、回收站和系统所有的根目录不属于这个常规范围。
+内置 `app-caches` 位置包括 Slack、Discord、VS Code、Cursor、Signal、Notion、
+Obsidian 的已知 `Cache`、`Code Cache`、`GPUCache`、`CachedData` 目录，以及当前
+用户的 DirectX `D3DSCache`。`temp-files` 则加入用户 Temp 目录。应用缓存候选项
+可以是目录，清理前应退出所属应用。
+
+针对 Temp 和 `D3DSCache` 的两条通用 Windows 规则只匹配至少 30 天未修改的普通
+文件，不匹配这两个目录本身或子目录。普通审阅与计划生成仍使用当前推荐年龄门槛。
+加入浏览器或开发者缓存前应另行询问用户。独立的 `CrashDumps` 目录、Explorer 缩略图数据库、
+Windows Update 数据、Prefetch、Downloads、注册表数据、回收站和系统所有的根目录
+不属于这个扫描与清理范围。
 
 将 `preselect_after_days` 设为 `0` 可移除年龄过滤，也可设为 `1` 到 `3650` 之间的
 整数。普通 TUI 审阅、`cleanr plan` 和 `cleanr dry-run` 只保留其他方面仍符合条件、

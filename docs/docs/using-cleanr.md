@@ -61,17 +61,24 @@ Override the configured modification-age threshold for one scan with:
 /scan --inactive-days 30
 ```
 
-For a routine Windows review, prefer the narrower file-only scope:
+For a routine Windows review, explicitly select application caches and temporary
+files:
 
 ```text
 /scan --global-kind app-caches --global-kind temp-files
 ```
 
-On Windows, that scope discovers only the current user's DirectX `D3DSCache`
-and user Temp directory. Its high-confidence Windows rules match regular files,
-never either directory, after at least 30 days without modification. Add
-`browser-caches` or `developer-caches` only when the user wants those separate
-scopes.
+On Windows, `app-caches` discovers known cache directories for Slack, Discord,
+VS Code, Cursor, Signal, Notion, and Obsidian, plus the current user's DirectX
+`D3DSCache`. The named application directories are limited to `Cache`,
+`Code Cache`, `GPUCache`, and `CachedData`; quit the relevant application before
+cleaning its cache. `temp-files` adds the user's Temp directory.
+
+The two generic Windows rules for Temp and `D3DSCache` are file-only:
+they match regular files after at least 30 days without modification, never
+either directory or its subdirectories. Normal review and planning also apply
+the effective recommendation-age threshold. Add `browser-caches` or
+`developer-caches` only when the user wants those separate scopes.
 
 Paths typed inside the TUI are not expanded by a shell, so `~` and environment
 variables remain literal text. Use absolute paths. For paths containing spaces,

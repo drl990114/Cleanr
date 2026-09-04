@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Cleanr</h1>
-  <p><strong>审阅开发者缓存，由你决定哪些进入回收站。</strong></p>
+  <p><strong>AI 友好的磁盘清理，安全优先。</strong></p>
   <p>
     <a href="https://drl990114.github.io/Cleanr/zh-Hans/">完整文档</a> ·
     <a href="https://github.com/drl990114/Cleanr/releases">下载</a> ·
@@ -14,12 +14,21 @@
   <p><a href="../en/README.md">English</a> · <a href="../../README.md">仓库 README</a> · <a href="../../CONTRIBUTING.md">贡献指南</a></p>
 </div>
 
-Cleanr 帮助开发者审阅 `node_modules`、Rust `target`、Xcode 构建产物和包管理器缓存。
-它通过键盘驱动的终端界面解释每个候选项，重新校验你的选择，再把选中内容移动到系统
+Cleanr 是一款 AI 友好的跨平台磁盘清理工具。它提供结构化的只读分析，让 AI Agent
+能够解释清理候选项，帮助你准备可审阅的计划；也可以直接在终端中查看和选择。
+
+覆盖应用与浏览器缓存、日志、临时文件、下载文件，以及 `node_modules`、Rust `target`、
+包管理器缓存等开发产物。每个候选项都有匹配原因和风险说明；由你决定哪些移入系统
 回收站，并保留本地恢复记录。
 
-从一个旧项目开始。浏览器与应用缓存、日志、临时文件和下载文件属于可以额外选择的
-范围。各平台覆盖不同，请看[支持与验证矩阵](https://drl990114.github.io/Cleanr/zh-Hans/docs/support-matrix)。
+**安全优先。** 分析只读，默认在清理前确认；每项移动前都会复核所选路径与文件状态。
+Agent 委托执行时，还会将已审阅计划与重新扫描的结果核对。条目进入系统回收站，
+并保留本地记录以支持尽力恢复。详见
+[安全检查与恢复限制](https://drl990114.github.io/Cleanr/zh-Hans/docs/safety-and-recovery)。
+
+由你选择要审阅的目录或已知清理位置。各平台覆盖不同，请看
+[扫描方式](https://drl990114.github.io/Cleanr/zh-Hans/docs/using-cleanr)与
+[支持与验证矩阵](https://drl990114.github.io/Cleanr/zh-Hans/docs/support-matrix)。
 
 ## 首次扫描演示
 
@@ -46,6 +55,27 @@ cleanr --version
 
 ## 选择第一次审阅方式
 
+### 配合 AI Agent
+
+安装可选的跨 Agent Skill：
+
+```bash
+npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
+```
+
+可以这样提问：“用 Cleanr 审阅应用缓存和临时文件。汇总候选项、原因与风险，等我选择后再继续。”
+Skill 只会在 CLI 缺失时安装它。底层只读入口为：
+
+```bash
+cleanr analyze --global \
+  --global-kind app-caches \
+  --global-kind temp-files
+```
+
+Cleanr 本身不会上传扫描路径或报告。**运行在本机的 Agent 仍可能把工具输出发送给
+云端模型。** 交给 Agent 之前应确认其数据策略；希望不经过 AI 服务时，可直接使用 TUI。
+详见[证据与隐私](https://drl990114.github.io/Cleanr/zh-Hans/docs/evidence-and-privacy)。
+
 ### 直接使用终端
 
 ```bash
@@ -58,25 +88,6 @@ cleanr /path/to/project
 
 看过候选项的原因和风险后，可以用 `space` 调整选择、`c` 打开清理确认框。
 `/restore` 打开清理历史。详见[完整入门流程](https://drl990114.github.io/Cleanr/zh-Hans/docs/quick-start)。
-
-### 配合编码 Agent
-
-安装可选的跨 Agent Skill：
-
-```bash
-npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
-```
-
-可以这样提问：“用 Cleanr 审阅这个项目的清理候选项。先解释原因与风险，再由我选择。”
-Skill 只会在 CLI 缺失时安装它。底层只读入口为：
-
-```bash
-cleanr analyze /path/to/project
-```
-
-Cleanr 本身不会上传扫描路径或报告。**运行在本机的 Agent 仍可能把工具输出发送给
-云端模型。** 交给 Agent 之前应确认其数据策略；希望不经过 AI 服务时，可直接使用 TUI。
-详见[证据与隐私](https://drl990114.github.io/Cleanr/zh-Hans/docs/evidence-and-privacy)。
 
 ## 能做什么
 

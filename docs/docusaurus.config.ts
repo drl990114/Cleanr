@@ -6,7 +6,7 @@ import { themes as prismThemes } from 'prism-react-renderer';
 
 const config: Config = {
   title: 'Cleanr',
-  tagline: 'Understand your developer caches. Review before you clean.',
+  tagline: 'AI-friendly disk cleanup. Safety comes first.',
   favicon: 'img/logo.svg',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future

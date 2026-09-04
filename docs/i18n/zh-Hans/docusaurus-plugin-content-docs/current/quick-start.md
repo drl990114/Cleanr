@@ -1,11 +1,11 @@
 ---
 sidebar_position: 2
-description: 安装 Cleanr，并完成一次项目的只读审阅。
+description: 安装 Cleanr，并完成一次目录或已知清理位置的只读审阅。
 ---
 
 # 快速开始
 
-从一个你认识的项目开始。第一次的目标是看到并理解候选项，无需执行清理。
+从一个你熟悉的目录开始，例如下载目录或旧项目。第一次的目标是看到并理解候选项，无需执行清理。
 
 ## 1. 安装并确认版本
 
@@ -49,16 +49,16 @@ PowerShell 可用 `.\cleanr.exe --version` 测试当前目录中的文件。
 
 ## 2. 只审阅，不清理
 
-传入真实项目目录，路径含空格时加引号：
+传入真实目录，路径含空格时加引号：
 
 ```bash
-cleanr "/path/to/project"
+cleanr "/path/to/folder"
 ```
 
 例如，目录存在时，POSIX Shell 可使用 `cleanr "$HOME/projects/my-app"`，PowerShell
 可使用 `cleanr "$HOME\projects\my-app"`。启动只设置扫描根目录，不会立即扫描。
 
-1. 按 `s` 扫描项目。
+1. 按 `s` 扫描目录。
 2. 扫描完成后按 `r` 审阅候选项。
 3. 用方向键或 `j` / `k` 移动，阅读原因与风险说明。
 4. 按 `?` 查看帮助，或按 `q` 退出。
@@ -74,7 +74,7 @@ cleanr "/path/to/project"
 想查看完整规则证据而不移动文件，可以运行：
 
 ```bash
-cleanr analyze "/path/to/project"
+cleanr analyze "/path/to/folder"
 ```
 
 `analyze` 保留未达到年龄门槛的候选项。确实希望更改本次审阅门槛时，可使用
@@ -92,7 +92,7 @@ cleanr analyze "/path/to/project"
 `/restore` 打开清理历史；恢复需要回收站条目与清单，且不会覆盖原路径上已有的内容。
 清理前请阅读[安全与恢复](./safety-and-recovery.md)。
 
-### 配合编码 Agent 审阅
+### 配合 AI Agent 审阅 {#ai-agent}
 
 安装可选的跨 Agent Skill：
 
@@ -100,25 +100,25 @@ cleanr analyze "/path/to/project"
 npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
 ```
 
-先让 Agent 解释一个项目的候选项，再由你选择操作。Skill 会安装缺失的 CLI，但不会
-升级已有版本。`cleanr analyze` 是只读命令。Cleanr 不会上传报告，但 Agent 即使在
+先让 Agent 解释所选清理范围内的候选项，例如应用缓存和临时文件，再由你选择操作。
+Skill 会安装缺失的 CLI，但不会升级已有版本。`cleanr analyze` 是只读命令。Cleanr 不会上传报告，但 Agent 即使在
 本机执行工具，也可能把输出发送给云端模型。请先阅读[证据与隐私](./evidence-and-privacy.md)。
 
 需要保存报告时，把它放在扫描根目录之外。Shell 重定向会创建或截断输出文件，这与
 Cleanr 的只读扫描是不同的写入操作。不要向 issue 或外部服务提交原始 JSON。
 
-### 扫描已知缓存位置
+### 扫描已知清理位置
 
 按 `/` 打开 TUI 命令面板，输入较小范围：
 
 ```text
-/scan --global-kind developer-caches
+/scan --global-kind app-caches --global-kind temp-files
 ```
 
-`--global` 表示已知的用户级位置，不是整块磁盘。需要审阅时，再选择浏览器、应用、
-日志、临时文件或下载分类。Windows 日常 `app-caches` 与 `temp-files` 范围仅包括
-用户 Temp、DirectX `D3DSCache` 中较旧的普通文件，不是 Windows 系统优化器。
-详见[使用 Cleanr](./using-cleanr.md)。
+`--global` 表示已知的用户级位置，不是整块磁盘。需要审阅时，再加入浏览器、日志、
+开发缓存或下载分类。覆盖范围因平台而异。Windows 的 `app-caches` 包括已知应用
+缓存目录；用户 Temp 和 DirectX `D3DSCache` 的两条通用规则只选择较旧的普通文件，
+不会选择这两个目录本身。详见[使用 Cleanr](./using-cleanr.md)。
 
 ## 升级、回退与卸载
 

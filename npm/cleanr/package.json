@@ -1,7 +1,7 @@
 {
   "name": "cleanr-cli",
   "version": "0.15.0",
-  "description": "TUI-first, safe local disk cleanup for developer caches",
+  "description": "AI-friendly disk cleanup with read-only analysis, plan validation, and system Trash",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Cleanr</h1>
-  <p><strong>Review developer caches. Choose what goes to Trash.</strong></p>
+  <p><strong>AI-friendly disk cleanup. Safety comes first.</strong></p>
   <p>
     <a href="https://drl990114.github.io/Cleanr/">Documentation</a> ·
     <a href="https://github.com/drl990114/Cleanr/releases">Download</a> ·
@@ -14,14 +14,24 @@
   <p><a href="readme/en/README.md">English</a> · <a href="readme/zh-CN/README.md">简体中文</a> · <a href="CONTRIBUTING.md">Contributing</a></p>
 </div>
 
-Cleanr helps developers review `node_modules`, Rust `target`, Xcode build output,
-and package-manager caches. It explains each candidate in a keyboard-driven
-terminal interface, validates your selection again, and moves selected items to
-system Trash with a local restore record.
+Cleanr is an AI-friendly, cross-platform disk cleanup tool. Its structured,
+read-only analysis lets an AI agent explain cleanup candidates and help you
+prepare a plan. You can also review candidates directly in the terminal.
 
-Start with one old project. Browser and application caches, logs, temporary
-files, and downloads are additional, explicitly chosen scopes. Coverage varies
-by platform; see the [support and verification matrix](https://drl990114.github.io/Cleanr/docs/support-matrix).
+It covers application and browser caches, logs, temporary files, downloads, and
+development artifacts such as `node_modules`, Rust `target`, and package-manager
+caches. Each candidate comes with reasons and risk notes; you decide what moves
+to system Trash, with a local restore record.
+
+**Safety comes first.** Analysis is read-only, cleanup confirmation is on by
+default, and selected paths and file state are checked again before each move.
+Agent execution verifies the reviewed plan against a fresh scan. Items go to
+system Trash with local records for best-effort restore.
+[Safety checks and recovery limits](https://drl990114.github.io/Cleanr/docs/safety-and-recovery).
+
+Choose the folders or known cleanup locations you want to review. Coverage varies
+by platform; see [scanning options](https://drl990114.github.io/Cleanr/docs/using-cleanr)
+and the [support and verification matrix](https://drl990114.github.io/Cleanr/docs/support-matrix).
 
 ## First scan demo
 
@@ -48,6 +58,29 @@ cover platform and architecture selection.
 
 ## Choose your first review
 
+### With an AI agent
+
+Install the optional cross-agent skill:
+
+```bash
+npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
+```
+
+Ask: “Use Cleanr to review app caches and temporary files. Summarize the
+candidates, reasons, and risks, then wait for my selection.” The skill installs
+the CLI only when missing. The underlying read-only entry point is:
+
+```bash
+cleanr analyze --global \
+  --global-kind app-caches \
+  --global-kind temp-files
+```
+
+Cleanr itself does not upload scan paths or reports. **An agent running on your
+computer may send tool output to a cloud model.** Check that agent's data policy
+before giving it access; use the TUI if you want to review without an AI service.
+See [Evidence and privacy](https://drl990114.github.io/Cleanr/docs/evidence-and-privacy).
+
 ### In the terminal
 
 ```bash
@@ -63,27 +96,6 @@ or no matching rules; it does not mean the whole computer is clean.
 After reviewing a candidate's reason and risk, use `space` to adjust selection
 and `c` to open cleanup confirmation. `/restore` opens cleanup history.
 See the [complete walkthrough](https://drl990114.github.io/Cleanr/docs/quick-start).
-
-### With a coding agent
-
-Install the optional cross-agent skill:
-
-```bash
-npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
-```
-
-Ask: “Review this project's cleanup candidates with Cleanr. Explain the reasons
-and risks before I choose anything.” The skill installs the CLI only when
-missing. The underlying read-only entry point is:
-
-```bash
-cleanr analyze /path/to/project
-```
-
-Cleanr itself does not upload scan paths or reports. **An agent running on your
-computer may send tool output to a cloud model.** Check that agent's data policy
-before giving it access; use the TUI if you want to review without an AI service.
-See [Evidence and privacy](https://drl990114.github.io/Cleanr/docs/evidence-and-privacy).
 
 ## What to expect
 

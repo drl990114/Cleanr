@@ -327,25 +327,25 @@
     "description": "The title of the tag list page"
   },
   "home.title": {
-    "message": "看懂你的开发缓存"
+    "message": "AI 友好的磁盘清理，安全优先"
   },
   "home.description": {
-    "message": "在终端审阅开发缓存，了解每个候选项，只将确认的内容移入系统回收站。开源，支持可选的 Agent 工作流。"
+    "message": "AI 友好的磁盘清理，提供只读扫描、计划校验与系统回收站保护。审阅应用与浏览器缓存、日志、临时文件、下载文件和开发产物。"
   },
   "home.eyebrow": {
     "message": "开源 · 终端优先"
   },
   "home.heading": {
-    "message": "看懂缓存，再决定清理什么。"
+    "message": "AI 友好的磁盘清理，安全优先。"
   },
   "home.subtitle": {
-    "message": "查找旧项目和开发工具的生成文件。看清匹配原因，选择需要清理的内容，通过系统回收站保留恢复路径。"
+    "message": "为你的 AI Agent 提供应用与浏览器缓存、日志、临时文件、下载文件和开发产物的结构化只读分析。看清原因与风险，再决定哪些内容移入系统回收站。"
   },
   "home.start": {
-    "message": "从只读扫描开始"
+    "message": "直接体验终端"
   },
   "home.agent": {
-    "message": "配合 Agent 使用"
+    "message": "配合 AI Agent 使用"
   },
   "home.platforms": {
     "message": "macOS · Linux · Windows"
@@ -372,7 +372,7 @@
     "message": "阅读演示步骤与复现方法"
   },
   "home.boundaryTitle": {
-    "message": "清楚下一步会发生什么"
+    "message": "安全与恢复"
   },
   "home.trashBoundary": {
     "message": "确认的内容会移入系统回收站。在你自行清空回收站前，空间不一定释放；清空后，Cleanr 无法再恢复这些内容。"
@@ -387,21 +387,21 @@
     "message": "Agent 数据边界"
   },
   "home.featureInspect": {
-    "message": "发现候选项"
+    "message": "为 AI Agent 提供依据"
   },
   "home.featureInspectText": {
-    "message": "检查一个项目或已知缓存位置。扫描和审阅不会改变文件。"
+    "message": "结构化只读扫描结果包含大小、匹配原因、置信度与风险说明，便于 Agent 理解和审阅。"
   },
   "home.featureReview": {
-    "message": "了解清理的代价"
+    "message": "审阅后，再清理"
   },
   "home.featureReviewText": {
-    "message": "查看大小、匹配原因、置信度与重建风险。近期或证据不明确的内容不会自动选中。"
+    "message": "看清原因与风险，再选择清理内容。默认在清理前确认；Agent 执行需要你对确切计划的授权。"
   },
   "home.featureRecover": {
-    "message": "确认要移动的内容"
+    "message": "每次移动前都复核"
   },
   "home.featureRecoverText": {
-    "message": "移入系统回收站前会再次校验所选内容。本地历史记录保存结果，并支持尽力恢复。"
+    "message": "复核所选路径和文件状态，拒绝受保护路径与符号链接目标。条目移入系统回收站，并保留本地记录以支持尽力恢复。"
   }
 }

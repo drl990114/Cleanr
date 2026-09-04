@@ -5,18 +5,29 @@ description: Understand what Cleanr cleans, how it keeps cleanup reviewable, and
 
 # Cleanr overview
 
-Cleanr helps developers review **project dependencies, build output, and
-package-manager caches**. It runs in your terminal, explains why each item
-matched, and lets you decide what moves to system Trash. A coding agent can
-also consume its read-only analysis report.
+Cleanr is an AI-friendly, cross-platform disk cleanup tool for **application and browser caches,
+logs, temporary files, downloads, and development artifacts**. It runs in your
+terminal, explains why each item matched, and lets you decide what moves to
+system Trash. Its structured, read-only analysis gives AI agents candidate sizes,
+matching reasons, confidence, and risk notes, so they can help you review and
+prepare a plan. The final cleanup decision stays with you.
+
+Safety checks are part of that workflow: analysis is read-only, confirmation is
+on by default, and selected targets are revalidated before each move. Agent
+execution verifies the reviewed plan against a fresh scan. Cleanup uses system
+Trash and local records for best-effort recovery.
 
 Typical candidates include:
 
+- browser and application caches from known user-level cleanup locations;
+- logs, diagnostic reports, and temporary files;
+- downloads and installers that need your judgment before removal;
 - project dependencies such as `node_modules`;
 - build output such as Rust `target` directories and Xcode `DerivedData`;
-- package-manager caches for Cargo, npm, pnpm, pip, Gradle, and other tools;
-- browser and application caches from known user-level cleanup locations;
-- large downloads, logs, and temporary files that require manual review.
+- package-manager caches for Cargo, npm, pnpm, pip, Gradle, and other tools.
+
+Choose directories or known cleanup locations by category. Coverage depends on
+your platform and selected scope; see [scanning options](./using-cleanr.md).
 
 ## The basic workflow
 
@@ -49,9 +60,10 @@ restore limitations.
 
 ## Is Cleanr a good fit?
 
-Cleanr is designed for developers who want to inspect generated files and
-caches from a keyboard-driven interface. It is not a general-purpose system
-optimizer, registry cleaner, or unattended deletion service.
+Cleanr suits people who want to review disk cleanup from a keyboard-driven
+interface, whether they are inspecting application caches, old downloads, or
+project build output. It is not a general-purpose system optimizer, registry
+cleaner, or unattended deletion service.
 
 ## Start here
 

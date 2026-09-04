@@ -4,9 +4,9 @@ import type {ReactNode} from 'react';
 import styles from './styles.module.css';
 
 const features = [
-  {id: 'inspect', step: '01', title: <Translate id="home.featureInspect">Find the candidates</Translate>, description: <Translate id="home.featureInspectText">Inspect one project or known cache locations. Scanning and reviewing do not change your files.</Translate>},
-  {id: 'review', step: '02', title: <Translate id="home.featureReview">Understand the tradeoff</Translate>, description: <Translate id="home.featureReviewText">See the size, matching reason, confidence, and rebuild risk. Recent or uncertain items are not automatically selected.</Translate>},
-  {id: 'recover', step: '03', title: <Translate id="home.featureRecover">Confirm what moves</Translate>, description: <Translate id="home.featureRecoverText">Your selection is checked again before it moves to system trash. Local history records results and supports best-effort restore.</Translate>},
+  {id: 'inspect', step: '01', title: <Translate id="home.featureInspect">Built for AI agents</Translate>, description: <Translate id="home.featureInspectText">Structured, read-only scan results give your agent sizes, matching reasons, confidence, and risk notes to work with.</Translate>},
+  {id: 'review', step: '02', title: <Translate id="home.featureReview">Review before cleanup</Translate>, description: <Translate id="home.featureReviewText">Review reasons and risks, then choose what goes. Confirmation is on by default; agent cleanup requires your authorization for the exact plan.</Translate>},
+  {id: 'recover', step: '03', title: <Translate id="home.featureRecover">Checks before every move</Translate>, description: <Translate id="home.featureRecoverText">Cleanr rechecks selected paths and file state, rejecting protected paths and symbolic-link targets. Items go to system Trash with local records for best-effort restore.</Translate>},
 ];
 
 export default function HomepageFeatures(): ReactNode {
