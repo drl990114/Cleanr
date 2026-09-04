@@ -1,6 +1,6 @@
 id = "builtin-dev"
 name = "Built-in developer caches"
-version = "0.14.0"
+version = "0.15.0"
 description = "Generated dependencies, build artifacts, and review-required data for developer projects."
 categories = ["developer-cache", "build-cache", "package-cache"]
 

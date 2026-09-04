@@ -1,6 +1,6 @@
 {
   "name": "cleanr-cli",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "TUI-first, safe local disk cleanup for developer caches",
   "license": "MIT",
   "repository": {
@@ -18,12 +18,12 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@cleanr-cli/darwin-arm64": "0.14.0",
-    "@cleanr-cli/darwin-x64": "0.14.0",
-    "@cleanr-cli/linux-arm": "0.14.0",
-    "@cleanr-cli/linux-arm64": "0.14.0",
-    "@cleanr-cli/linux-x64": "0.14.0",
-    "@cleanr-cli/win32-ia32": "0.14.0",
-    "@cleanr-cli/win32-x64": "0.14.0"
+    "@cleanr-cli/darwin-arm64": "0.15.0",
+    "@cleanr-cli/darwin-x64": "0.15.0",
+    "@cleanr-cli/linux-arm": "0.15.0",
+    "@cleanr-cli/linux-arm64": "0.15.0",
+    "@cleanr-cli/linux-x64": "0.15.0",
+    "@cleanr-cli/win32-ia32": "0.15.0",
+    "@cleanr-cli/win32-x64": "0.15.0"
   }
 }

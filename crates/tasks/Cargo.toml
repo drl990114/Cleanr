@@ -11,10 +11,10 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-cleanr-config = { version = "0.14.0", path = "../config" }
-cleanr-core = { version = "0.14.0", path = "../core" }
-cleanr-fs = { version = "0.14.0", path = "../fs" }
-cleanr-rules = { version = "0.14.0", path = "../rules" }
+cleanr-config = { version = "0.15.0", path = "../config" }
+cleanr-core = { version = "0.15.0", path = "../core" }
+cleanr-fs = { version = "0.15.0", path = "../fs" }
+cleanr-rules = { version = "0.15.0", path = "../rules" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

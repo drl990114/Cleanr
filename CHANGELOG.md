@@ -7,6 +7,8 @@ later source or CI fixes.
 
 ## Unreleased
 
+## 0.15.0
+
 - Show cleanup categories, filter candidates with `f`, retain selections across
   filters, and use `Shift+A` for true global select-all. `a` / `%` apply to the
   current filter; hidden selections remain visible in totals and confirmation.
@@ -29,6 +31,8 @@ later source or CI fixes.
   lock protects the recovery state. After an interrupted `pending` operation,
   inspect the original path and system Trash before recovery. Do not use an
   older binary to process v2 records.
+- Explicitly release operation locks when an operation ends, avoiding temporary
+  lock contention caused by file handles inherited during concurrent process creation.
 
 ### 简体中文
 
@@ -45,6 +49,7 @@ later source or CI fixes.
   状态；`not-attempted` 表示尚未调用回收站，`pending` 表示结果可能尚未落盘。
   写入结果失败会停止后续条目；中断后应人工核对原路径和系统回收站，勿用旧二进制
   处理 v2 记录。
+- 操作结束时显式释放文件锁，避免并行创建进程时继承的句柄短暂阻碍后续操作。
 
 Validation and compatibility details: [support matrix](https://drl990114.github.io/Cleanr/docs/support-matrix).
 

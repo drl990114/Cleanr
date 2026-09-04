@@ -27,8 +27,8 @@ disk space freed**. This demonstration does not validate the system Trash or
 restore backend. See [recovery limits](./safety-and-recovery.md) and the
 [platform evidence](./support-matrix.md).
 
-Category filtering and `Shift+A` are repository changes marked Unreleased and
-are not shown in this v0.14.0 recording.
+Category filtering and `Shift+A` apply to **0.15.0 and later** and are not shown
+in this v0.14.0 recording.
 
 ## Reproduce it
 

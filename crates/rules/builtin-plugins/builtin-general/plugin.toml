@@ -1,7 +1,7 @@
 api_version = "1"
 id = "cleanr.builtin.general"
 name = "Cleanr general cleanup rules"
-version = "0.14.0"
+version = "0.15.0"
 description = "Lower-confidence general cleanup candidates that always require review."
 cleanr_version = ">=0.1.0"
 capabilities = ["rules"]

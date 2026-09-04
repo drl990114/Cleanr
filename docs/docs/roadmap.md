@@ -10,8 +10,8 @@ you can rely on today, use the user guide and the release notes.
 ## Version scope
 
 Documentation follows the repository. Category labels and filtering, cumulative
-filtered selection, and `Shift+A` global selection are **Unreleased** changes
-after v0.14.0. See the [changelog](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md)
+filtered selection, and `Shift+A` global selection apply to **0.15.0 and later**.
+See the [changelog](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md)
 and [release readiness](./support-matrix.md) before relying on new behavior.
 
 ## Current foundation

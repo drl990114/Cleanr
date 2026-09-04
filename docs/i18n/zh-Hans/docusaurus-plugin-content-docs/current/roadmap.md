@@ -9,8 +9,8 @@ description: 了解 Cleanr 的当前方向，同时区分规划和已经发布�
 
 ## 版本范围
 
-文档跟随仓库。分类标签与筛选、跨筛选累积选择、`Shift+A` 全局选择属于 v0.14.0
-之后的 **Unreleased / 未发布** 变更。使用新行为前，请查看
+文档跟随仓库。分类标签与筛选、跨筛选累积选择、`Shift+A` 全局选择适用于
+**0.15.0 及后续版本**。使用新行为前，请查看
 [更新记录](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md)和[发布准备](./support-matrix.md)。
 
 ## 当前基础

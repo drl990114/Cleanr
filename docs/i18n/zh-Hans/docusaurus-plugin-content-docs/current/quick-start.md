@@ -147,4 +147,5 @@ PowerShell 用 `Get-Command cleanr` 查看实际执行的版本路径。变更�
 已安装的语言。初始化可能写入配置或语言文件，独立于前面的只读体验。
 
 [使用 Cleanr](./using-cleanr.md)介绍快捷键，[故障排查](./troubleshooting.md)说明安装与空结果问题。
-标为 **Unreleased / 未发布** 的功能属于仓库变更，尚未包含在已发布安装包中。
+分类筛选、跨筛选累积选择和 `Shift+A` 全局选择需要 **0.15.0 或更新版本**。
+该版本同时引入 `cleanr.restore.v2` 记录；切换版本前请阅读[兼容性说明](./support-matrix.md)。

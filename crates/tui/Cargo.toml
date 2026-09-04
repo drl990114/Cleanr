@@ -10,13 +10,13 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-cleanr-config = { version = "0.14.0", path = "../config" }
-cleanr-core = { version = "0.14.0", path = "../core" }
-cleanr-fs = { version = "0.14.0", path = "../fs" }
-cleanr-i18n = { version = "0.14.0", path = "../i18n" }
-cleanr-plugin-api = { version = "0.14.0", path = "../plugin-api" }
-cleanr-rules = { version = "0.14.0", path = "../rules" }
-cleanr-tasks = { version = "0.14.0", path = "../tasks" }
+cleanr-config = { version = "0.15.0", path = "../config" }
+cleanr-core = { version = "0.15.0", path = "../core" }
+cleanr-fs = { version = "0.15.0", path = "../fs" }
+cleanr-i18n = { version = "0.15.0", path = "../i18n" }
+cleanr-plugin-api = { version = "0.15.0", path = "../plugin-api" }
+cleanr-rules = { version = "0.15.0", path = "../rules" }
+cleanr-tasks = { version = "0.15.0", path = "../tasks" }
 chrono.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true

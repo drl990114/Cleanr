@@ -40,6 +40,22 @@ pub struct ManifestRepository {
     state_dir: PathBuf,
 }
 
+#[derive(Debug)]
+pub(crate) struct OperationLock {
+    file: File,
+}
+
+impl Drop for OperationLock {
+    fn drop(&mut self) {
+        // A concurrent process spawn may temporarily inherit the open-file
+        // description. Closing our handle alone would then leave its flock
+        // active until that inherited handle closes. Unlock before closing so
+        // a completed operation does not depend on another process's timing.
+        // If unlocking fails, closing the handle still provides the OS fallback.
+        let _ = self.file.unlock();
+    }
+}
+
 impl ManifestRepository {
     #[must_use]
     pub fn new(state_dir: impl AsRef<Path>) -> Self {
@@ -54,8 +70,8 @@ impl ManifestRepository {
     }
 
     /// Hold across history lookup, filesystem mutation, and the final journal write.
-    /// The OS releases the lock when this handle closes, including after a crash.
-    pub(crate) fn lock_operations(&self) -> Result<File> {
+    /// The guard explicitly unlocks on drop; OS handle cleanup is the crash fallback.
+    pub(crate) fn lock_operations(&self) -> Result<OperationLock> {
         if self.state_dir.as_os_str().is_empty() {
             anyhow::bail!("cleanup and restore require a non-empty state directory");
         }
@@ -75,7 +91,7 @@ impl ManifestRepository {
                 path.display()
             )
         })?;
-        Ok(lock)
+        Ok(OperationLock { file: lock })
     }
 
     pub fn write_execution(&self, manifest: &ExecutionManifest) -> Result<PathBuf> {
@@ -192,4 +208,30 @@ pub(super) fn atomic_write_json(path: &Path, value: &impl serde::Serialize) -> R
         .map_err(|error| error.error)
         .with_context(|| format!("failed to replace {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operation_lock_releases_while_a_duplicate_description_remains_open() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repository = ManifestRepository::new(temp.path());
+        let held = repository.lock_operations().expect("operation lock");
+        // A duplicate shares the open-file description, as a descriptor
+        // temporarily inherited by a concurrently spawned process does on Unix.
+        let duplicate = held.file.try_clone().expect("duplicate descriptor");
+        assert!(repository.lock_operations().is_err());
+        drop(held);
+        let next = repository
+            .lock_operations()
+            .expect("completed operation must explicitly release its lock");
+        drop(duplicate);
+        assert!(repository.lock_operations().is_err());
+        drop(next);
+        repository
+            .lock_operations()
+            .expect("next operation released");
+    }
 }

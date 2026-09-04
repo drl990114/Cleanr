@@ -1,6 +1,6 @@
 id = "builtin-system"
 name = "Built-in system cleanup locations"
-version = "0.14.0"
+version = "0.15.0"
 description = "Known user-level system cleanup candidates such as browser caches, app caches, logs, diagnostics, temporary files, and downloaded installers."
 categories = ["browser-cache", "application-cache", "temporary-files", "logs", "diagnostics", "downloads"]
 

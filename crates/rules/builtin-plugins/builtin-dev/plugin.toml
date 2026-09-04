@@ -1,7 +1,7 @@
 api_version = "1"
 id = "cleanr.builtin.dev"
 name = "Cleanr developer cache rules"
-version = "0.14.0"
+version = "0.15.0"
 description = "Project-aware developer caches, generated dependencies, build artifacts, and review-required local data."
 cleanr_version = ">=0.1.0"
 capabilities = ["rules", "scan-locations"]

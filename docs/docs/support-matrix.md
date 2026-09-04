@@ -7,13 +7,18 @@ description: Published versions, actual platform evidence, compatibility, and re
 This is a verification record and release checklist, not a claim that every
 supported target has been tested on a user's machine. Last reviewed: 2026-09-04.
 
-## Published version and repository changes
+## Version scope and release verification
 
-[v0.14.0](https://github.com/drl990114/Cleanr/releases/tag/v0.14.0) is the published
-release reviewed here. Documentation follows the repository; category filtering,
-cumulative filtered selection, and `Shift+A` global selection are **Unreleased**.
-The [changelog](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md) records
-other pending changes. A passing check on a later commit does not retroactively
+Category filtering, cumulative filtered selection, and `Shift+A` global
+selection apply to **0.15.0 and later**. The compatibility notes below describe
+the restore-record changes in 0.15.0. See the
+[changelog](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md) for details.
+
+Consult the [v0.15.0 release](https://github.com/drl990114/Cleanr/releases/tag/v0.15.0)
+for publication status and its per-platform `release-evidence.json`. The table
+below records historical source checks and remaining Trash acceptance; it does
+not replace installation checks on 0.15.0 assets. The [recorded walkthrough](./demo.md) retains its
+v0.14.0 version label. A passing check on a later commit does not retroactively
 validate an earlier release asset.
 
 ## Support and verification matrix
@@ -37,15 +42,15 @@ an upgrade if you may need them. Do not assume an older binary can read a newer
 plan or manifest. Never hand-edit a saved plan to bypass a compatibility error:
 create and review a new plan with the version you intend to run.
 
-**Unreleased compatibility change:** new restore records use
-`cleanr.restore.v2`; the new reader also accepts v1 history. `not-attempted` means
+**Compatibility change in 0.15.0:** new restore records use
+`cleanr.restore.v2`; the 0.15.0 reader also accepts v1 history. `not-attempted` means
 the backend was not called, while `pending` means the intent was saved but the
 result was not recorded. After an interruption, pending items require manual
 inspection of the original path, Trash, and manifest before retrying. Do not
 roll back to an older binary to process v2 records; retain the state directory
 and use the current or a newer compatible version.
 
-Cleanup and restore hold an OS file lock in the state directory for the
+In 0.15.0, cleanup and restore hold an OS file lock in the state directory for the
 operation. Another operation reports a conflict; the OS releases the lock when
 the process exits, so do not delete the lock file to bypass it. Trash and JSON
 writes still cannot be one atomic transaction. If recording a filesystem result

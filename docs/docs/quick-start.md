@@ -169,5 +169,7 @@ configuration or language files; it is separate from the read-only walkthrough.
 
 [Using Cleanr](./using-cleanr.md) covers shortcuts;
 [Troubleshooting](./troubleshooting.md) covers installation and empty results.
-Features marked **Unreleased** describe repository changes not yet included in
-the published package.
+Category filtering, cumulative filtered selection, and `Shift+A` global
+selection require **0.15.0 or later**. That version also introduces
+`cleanr.restore.v2` records; review the [compatibility notes](./support-matrix.md)
+before changing versions.

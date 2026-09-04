@@ -109,9 +109,10 @@ an agent with other filesystem tools.
 
 ## Versions and help
 
-Documentation follows the repository. Features marked **Unreleased**, including
-category filtering and its revised selection shortcuts, require a future release;
-check `cleanr --version` and the [changelog](../../CHANGELOG.md).
+Category filtering, cumulative filtered selection, and `Shift+A` global
+selection apply to **0.15.0 and later**. Version 0.15.0 also introduces
+`cleanr.restore.v2` restore records; read the compatibility notes before rolling
+back. Check `cleanr --version` and the [changelog](../../CHANGELOG.md).
 
 - [Safety and recovery](https://drl990114.github.io/Cleanr/docs/safety-and-recovery)
 - [Troubleshooting](https://drl990114.github.io/Cleanr/docs/troubleshooting)
