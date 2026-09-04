@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -121,14 +121,49 @@ test("release notes promote Unreleased once and reject empty, old-version and mi
   assert.throws(() => prepareReleaseNotes("## Unreleased\n\nTBD\n", "0.2.0"), /concrete change bullets/);
 });
 
-test("analysis validation rejects wrong roots, partial scans, and missing candidate evidence", () => {
-  const path = join(tmpdir(), "sample");
+function analysisFixture(t) {
+  const directory = mkdtempSync(join(tmpdir(), "cleanr-analysis-path-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, "sample-project");
+  const other = join(directory, "other-project");
+  mkdirSync(join(path, "node_modules"), { recursive: true });
+  mkdirSync(join(other, "node_modules"), { recursive: true });
   const report = { schema_version: "cleanr.analysis.v1", scan: { roots: [path], integrity: "complete", issues: [] },
     candidates: [{ local_path: join(path, "node_modules") }] };
+  return { directory, path, other, report };
+}
+
+test("analysis validation rejects wrong roots, partial scans, and missing candidate evidence", (t) => {
+  const { path, other, report } = analysisFixture(t);
   validateAnalysis(report, path);
   assert.throws(() => validateAnalysis({ ...report, candidates: [] }, path));
   assert.throws(() => validateAnalysis({ ...report, scan: { ...report.scan, integrity: "partial" } }, path));
-  assert.throws(() => validateAnalysis(report, join(path, "elsewhere")));
+  assert.throws(() => validateAnalysis(report, other));
+  assert.throws(() => validateAnalysis({ ...report, candidates: [{ local_path: join(other, "node_modules") }] }, path));
+});
+
+test("analysis roots and candidates accept filesystem aliases without accepting a different directory", (t) => {
+  const { directory, path, other, report } = analysisFixture(t);
+  const alias = join(directory, "sample-alias");
+  symlinkSync(path, alias, process.platform === "win32" ? "junction" : "dir");
+  validateAnalysis(report, alias);
+  validateAnalysis({ ...report, scan: { ...report.scan, roots: [alias] },
+    candidates: [{ local_path: join(alias, "node_modules") }] }, path);
+  assert.throws(() => validateAnalysis(report, other));
+});
+
+test("Windows temporary 8.3 paths match canonical report roots and candidates", { skip: process.platform !== "win32" }, (t) => {
+  const { path, report } = analysisFixture(t);
+  const canonical = realpathSync.native(path);
+  // The hosted Windows runner exposes TEMP through RUNNER~1, as in the
+  // release failure. Hosts without a short-name TEMP still run the alias test.
+  if (!/~\d(?:\\|$)/i.test(path)) {
+    t.skip("this Windows host does not expose an 8.3 TEMP path");
+    return;
+  }
+  assert.notEqual(path.toLowerCase(), canonical.toLowerCase());
+  validateAnalysis({ ...report, scan: { ...report.scan, roots: [canonical] },
+    candidates: [{ local_path: join(canonical, "node_modules") }] }, path);
 });
 
 test("real npm packing and offline installation exercise the launcher and isolated smoke harness", { skip: process.platform === "win32" ? "Node-script fixture is not a Windows native executable; native Windows smoke runs in Release" : false }, (t) => {

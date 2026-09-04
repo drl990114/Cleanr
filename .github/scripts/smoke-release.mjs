@@ -8,7 +8,9 @@ import { dirname, join, resolve } from "node:path";
 import { assetName, checkVersion, isMain, npm, platforms, readJson, readTarballs, root, sha256 } from "./release-lib.mjs";
 
 function normalized(path) {
-  const value = resolve(path).replace(/^\\\\\?\\/, "");
+  // Rust canonicalization expands Windows 8.3 names (RUNNER~1). Resolve both
+  // sides through the native filesystem API before comparing their identity.
+  const value = realpathSync.native(path).replace(/^\\\\\?\\/, "");
   return process.platform === "win32" ? value.toLowerCase() : value;
 }
 
@@ -55,7 +57,7 @@ export function smokeRelease({ version, target, assetsDir, tarballsDir, reportPa
     for (const path of [join(cache, "fixture.bin"), cache, join(project, "package.json"), project]) {
       utimesSync(path, oldDate, oldDate);
     }
-    const sampleRoot = realpathSync(project);
+    const sampleRoot = realpathSync.native(project);
     const before = snapshot(sampleRoot);
     const config = join(temporary, "config.toml");
     // Explicit configuration excludes installed plugins, language files and global roots.
