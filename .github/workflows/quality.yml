@@ -135,6 +135,9 @@ jobs:
       - name: Type-check
         run: pnpm typecheck
 
+      - name: Check Markdown and MDX syntax
+        run: pnpm test:mdx
+
   rustsec:
     name: RustSec dependency audit
     runs-on: ubuntu-latest

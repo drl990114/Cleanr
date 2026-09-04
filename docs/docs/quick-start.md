@@ -105,7 +105,7 @@ or moved-byte total is not measured free space. `/restore` opens cleanup
 history; recovery needs the Trash item and manifest and cannot overwrite an
 existing path. See [Safety and recovery](./safety-and-recovery.md) before cleanup.
 
-### Review with an AI agent {#ai-agent}
+### Review with an AI agent {/* #ai-agent */}
 
 Install the optional cross-agent skill:
 

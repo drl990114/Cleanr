@@ -92,7 +92,7 @@ cleanr analyze "/path/to/folder"
 `/restore` 打开清理历史；恢复需要回收站条目与清单，且不会覆盖原路径上已有的内容。
 清理前请阅读[安全与恢复](./safety-and-recovery.md)。
 
-### 配合 AI Agent 审阅 {#ai-agent}
+### 配合 AI Agent 审阅 {/* #ai-agent */}
 
 安装可选的跨 Agent Skill：
 
