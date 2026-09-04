@@ -1,0 +1,30 @@
+  cleanr 0.14.0  /  Scan Tree                                            Ready to review · inactive for at least 90 days
+   Candidates · 2 ───────────────────────────────────────────────────────┐ Details ───────────────────────────────────  
+  › [✓]  16.00 MiB web-app/node_modules                                  │ 2 / 2 selected  ·  24.00 MiB                 
+    [✓]   8.00 MiB rust-tool/target                                      │                                              
+                                                                         │ Current item                                 
+                                                                         │ Path: /private/var/fold…b-app/node_modules   
+                                                                         │ 16.00 MiB  ·  developer-cache  ·  high       
+                                                                         │ Reason: node_modules is a generated          
+                                                                         │ dependency directory that package managers   
+                                                                         │ can recreate.                                
+                                                                         │ Risk: Project dependencies will need to be   
+                                                                         │ reinstalled before the project can run       
+                                                                         │ again.                                       
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+                                                                         │                                              
+j/k move   space select   c clean   a all   / commands                                                   2 / 2 selected 

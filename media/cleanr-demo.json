@@ -1,0 +1,19 @@
+{
+  "version": "cleanr 0.14.0",
+  "binary_sha256": "c6cd7b8aa21eeaa943c6e84d18651f8995c9521efc2617bf530bdac91f258be1",
+  "platform": "Darwin arm64",
+  "duration_seconds": 34.0375,
+  "sample_files_unchanged": true,
+  "operations": [
+    "scan",
+    "review",
+    "navigate",
+    "help",
+    "quit"
+  ],
+  "terminal": {
+    "columns": 120,
+    "rows": 30
+  },
+  "renderer": "pyte + Pillow; original ANSI in .cast"
+}
