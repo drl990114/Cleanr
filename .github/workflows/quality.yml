@@ -1,0 +1,154 @@
+name: Required quality checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust tests and lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Test release tooling
+        run: node --test ".github/scripts/*.test.mjs"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check architecture boundaries
+        run: node scripts/check-architecture.mjs
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets --all-features --locked
+
+      - name: Validate generated schemas
+        run: |
+          cargo run --locked -p cleanr-cli -- plugin schema manifest >/dev/null
+          cargo run --locked -p cleanr-cli -- plugin schema index >/dev/null
+          cargo run --locked -p cleanr-cli -- plugin schema rules >/dev/null
+          cargo run --locked -p cleanr-cli -- plugin schema locations >/dev/null
+          cargo run --locked -p cleanr-cli -- plugin schema language >/dev/null
+          cargo run --locked -p cleanr-cli -- plugin schema config >/dev/null
+
+      - name: Validate plugins
+        run: |
+          node .github/scripts/generate-plugin-index.mjs --check
+          plugin_dirs=(
+            crates/rules/builtin-plugins/builtin-dev
+            crates/rules/builtin-plugins/builtin-general
+            crates/rules/builtin-plugins/builtin-system
+          )
+          for dir in plugins/*; do
+            [ -f "$dir/plugin.toml" ] && plugin_dirs+=("$dir")
+          done
+          cargo run --locked -p cleanr-cli -- plugin validate "${plugin_dirs[@]}"
+          node scripts/check-rule-sources.mjs
+
+  scan-platforms:
+    name: Scan tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Test release tooling
+        run: node --test ".github/scripts/*.test.mjs"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Run core scan tests
+        run: cargo test --locked --all-targets --all-features -p cleanr-core
+
+      - name: Run filesystem scan tests
+        run: cargo test --locked --all-targets --all-features -p cleanr-fs
+
+      - name: Run cleanup task tests
+        run: cargo test --locked --all-targets --all-features -p cleanr-tasks
+
+      - name: Run TUI scan tests
+        run: cargo test --locked --all-targets --all-features -p cleanr-tui
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm typecheck
+
+  rustsec:
+    name: RustSec dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Audit locked dependencies
+        run: cargo audit --file Cargo.lock

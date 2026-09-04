@@ -5,6 +5,15 @@ description: 了解 Cleanr 的扫描、审阅、清理、恢复、快捷键和�
 
 # 使用 Cleanr
 
+:::note 版本范围
+
+下文的分类标签、`f` 筛选、跨筛选累积选择和 `Shift+A` 全局选择属于 v0.14.0 之后的
+**Unreleased / 未发布** 变更。请确认 `cleanr --version` 并查看
+[更新记录](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md)。旧安装版本的快捷键
+以自身 `?` 帮助为准。
+
+:::
+
 ## 选择扫描范围
 
 启动时传入的路径会成为默认扫描根目录：

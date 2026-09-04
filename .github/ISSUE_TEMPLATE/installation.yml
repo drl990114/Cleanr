@@ -1,0 +1,49 @@
+name: Installation or terminal problem / 安装或终端问题
+description: Report an installation failure or a broken first-run interaction.
+title: "[Install/TUI] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English or 简体中文 is welcome. Use generated paths and redacted excerpts.
+        Do not attach original analysis JSON, plans, manifests, home-directory listings, or credentials.
+        请使用生成路径与脱敏片段，不要上传原始分析 JSON、计划、清单、主目录列表或凭证。
+        Security issue? Use [private reporting](https://github.com/drl990114/Cleanr/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: Cleanr version / 版本
+      description: Output of cleanr --version, or say the program could not start.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS, CPU, and terminal / 系统、CPU 与终端
+      placeholder: macOS 15, Apple Silicon, Terminal
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method / 安装方式
+      options:
+        - npm
+        - Cargo
+        - GitHub Release binary
+        - Source checkout
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Command or key sequence / 命令或按键步骤
+      description: Include the expected result and what actually happened; replace real paths with examples.
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Redacted error excerpt / 脱敏错误片段
+      description: Share only the lines needed to explain the failure. Screenshots must hide personal paths.
+      render: text

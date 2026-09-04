@@ -163,7 +163,7 @@ enabled_rule_packs = ["builtin-dev", "builtin-general", "builtin-system"]
 ## 添加自定义规则
 
 推荐使用声明式插件 bundle。完整的最小示例、校验命令和信任模型见
-[插件](./plugins)。
+[插件](./plugins.md)。
 
 如果生成路径只有位于特定项目中才有意义，应使用 project matcher，而不是宽泛的
 目录名或路径 glob。正向 marker 和根目录 glob 用来识别项目根，排除 glob 会否决

@@ -1,171 +1,52 @@
 #!/usr/bin/env node
-// Build and publish per-platform npm packages, then publish the wrapper package.
-// Existing package versions are skipped so a partially completed release can
-// be rerun safely.
-// Expects binaries to be available under <root>/artifacts/cleanr-<target>/<binary>.
-// Usage: node .github/scripts/publish-npm-packages.mjs <version> [--dry-run]
+// Publish the tarballs already exercised by the release smoke matrix.
+import { join, resolve } from "node:path";
+import { checkVersion, integrity, isMain, npm, readTarballs, root } from "./release-lib.mjs";
+import { packPackages } from "./pack-npm-packages.mjs";
 
-import {
-  chmodSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
-import { execFileSync } from "node:child_process";
-
-const version = process.argv[2];
-const dryRun = process.argv[3] === "--dry-run";
-if (
-  !version ||
-  !/^\d+\.\d+\.\d+$/.test(version) ||
-  (process.argv[3] && !dryRun) ||
-  process.argv.length > 4
-) {
-  console.error("usage: publish-npm-packages.mjs <version> [--dry-run]");
-  process.exit(1);
-}
-
-const root = new URL("../..", import.meta.url).pathname;
-const platforms = JSON.parse(readFileSync(join(root, "npm/platforms.json"), "utf8"));
-const artifactsDir = join(root, "artifacts");
-const tmpDir = join(root, ".npm-publish");
-
-rmSync(tmpDir, { recursive: true, force: true });
-mkdirSync(tmpDir, { recursive: true });
-
-function packageVersionExists(name) {
-  try {
-    const output = execFileSync(
-      "npm",
-      ["view", `${name}@${version}`, "version", "--json"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
-    );
-    return JSON.parse(output) === version;
-  } catch (error) {
-    const stderr = error.stderr?.toString() ?? "";
-    if (stderr.includes("E404") || stderr.includes("is not in this registry")) {
-      return false;
+export function publishPackages(version, directory, { dryRun = false, runNpm = npm } = {}) {
+  const packages = readTarballs(directory, version);
+  // Enforce platform-first order even if the manifest was reordered.
+  packages.sort((a, b) => Number(a.name === "cleanr-cli") - Number(b.name === "cleanr-cli"));
+  for (const item of packages) {
+    const tarball = resolve(directory, item.filename);
+    if (!dryRun) {
+      let publishedIntegrity;
+      try {
+        publishedIntegrity = JSON.parse(runNpm(["view", `${item.name}@${version}`, "dist.integrity", "--json"]));
+      } catch (error) {
+        const stderr = error.stderr?.toString() ?? "";
+        if (!stderr.includes("E404")) throw error;
+      }
+      if (publishedIntegrity) {
+        if (publishedIntegrity !== integrity(tarball)) {
+          throw new Error(`${item.name}@${version} already exists with different bytes; use a new version`);
+        }
+        console.log(`verified existing ${item.name}@${version}`);
+        continue;
+      }
     }
-    throw error;
+    const args = ["publish", tarball, "--access", "public"];
+    if (dryRun) args.push("--dry-run");
+    runNpm(args, { stdio: "inherit" });
   }
 }
 
-function publishOrCheck(name, directory) {
-  if (dryRun) {
-    checkNpmPack(name, directory);
-    return;
+if (isMain(import.meta.url)) {
+  const [version, ...flags] = process.argv.slice(2);
+  checkVersion(version);
+  let directory = join(root, "npm-tarballs");
+  let dryRun = false;
+  let prepared = false;
+  for (let index = 0; index < flags.length; index++) {
+    if (flags[index] === "--dry-run") dryRun = true;
+    else if (flags[index] === "--from-tarballs" && flags[index + 1]) {
+      directory = resolve(flags[++index]);
+      prepared = true;
+    } else throw new Error("usage: publish-npm-packages.mjs <version> [--dry-run] [--from-tarballs <dir>]");
   }
-
-  if (packageVersionExists(name)) {
-    console.log(`skipping ${name}@${version}: already published`);
-    return;
-  }
-
-  console.log(`publishing ${name}@${version}`);
-  const args = ["publish"];
-  if (name.startsWith("@")) {
-    args.push("--access", "public");
-  }
-  execFileSync("npm", args, {
-    cwd: directory,
-    stdio: "inherit",
-  });
+  // Preserve standalone preparation. CI always supplies --from-tarballs,
+  // preventing publishing from silently repacking previously tested bytes.
+  if (!prepared) packPackages(version, join(root, "artifacts"), directory);
+  publishPackages(version, directory, { dryRun });
 }
-
-function checkNpmPack(name, directory) {
-  console.log(`checking ${name}@${version}`);
-  const output = execFileSync("npm", ["pack", "--dry-run", "--json"], {
-    cwd: directory,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-  const packs = JSON.parse(output);
-  const pack = packs[0];
-  if (!pack || !Array.isArray(pack.files)) {
-    throw new Error(`npm pack did not report files for ${name}@${version}`);
-  }
-  return pack;
-}
-
-function verifyPackedExecutable(name, pack, binaryName) {
-  const path = `bin/${binaryName}`;
-  const file = pack.files.find((entry) => entry.path === path);
-  if (!file) {
-    throw new Error(`${name} npm package is missing ${path}`);
-  }
-
-  const mode = Number(file.mode);
-  if (!Number.isInteger(mode) || (mode & 0o777) !== 0o755) {
-    const actual = Number.isInteger(mode) ? mode.toString(8) : String(file.mode);
-    throw new Error(
-      `${name} ${path} must be mode 755 in the npm package; got ${actual}`
-    );
-  }
-}
-
-function publishPlatformPackage(p) {
-  const pkgName = p.package;
-  const pkgDir = join(tmpDir, pkgName.replace(/^@/, "").replaceAll("/", "-"));
-  const binDir = join(pkgDir, "bin");
-  mkdirSync(binDir, { recursive: true });
-
-  const artifactDir = join(artifactsDir, `cleanr-${p.target}`);
-  if (!existsSync(artifactDir)) {
-    throw new Error(`missing artifact directory: ${artifactDir}`);
-  }
-
-  const src = join(artifactDir, p.binary);
-  if (!existsSync(src)) {
-    throw new Error(`missing binary for ${p.target}: ${src}`);
-  }
-
-  const dst = join(binDir, p.binary);
-  cpSync(src, dst, { preserveTimestamps: true });
-  if (p.os !== "win32") {
-    chmodSync(dst, 0o755);
-  }
-
-  const pkg = {
-    name: pkgName,
-    version,
-    description: `Cleanr binary for ${p.os}-${p.cpu}`,
-    license: "MIT",
-    os: [p.os],
-    cpu: [p.cpu],
-    files: ["bin"],
-    repository: {
-      type: "git",
-      url: "git+https://github.com/drl990114/cleanr.git",
-    },
-  };
-  writeFileSync(join(pkgDir, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
-
-  const pack = checkNpmPack(pkgName, pkgDir);
-  if (p.os !== "win32") {
-    verifyPackedExecutable(pkgName, pack, p.binary);
-  }
-  if (!dryRun) {
-    publishOrCheck(pkgName, pkgDir);
-  }
-}
-
-function publishWrapperPackage() {
-  const wrapperDir = join(root, "npm", "cleanr");
-  const pkg = JSON.parse(readFileSync(join(wrapperDir, "package.json"), "utf8"));
-  if (pkg.version !== version) {
-    throw new Error(
-      `${pkg.name} has version ${pkg.version}; expected release version ${version}`
-    );
-  }
-  publishOrCheck(pkg.name, wrapperDir);
-}
-
-for (const p of platforms) {
-  publishPlatformPackage(p);
-}
-
-publishWrapperPackage();

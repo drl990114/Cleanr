@@ -1,188 +1,110 @@
 <div align="center">
   <h1>Cleanr</h1>
-  <p><strong>让你的 AI 借助 Cleanr，安全地清理磁盘。</strong></p>
+  <p><strong>审阅开发者缓存，由你决定哪些进入回收站。</strong></p>
   <p>
-    <a href="https://drl990114.github.io/cleanr/zh-Hans/">完整文档</a>
-    ·
-    <a href="https://github.com/drl990114/cleanr/releases">下载</a>
-    ·
-    <a href="https://github.com/drl990114/cleanr/discussions">讨论区</a>
+    <a href="https://drl990114.github.io/Cleanr/zh-Hans/">完整文档</a> ·
+    <a href="https://github.com/drl990114/Cleanr/releases">下载</a> ·
+    <a href="https://github.com/drl990114/Cleanr/discussions">讨论区</a>
   </p>
   <p>
-    <a href="https://github.com/drl990114/cleanr/actions/workflows/ci.yml"><img alt="CI 工作流" src="https://img.shields.io/github/actions/workflow/status/drl990114/cleanr/ci.yml?branch=main&label=CI&style=flat-square&logo=githubactions&logoColor=white"></a>
-    <a href="https://github.com/drl990114/cleanr/actions/workflows/release.yml"><img alt="发布工作流" src="https://img.shields.io/github/actions/workflow/status/drl990114/cleanr/release.yml?label=release&style=flat-square&logo=githubactions&logoColor=white"></a>
-    <a href="https://github.com/drl990114/cleanr/blob/main/LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/drl990114/cleanr?style=flat-square&color=0f766e"></a>
-    <a href="https://www.npmjs.com/package/cleanr-cli"><img alt="npm 版本" src="https://img.shields.io/npm/v/cleanr-cli?style=flat-square&logo=npm"></a>
+    <a href="https://github.com/drl990114/Cleanr/actions/workflows/ci.yml"><img alt="CI 工作流" src="https://img.shields.io/github/actions/workflow/status/drl990114/Cleanr/ci.yml?branch=main&label=CI&style=flat-square"></a>
+    <a href="https://www.npmjs.com/package/cleanr-cli"><img alt="npm 版本" src="https://img.shields.io/npm/v/cleanr-cli?style=flat-square"></a>
+    <a href="../../LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/drl990114/Cleanr?style=flat-square"></a>
   </p>
-  <p>
-    <img alt="Rust" src="https://img.shields.io/badge/Rust-1.98-000000?style=flat-square&logo=rust&logoColor=white">
-    <img alt="Ratatui" src="https://img.shields.io/badge/Ratatui-0.29-2563eb?style=flat-square">
-    <img alt="支持 macOS、Linux 和 Windows" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-475569?style=flat-square">
-    <img alt="开源项目" src="https://img.shields.io/badge/open%20source-MIT-155eef?style=flat-square">
-  </p>
-  <p>
-    <a href="../en/README.md">English</a>
-    ·
-    <a href="../../README.md">仓库 README</a>
-    ·
-    <a href="../../CONTRIBUTING.md">贡献指南</a>
-  </p>
+  <p><a href="../en/README.md">English</a> · <a href="../../README.md">仓库 README</a> · <a href="../../CONTRIBUTING.md">贡献指南</a></p>
 </div>
 
-Cleanr 帮助开发者以及 macOS、Windows 用户发现可重建的生成文件与缓存，避免把磁盘清理变成盲删。它会扫描你选择的路径，说明每个候选项的匹配原因，让你在键盘驱动的终端界面里审阅清理计划，并把选中的项目移动到系统废纸篓。
+Cleanr 帮助开发者审阅 `node_modules`、Rust `target`、Xcode 构建产物和包管理器缓存。
+它通过键盘驱动的终端界面解释每个候选项，重新校验你的选择，再把选中内容移动到系统
+回收站，并保留本地恢复记录。
 
-## 为 AI 而设计
+从一个旧项目开始。浏览器与应用缓存、日志、临时文件和下载文件属于可以额外选择的
+范围。各平台覆盖不同，请看[支持与验证矩阵](https://drl990114.github.io/Cleanr/zh-Hans/docs/support-matrix)。
 
-Cleanr 通过 `cleanr analyze` 向本地编码 Agent 提供确定、带版本的 JSON 证据，同时把
-清理权限留给用户。Agent 无需解析终端输出，就能检查推荐状态、决策代码、风险提示和
-扫描完整性。用户审阅并明确授权某个确切计划后，Agent 可以通过绑定摘要的命令，把
-校验通过的条目移动到系统回收站，并保留本地恢复清单。除非你主动选择分享，否则原始
-路径和报告始终留在本机。
+## 首次扫描演示
 
-直接从 GitHub 安装跨 Agent Skill `cleanr-review-disk-cleanup`：
+![Cleanr v0.14.0 对生成的开发者缓存样本进行只读扫描](../../docs/static/img/cleanr-scan.png)
+
+**v0.14.0 · macOS Apple Silicon。** 使用生成的示例项目，只读扫描、查看 Review
+并浏览候选项，没有执行清理或恢复。
+[观看 34 秒演示](https://drl990114.github.io/Cleanr/media/cleanr-first-scan.mp4)
+· [操作说明](https://drl990114.github.io/Cleanr/zh-Hans/docs/demo/)。
+
+## 安装
+
+使用 Node.js 18 或更新版本：
+
+```bash
+npm install --global cleanr-cli
+cleanr --version
+```
+
+也可以使用 Rust 1.98 或更新版本执行 `cargo install cleanr-cli`，或从
+[GitHub Releases](https://github.com/drl990114/Cleanr/releases) 下载原生二进制。
+[安装、升级、回退与卸载](https://drl990114.github.io/Cleanr/zh-Hans/docs/quick-start)
+说明了系统和 CPU 架构的选择方式。
+
+## 选择第一次审阅方式
+
+### 直接使用终端
+
+```bash
+cleanr /path/to/project
+```
+
+将路径替换为一个真实项目目录。按 `s` 扫描、`r` 审阅、`?` 查看帮助、`q` 退出。
+第一次体验无需清理。审阅默认显示候选目录树中最新观测修改时间至少达到 **90 天**的
+条目。空结果可能来自文件较新、路径被排除或没有匹配规则，不代表整台电脑已经干净。
+
+看过候选项的原因和风险后，可以用 `space` 调整选择、`c` 打开清理确认框。
+`/restore` 打开清理历史。详见[完整入门流程](https://drl990114.github.io/Cleanr/zh-Hans/docs/quick-start)。
+
+### 配合编码 Agent
+
+安装可选的跨 Agent Skill：
 
 ```bash
 npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
 ```
 
-Skill 会检查 Cleanr CLI 是否可用，在缺失时全局安装 `cleanr-cli`，并指导 Agent 完成
-本地分析和经过明确授权的可恢复清理。支持的 Agent、报告契约和隐私说明请见
-[证据与隐私](../../docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/evidence-and-privacy.md)。
-
-## 特性
-
-- 键盘驱动的扫描、审阅、清理和恢复流程。
-- 内置规则覆盖常见开发者缓存、浏览器缓存、应用缓存、构建产物、包管理器缓存、大文件下载、日志和临时文件。macOS 还覆盖 Brave 和 Arc、常用桌面应用中明确命名的缓存目录、Homebrew、Xcode、CocoaPods、SwiftPM、诊断报告和下载的安装包。Windows 的保守覆盖只增加当前用户 Temp 和 DirectX 着色器缓存目录中长期未修改的普通文件。
-- 每个候选项都会展示大小、置信度、匹配原因和风险提示。
-- 提供仅限本机的 `cleanr analyze` JSON 契约，以及用于用户明确授权确切计划、绑定摘要的 `cleanr clean` 命令。
-- 保守的默认选择策略：只有来自内置规则或可信规则的高置信度项目才可能被预选。
-- 通过系统废纸篓清理、执行前再次校验、父子候选项去重和本地清理清单降低风险。
-- 支持 macOS 废纸篓、Windows 回收站和兼容 Freedesktop 的 Linux 废纸篓恢复历史。
-- 支持声明式插件，用于扩展清理规则和翻译。
-- 提供 macOS、Linux 和 Windows 原生包，可通过 npm、Cargo 或 GitHub Release 安装。
-- 支持英文和简体中文界面。
-
-## 安装
-
-通过 npm 安装：
+可以这样提问：“用 Cleanr 审阅这个项目的清理候选项。先解释原因与风险，再由我选择。”
+Skill 只会在 CLI 缺失时安装它。底层只读入口为：
 
 ```bash
-npm install --global cleanr-cli
+cleanr analyze /path/to/project
 ```
 
-通过 Cargo 安装：
+Cleanr 本身不会上传扫描路径或报告。**运行在本机的 Agent 仍可能把工具输出发送给
+云端模型。** 交给 Agent 之前应确认其数据策略；希望不经过 AI 服务时，可直接使用 TUI。
+详见[证据与隐私](https://drl990114.github.io/Cleanr/zh-Hans/docs/evidence-and-privacy)。
 
-```bash
-cargo install cleanr-cli
-```
+## 能做什么
 
-也可以从 [GitHub Releases](https://github.com/drl990114/cleanr/releases) 下载预编译二进制文件。
+- 展示候选原因、大小、置信度和风险；依据可信规则和观测修改年龄进行保守选择。
+- 执行前校验、重叠目标检查、系统回收站，以及本地清理和恢复清单。
+- 英文与简体中文界面、声明式规则插件，以及 macOS、Linux、Windows 原生包。
+- 带版本的 `analyze` JSON 报告，以及用于用户审阅并明确授权计划的独立、带摘要校验
+  的 `clean` 命令。
 
-## 开始使用
+**回收站是可恢复存储，不等于立即释放空间。** 移入后，文件通常仍然占用磁盘。
+候选大小和已移动字节数不等于实测的可用空间增量。清空回收站是用户的另一个决定，
+也会使 Cleanr 失去恢复来源。恢复尽力而为，不会覆盖已经存在的路径。
 
-在需要检查的目录中运行：
+`--authorized-by-user` 表示调用方声明已经取得用户授权，Cleanr 无法独立确认是谁
+给出了授权。摘要与重扫校验保护通过 Cleanr 命令执行的已审阅计划，但不是约束具有
+其他文件操作工具的 Agent 的操作系统沙箱。
 
-```bash
-cleanr
-```
+## 版本和帮助
 
-或者指定一个或多个扫描根目录：
+文档跟随仓库更新。标为 **Unreleased / 未发布** 的功能，包括分类筛选及相应全选快捷键，
+需要后续发行版本；请结合 `cleanr --version` 和[更新记录](../../CHANGELOG.md)阅读。
 
-```bash
-cleanr ~/projects ~/Downloads
-```
+- [安全与恢复](https://drl990114.github.io/Cleanr/zh-Hans/docs/safety-and-recovery)
+- [故障排查](https://drl990114.github.io/Cleanr/zh-Hans/docs/troubleshooting)
+- [支持与反馈](../../SUPPORT.md) · [安全问题报告](../../SECURITY.md)
+- [发布准备与平台验证](https://drl990114.github.io/Cleanr/zh-Hans/docs/support-matrix)
 
-进入 TUI 后，按 `s` 扫描，按 `r` 审阅候选项，按 `space` 选择或取消选择，按 `c` 确认清理。使用 `/scan --global` 可以检查已知系统清理位置；平台支持时，可使用 `/restore` 恢复历史清理运行。
+## 致谢与许可证
 
-在 TUI 中按 `?` 可查看快捷键帮助。
-
-在 macOS 上，可以先只读检查常规的用户级位置：
-
-```bash
-cleanr analyze --global \
-  --global-kind browser-caches \
-  --global-kind app-caches \
-  --global-kind logs \
-  --global-kind temp-files \
-  --global-kind downloads
-```
-
-需要同时检查包管理器和 Xcode 缓存时，再加入
-`--global-kind developer-caches`。废纸篓内容、Mail 数据、iOS 备份、
-Time Machine 快照、浏览器 Service Worker 和系统所有的根目录会被明确排除。
-
-在 Windows 上，常规审阅范围会刻意收窄：
-
-```bash
-cleanr analyze --global \
-  --global-kind app-caches \
-  --global-kind temp-files
-```
-
-它只匹配当前用户 Temp 或 DirectX `D3DSCache` 目录中至少 30 天未修改的普通文件。
-DirectX 着色器文件是 Windows 可以重新生成的图形缓存；Temp 与缓存目录本身永远
-不会被选中。Explorer 缩略图数据库、崩溃转储、Windows Update 与传递优化数据、
-Prefetch、回收站、注册表数据、Downloads 和系统所有的根目录会被明确排除。只有
-用户明确把浏览器或开发者缓存纳入范围时，才应额外加入对应分类。
-
-让本地编码 Agent 协助时，先使用只读分析；除非先主动脱敏，否则不要将 JSON 发送到
-设备外：
-
-```bash
-cleanr analyze ~/projects > cleanr-analysis.json
-```
-
-报告只提供审阅证据，不是清理指令。如果用户希望委托执行，应先写入并审阅确切计划：
-
-```bash
-cleanr plan --output cleanr-plan.json ~/projects
-cleanr clean --plan cleanr-plan.json \
-  --plan-sha256 <reviewed-sha256> \
-  --authorized-by-user
-```
-
-默认情况下，TUI 审阅、`plan` 和 `dry-run` 只保留候选目录树中最新观测修改时间
-距今至少达到当前门槛的条目。`plan` 和 `dry-run` 还支持可重复使用的
-`--select <确切候选路径>` 与 `--deselect <确切候选路径>`。显式 `--select` 可以纳入
-其他方面仍可选择、但修改时间较新或缺失的需审阅候选项；未知、被重叠抑制或被安全
-策略排除的路径仍会被拒绝。
-
-`plan` 会打印文件的 SHA-256。`clean` 要求明确授权，会校验摘要、重新扫描，并在已选
-目标、扫描来源或安全策略发生漂移时拒绝执行；仅限未选候选项的变化不会使已审阅动作
-失效。通过校验的条目随后会进入系统回收站并记录恢复清单，不会永久删除。
-
-长期设置是 `cleanr.toml` 中的 `[recommendations].preselect_after_days`，默认 90 天。
-`--inactive-days <天数>` 只覆盖本次运行，不会改写配置；设为 `0` 会移除年龄过滤，
-显示其他方面仍符合条件的全部候选项。`analyze` 和 TUI `/usage` 会保留完整证据；
-`/usage` 的候选和已选摘要指标仍使用当前门槛。修改时间只是文件系统元数据，并不能
-证明最后访问时间。
-
-## 安全模型
-
-Cleanr 不会因为找到某个路径就直接清理。授权前你仍然可以编辑计划；选中路径会在
-清理前再次校验；清理动作会移动到系统废纸篓，而不是永久删除。已选目标、扫描来源
-或安全策略发生变化后，需要重新审阅并授权；未选候选项的独立变化不会打断执行。
-
-恢复能力依赖系统废纸篓，是尽力而为的机制。确认清理结果无误前，请不要清空系统废纸篓。
-
-## 了解更多
-
-- [快速开始](../../docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/quick-start.md)
-- [使用 Cleanr](../../docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/using-cleanr.md)
-- [安全与恢复](../../docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/safety-and-recovery.md)
-- [配置](../../docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/configuration.md)
-- [插件](../../docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/plugins.md)
-
-## 参与贡献
-
-开发环境、检查命令、文档工作流和发布说明请见 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
-
-## 致谢
-
-Cleanr 的部分代码来源于
-[Byron/dua-cli](https://github.com/Byron/dua-cli)。`dua-cli` 是由
-Sebastian Thiel 及其贡献者以 MIT License 授权的磁盘使用分析工具。
-
-## 许可证
-
-Cleanr 使用 [MIT License](../../LICENSE) 授权。
+Cleanr 包含改编自 [Byron/dua-cli](https://github.com/Byron/dua-cli) 的代码，原项目由
+Sebastian Thiel 及贡献者以 MIT 许可证发布。Cleanr 使用 [MIT License](../../LICENSE)。

@@ -26,14 +26,16 @@ cargo build --release
 
 The CLI binary is `target/release/cleanr`.
 
-## Run the same checks as CI
+## Check the changed code
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-targets --all-features --locked
-cargo build --workspace --all-targets --all-features --locked
 ```
+
+Run targeted crate or named tests for the behavior you changed. Local
+verification does not require a build or the full workspace suite. Release CI
+is a separate gate; see the [release procedure](https://github.com/drl990114/Cleanr/blob/main/CONTRIBUTING.md#release-process).
 
 Validate generated JSON Schemas:
 
@@ -105,7 +107,6 @@ Before submitting documentation changes:
 
 ```bash
 pnpm typecheck
-pnpm build
 ```
 
 ## Keep English and Chinese in sync

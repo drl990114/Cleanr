@@ -6,7 +6,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Get started',
       collapsed: false,
-      items: ['intro', 'quick-start', 'using-cleanr', 'safety-and-recovery'],
+      items: ['intro', 'quick-start', 'demo', 'using-cleanr', 'safety-and-recovery'],
     },
     {
       type: 'category',
@@ -18,7 +18,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Help',
       collapsed: false,
-      items: ['troubleshooting'],
+      items: ['troubleshooting', 'support-matrix'],
     },
     {
       type: 'category',

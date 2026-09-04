@@ -5,6 +5,15 @@ description: Learn Cleanr's scan, review, cleanup, restore, keyboard, and slash-
 
 # Using Cleanr
 
+:::note Version scope
+
+Category labels, `f` filtering, cumulative filtered selection, and `Shift+A`
+global selection below are **Unreleased** changes after v0.14.0. Check
+`cleanr --version` and the [changelog](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md).
+For an older installed version, its `?` help is authoritative for shortcuts.
+
+:::
+
 ## Choose what to scan
 
 The paths passed at startup become the default scan roots:

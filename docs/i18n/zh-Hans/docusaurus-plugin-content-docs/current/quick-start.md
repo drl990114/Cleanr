@@ -1,144 +1,150 @@
 ---
 sidebar_position: 2
-description: 安装 Cleanr，并安全完成第一次扫描、审阅和清理。
+description: 安装 Cleanr，并完成一次项目的只读审阅。
 ---
 
 # 快速开始
 
-## 1. 安装 Cleanr
+从一个你认识的项目开始。第一次的目标是看到并理解候选项，无需执行清理。
 
-选择一种安装方式即可。
+## 1. 安装并确认版本
 
-### npm
+选择一种方式：
 
-需要 Node.js 18 或更高版本：
+| 方式 | 要求 | 安装 |
+| --- | --- | --- |
+| npm | Node.js 18 或更新版本 | `npm install --global cleanr-cli` |
+| Cargo | Rust 1.98 或更新版本 | `cargo install cleanr-cli` |
+| 原生二进制 | 匹配系统与 CPU | 从 [GitHub Releases](https://github.com/drl990114/Cleanr/releases) 下载 |
 
-```bash
-npm install --global cleanr-cli
-```
-
-npm 包会安装一个轻量启动器，以及与你的操作系统和 CPU 匹配的原生二进制。
-
-### Cargo
-
-需要 Rust 1.98 或更高版本：
+然后运行：
 
 ```bash
-cargo install cleanr-cli
+cleanr --version
+cleanr --help
 ```
 
-### 预编译二进制
+手动下载时，根据机器选择 target：
 
-从 [GitHub Releases](https://github.com/drl990114/cleanr/releases)
-下载适合当前平台的文件。在 macOS 或 Linux 上，需要赋予执行权限，并将文件
-放到 `PATH` 中的目录。
+| 平台 | Release target |
+| --- | --- |
+| macOS Apple Silicon | `aarch64-apple-darwin` |
+| macOS Intel | `x86_64-apple-darwin` |
+| Linux x86-64 | `x86_64-unknown-linux-musl` |
+| Linux ARM64 | `aarch64-unknown-linux-musl` |
+| Linux ARMv7 hard-float | `arm-unknown-linux-gnueabihf` |
+| Windows x64 | `x86_64-pc-windows-msvc` |
+| Windows x86 | `i686-pc-windows-msvc` |
 
-### 从源码构建
+macOS/Linux 可用 `uname -m` 查看架构；Windows 可看“设置 → 系统 → 系统信息 → 系统类型”。
+当前列表没有原生 Windows ARM64 包。提供安装包与实际验证是两回事，详见[验证矩阵](./support-matrix.md)。
+
+如果下载的是压缩包，先解压。macOS/Linux 使用 `chmod +x /path/to/cleanr` 使文件可执行，
+再放入 `PATH` 中用户拥有的目录，例如 `~/.local/bin`；需要时把该目录加入 Shell 的
+`PATH`。Windows 把 `cleanr.exe` 放入用户 `Path` 中的目录，再打开一个新终端。
+PowerShell 可用 `.\cleanr.exe --version` 测试当前目录中的文件。
+
+操作系统拦截下载文件时，先确认来源和 Release 资产。除非该版本明确说明，Cleanr
+不会承诺公证或签名状态；不要关闭操作系统的安全保护。
+
+## 2. 只审阅，不清理
+
+传入真实项目目录，路径含空格时加引号：
 
 ```bash
-git clone https://github.com/drl990114/cleanr.git
-cd cleanr
-cargo build --release
+cleanr "/path/to/project"
 ```
 
-构建结果位于 `target/release/cleanr`。
+例如，目录存在时，POSIX Shell 可使用 `cleanr "$HOME/projects/my-app"`，PowerShell
+可使用 `cleanr "$HOME\projects\my-app"`。启动只设置扫描根目录，不会立即扫描。
 
-## 2. 启动 TUI
+1. 按 `s` 扫描项目。
+2. 扫描完成后按 `r` 审阅候选项。
+3. 用方向键或 `j` / `k` 移动，阅读原因与风险说明。
+4. 按 `?` 查看帮助，或按 `q` 退出。
 
-在想要检查的目录中运行：
+扫描完成并能理解结果，就算完成了第一次体验，即使没有候选项。扫描过程中可用
+`Esc` 或 `x` 取消。
+
+**为什么列表可能为空？** 审阅通常只显示匹配规则、且候选目录树中最新观测修改时间
+至少达到 **90 天**的条目。最近修改的项目、排除路径、没有命中规则的目录都可能导致
+空结果。扫描根目录本身不会成为清理候选项：请扫描包含 `target` 或 `node_modules`
+的项目，而不是把这些生成目录自身作为根目录。这不表示整台电脑已经干净。
+
+想查看完整规则证据而不移动文件，可以运行：
 
 ```bash
-cleanr
+cleanr analyze "/path/to/project"
 ```
 
-也可以在启动时指定一个或多个扫描根目录：
+`analyze` 保留未达到年龄门槛的候选项。确实希望更改本次审阅门槛时，可使用
+`cleanr --inactive-days 30 "/path/to/project"`。`0` 移除年龄过滤，不会取消安全检查。
+长期设置为 `[recommendations].preselect_after_days`。修改时间不能证明最后使用时间。
 
-```bash
-cleanr ~/projects ~/Downloads
-```
+## 3. 选择后续操作
 
-如需只为本次运行修改候选门槛而不改配置，可加入 `--inactive-days <天数>`：
+### 审阅一次清理
 
-```bash
-cleanr --inactive-days 30 ~/projects
-```
+读过候选项后，按 `space` 调整选择、`c` 查看已选总量并打开确认框。默认配置下，
+只有希望把这些条目移入回收站时，才选择“是”并按 `Enter`。
 
-Cleanr 会先打开首页，**不会**在启动时自动扫描或清理任何内容。
+回收站通常仍占用文件对应的磁盘空间。候选大小和已移动字节数不是实测的可用空间。
+`/restore` 打开清理历史；恢复需要回收站条目与清单，且不会覆盖原路径上已有的内容。
+清理前请阅读[安全与恢复](./safety-and-recovery.md)。
 
-## 3. 完成第一次清理
+### 配合编码 Agent 审阅
 
-进入 TUI 后：
-
-1. 按 `s` 扫描当前根目录。
-2. 扫描完成后按 `r` 审阅达到当前观测修改时间年龄门槛的候选项。
-3. 使用 `j`/`k` 或方向键移动。
-4. 按 `space` 选择或取消选择。
-5. 按 `c` 检查已选数量和大小，并进入确认。
-6. 选择“是”，再按 `Enter` 将已选项移动到回收站。
-
-随时按 `?` 查看快捷键。扫描过程中按 `Esc` 或 `x` 可以取消。
-
-:::tip 第一次建议保守一些
-
-先扫描单个项目，不要一开始就扫描整个主目录。确认清理前，逐项阅读匹配原因和
-风险说明。
-
-:::
-
-## 扫描已知系统清理位置
-
-按 `/` 打开命令面板，输入以下命令并按 `Enter`：
-
-```text
-/scan --global
-```
-
-它会扫描当前平台上已知的用户级清理位置，包括开发缓存、浏览器缓存、应用缓存、临时文件、日志和下载目录，并不代表“扫描整个磁盘”。
-
-如需缩小全局扫描范围，可以添加一个或多个分类：
-
-```text
-/scan --global-kind browser-caches --global-kind logs
-```
-
-## 向本地 AI 工具提供只读证据
-
-希望让其他本地 Agent 检查 Cleanr 的确定性事实，而不是驱动 TUI 时，可以使用
-`analyze`：
-
-```bash
-cleanr analyze ~/projects > cleanr-analysis.json
-```
-
-该命令只扫描并输出带版本的 JSON 报告，会保留完整候选证据，包括未达到年龄门槛的
-条目；不会创建清理计划，也不会移动文件。输出包含真实本地路径，除非已经独立去除
-敏感信息，否则应保留在本机。契约和边界详见[证据与隐私](./evidence-and-privacy)。
-长期门槛由 `[recommendations].preselect_after_days` 设置，默认 90 天；本次运行可用
-`--inactive-days <天数>` 覆盖。修改时间只是文件系统元数据，并不能证明最后访问时间。
-
-可直接从 GitHub 安装仓库中的跨 Agent Skill：
+安装可选的跨 Agent Skill：
 
 ```bash
 npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
 ```
 
-它默认保持只读。只有当前用户审阅计划摘要并明确授权其 SHA-256 后，Skill 才能执行
-该确切计划；成功条目进入系统回收站，并保留恢复清单。Agent 选择和调用方式请见
-[证据与隐私](./evidence-and-privacy)。
+先让 Agent 解释一个项目的候选项，再由你选择操作。Skill 会安装缺失的 CLI，但不会
+升级已有版本。`cleanr analyze` 是只读命令。Cleanr 不会上传报告，但 Agent 即使在
+本机执行工具，也可能把输出发送给云端模型。请先阅读[证据与隐私](./evidence-and-privacy.md)。
 
-## 使用简体中文
+需要保存报告时，把它放在扫描根目录之外。Shell 重定向会创建或截断输出文件，这与
+Cleanr 的只读扫描是不同的写入操作。不要向 issue 或外部服务提交原始 JSON。
 
-初始化内置中文语言文件：
+### 扫描已知缓存位置
 
-```bash
-cleanr init --locale zh-CN
+按 `/` 打开 TUI 命令面板，输入较小范围：
+
+```text
+/scan --global-kind developer-caches
 ```
 
-之后也可以在 TUI 中打开 `/languages`，选择语言并按 `Enter`。选择结果会
-保存到默认配置文件。
+`--global` 表示已知的用户级位置，不是整块磁盘。需要审阅时，再选择浏览器、应用、
+日志、临时文件或下载分类。Windows 日常 `app-caches` 与 `temp-files` 范围仅包括
+用户 Temp、DirectX `D3DSCache` 中较旧的普通文件，不是 Windows 系统优化器。
+详见[使用 Cleanr](./using-cleanr.md)。
 
-## 接下来
+## 升级、回退与卸载
 
-- 在[使用 Cleanr](./using-cleanr)中查看全部快捷键和斜杠命令。
-- 在[安全与恢复](./safety-and-recovery)中了解可恢复范围。
-- 在[配置](./configuration)中排除目录或调整主题。
+使用相同安装方式，避免出现多个可执行文件。macOS/Linux 用 `command -v cleanr`，
+PowerShell 用 `Get-Command cleanr` 查看实际执行的版本路径。变更版本前先阅读发行说明。
+
+| 方式 | 升级 | 卸载 |
+| --- | --- | --- |
+| npm | `npm install --global cleanr-cli@latest` | `npm uninstall --global cleanr-cli` |
+| Cargo | `cargo install cleanr-cli --locked --force` | `cargo uninstall cleanr-cli` |
+| 原生二进制 | 用对应平台的新 Release 资产替换可执行文件 | 只移除该可执行文件和自己添加的 PATH 配置 |
+
+安装某个已经发布的版本时，将 `X.Y.Z` 替换为它的版本号，使用
+`npm install --global cleanr-cli@X.Y.Z` 或
+`cargo install cleanr-cli --version X.Y.Z --locked --force`。
+手动安装则下载该版本对应资产。回退二进制不代表旧版本一定能读取新配置、计划或清单；
+请查看[兼容性说明](./support-matrix.md)。
+
+升级前，按需在本地保留配置及清理/恢复状态的副本。`cleanr config path` 显示默认配置
+路径，`cleanr restore list` 列出历史运行。卸载程序不意味着删除这些记录或清空回收站；
+仍需恢复时，请保留两者。
+
+## 语言与帮助
+
+`cleanr init --locale zh-CN` 可以初始化中文语言文件，也可在 `/languages` 选择
+已安装的语言。初始化可能写入配置或语言文件，独立于前面的只读体验。
+
+[使用 Cleanr](./using-cleanr.md)介绍快捷键，[故障排查](./troubleshooting.md)说明安装与空结果问题。
+标为 **Unreleased / 未发布** 的功能属于仓库变更，尚未包含在已发布安装包中。

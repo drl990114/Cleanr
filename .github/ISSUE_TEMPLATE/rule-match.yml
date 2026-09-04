@@ -1,0 +1,58 @@
+name: Unexpected candidate or missing rule / 规则误匹配或漏匹配
+description: Explain an unexpected candidate or a cache Cleanr did not recognize.
+title: "[Rule] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English or 简体中文 is welcome. Use generated paths and redacted excerpts.
+        Do not attach original analysis JSON, plans, manifests, home-directory listings, or credentials.
+        请使用生成路径与脱敏片段，不要上传原始分析 JSON、计划、清单、主目录列表或凭证。
+        Security issue? Use [private reporting](https://github.com/drl990114/Cleanr/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: Cleanr version / 版本
+      description: Output of cleanr --version, or say the program could not start.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS, CPU, and terminal / 系统、CPU 与终端
+      placeholder: macOS 15, Apple Silicon, Terminal
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method / 安装方式
+      options:
+        - npm
+        - Cargo
+        - GitHub Release binary
+        - Source checkout
+    validations:
+      required: true
+  - type: dropdown
+    id: mismatch
+    attributes:
+      label: Result / 结果
+      options:
+        - An unexpected item appeared / 出现意外候选
+        - An expected cache was missing / 预期缓存未出现
+        - Empty results were unclear / 不理解空结果
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Minimal example and expectation / 最小示例与预期
+      description: Describe the tool/cache, synthetic folder structure, rule name if visible, and why the result seems wrong. Do not clean a suspected false positive to reproduce it.
+    validations:
+      required: true
+  - type: input
+    id: age
+    attributes:
+      label: Age threshold and scan scope / 年龄门槛与扫描范围
+      description: State inactive-days if changed and whether you used a project root or a named global kind; do not paste real roots.

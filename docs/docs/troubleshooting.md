@@ -114,12 +114,26 @@ export CLEANR_NO_UPDATE_CHECK=true
 
 ## A global scan is slow or appears stuck
 
-Opt into the scan budgets described in [Configuration](./configuration) to bound retained entries,
+Opt into the scan budgets described in [Configuration](./configuration.md) to bound retained entries,
 elapsed time, estimated allocation, or retained diagnostics. Enabled budgets use one traversal
 worker and return read-only partial evidence when reached. An elapsed limit is cooperative: it is
 checked between scan phases and filesystem operations, but cannot interrupt a metadata or directory
 read already blocked in the operating system kernel. Cancel the scan if the kernel call eventually
 returns; investigate the filesystem, mount, or network share if it repeatedly blocks.
+
+## Installation, update, or removal problems
+
+Follow [Quick start](./quick-start.md) for the OS/CPU asset mapping and update,
+rollback, and uninstall commands. Check `command -v cleanr` on macOS/Linux or
+`Get-Command cleanr` in PowerShell if the version did not change. Multiple
+installation methods can leave more than one executable on your PATH.
+
+## The cleanup total did not become free disk space
+
+Moving items to system Trash usually leaves their disk blocks allocated. The
+candidate or moved-byte total is not a free-space measurement. Cleanr keeps
+recovery possible while the Trash item and local record exist; emptying Trash
+is a separate decision and removes that recovery source.
 
 ## Get more help
 
@@ -131,3 +145,8 @@ If the problem is reproducible, open an issue on
 - installation method;
 - the exact command or key sequence;
 - the complete error message with secrets and personal paths removed.
+
+Use the [support forms](https://github.com/drl990114/Cleanr/blob/main/SUPPORT.md)
+for installation, rule matching, or recovery issues. Do not attach raw analysis
+JSON, plans, or manifests. Suspected security problems belong in
+[private reporting](https://github.com/drl990114/Cleanr/security/advisories/new).

@@ -113,6 +113,7 @@ pub(super) fn restore_from_system_trash(
     receipt: &RollbackReceipt,
     deleted_at: i64,
 ) -> Result<()> {
+    ensure_restore_target_absent(path)?;
     let expected_locator = receipt
         .locator
         .as_deref()
@@ -149,9 +150,7 @@ pub(super) fn restore_from_system_trash(
         .and_then(|locator| locator.strip_prefix("mac-path:"))
         .map(PathBuf::from)
         .context("cleanup manifest does not contain a macOS trash locator")?;
-    if path.try_exists()? {
-        anyhow::bail!("restore target already exists: {}", path.display());
-    }
+    ensure_restore_target_absent(path)?;
     if !trashed_path.try_exists()? {
         anyhow::bail!(
             "the item is no longer present in the macOS Trash: {}",
@@ -162,13 +161,30 @@ pub(super) fn restore_from_system_trash(
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to recreate {}", parent.display()))?;
     }
-    fs::rename(&trashed_path, path).with_context(|| {
+    restore_without_replacing(&trashed_path, path).with_context(|| {
         format!(
             "failed to restore {} from {}",
             path.display(),
             trashed_path.display()
         )
     })
+}
+
+#[cfg(target_os = "macos")]
+fn restore_without_replacing(source: &Path, target: &Path) -> Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+
+    renameat_with(CWD, source, CWD, target, RenameFlags::NOREPLACE)?;
+    Ok(())
+}
+
+fn ensure_restore_target_absent(path: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => anyhow::bail!("restore target already exists: {}", path.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("failed to inspect restore target {}", path.display())),
+    }
 }
 
 #[cfg(not(any(
@@ -181,6 +197,7 @@ pub(super) fn restore_from_system_trash(
     _receipt: &RollbackReceipt,
     _deleted_at: i64,
 ) -> Result<()> {
+    ensure_restore_target_absent(path)?;
     anyhow::bail!(
         "programmatic restore is unsupported on this platform for {}",
         path.display()
@@ -231,5 +248,68 @@ fn encode_os_string(value: &std::ffi::OsStr) -> String {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect()
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_target_check_rejects_dangling_symlinks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("target");
+        std::os::unix::fs::symlink(temp.path().join("missing"), &target).expect("dangling symlink");
+        assert!(ensure_restore_target_absent(&target).is_err());
+        assert!(
+            target
+                .symlink_metadata()
+                .expect("symlink preserved")
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn restore_rename_never_overwrites_a_target_created_after_the_check() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for directory in [false, true] {
+            let source = temp.path().join(if directory {
+                "source-dir"
+            } else {
+                "source-file"
+            });
+            let target = temp.path().join(if directory {
+                "target-dir"
+            } else {
+                "target-file"
+            });
+            if directory {
+                std::fs::create_dir(&source).expect("source directory");
+            } else {
+                std::fs::write(&source, b"restorable").expect("source file");
+            }
+            ensure_restore_target_absent(&target).expect("target initially absent");
+            // A competing creator wins after the precheck but before the rename.
+            if directory {
+                std::fs::create_dir(&target).expect("competing empty directory");
+            } else {
+                std::fs::write(&target, b"new user data").expect("competing file");
+            }
+            assert!(restore_without_replacing(&source, &target).is_err());
+            assert!(source.exists());
+            if !directory {
+                assert_eq!(
+                    std::fs::read(&target).expect("preserved target"),
+                    b"new user data"
+                );
+                assert_eq!(
+                    std::fs::read(&source).expect("preserved source"),
+                    b"restorable"
+                );
+            }
+        }
     }
 }

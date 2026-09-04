@@ -198,7 +198,7 @@ Run `/rules` inside the TUI to inspect the active packs and rules.
 ## Add custom rules
 
 The recommended format is a declarative plugin bundle. See
-[Plugins](./plugins) for a complete minimal example, validation commands, and
+[Plugins](./plugins.md) for a complete minimal example, validation commands, and
 the trust model.
 
 For generated paths that are meaningful only inside a particular project, use

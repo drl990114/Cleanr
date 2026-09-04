@@ -96,15 +96,16 @@ pub(crate) fn execute_cleanup_plan(
         .filter(|item| item.selected)
         .collect::<Vec<_>>();
     validate_plan_current_runtime_guards(selected_items.iter().copied())?;
+    let _operation_lock = repository.lock_operations()?;
     let items = selected_items
         .iter()
         .map(|item| ExecutionItem {
             path: item.path.clone(),
             planned_action: item.planned_action,
-            status: ExecutionStatus::Pending,
+            status: ExecutionStatus::Skipped,
             rule_id: item.rule_id.clone(),
             rollback_receipt: None,
-            error: None,
+            error: Some("cleanup has not been attempted".to_string()),
         })
         .collect::<Vec<_>>();
 
@@ -122,6 +123,19 @@ pub(crate) fn execute_cleanup_plan(
 
     repository.write_execution(&manifest)?;
     for (index, item) in selected_items.iter().enumerate() {
+        manifest.items[index].status = ExecutionStatus::Pending;
+        manifest.items[index].error = Some(
+            "cleanup started but its outcome has not been recorded; the item may already be in system trash; inspect the original path and system trash before manual recovery".to_string(),
+        );
+        repository.write_execution(&manifest).with_context(|| {
+            format!(
+                "cleanup {} stopped before attempting {}; no further items were attempted",
+                manifest.run_id,
+                item.path.display()
+            )
+        })?;
+        // Keep the final filesystem and process checks adjacent to the operation,
+        // after all pre-operation journal I/O has completed.
         let result = validate_cleanup_target(item, plan)
             .and_then(|()| validate_current_runtime_guards(item))
             .and_then(|()| executor.trash(&item.path));
@@ -144,7 +158,16 @@ pub(crate) fn execute_cleanup_plan(
             },
         };
         manifest.summary = execution_summary(&manifest.items);
-        repository.write_execution(&manifest)?;
+        repository.write_execution(&manifest).with_context(|| {
+            let recorded = &manifest.items[index];
+            format!(
+                "cleanup {} could not record the outcome for {} (executor reported {:?}, trash locator: {}); no further items were attempted; preserve this error and inspect the original path and system trash before manual recovery",
+                manifest.run_id,
+                item.path.display(),
+                recorded.status,
+                recorded.rollback_receipt.as_ref().and_then(|receipt| receipt.locator.as_deref()).unwrap_or("unavailable"),
+            )
+        })?;
     }
     Ok(manifest)
 }
@@ -174,7 +197,12 @@ fn execution_summary(items: &[ExecutionItem]) -> ExecutionSummary {
     ExecutionSummary {
         attempted: items
             .iter()
-            .filter(|item| item.status != ExecutionStatus::Pending)
+            .filter(|item| {
+                matches!(
+                    item.status,
+                    ExecutionStatus::Trashed | ExecutionStatus::Failed
+                )
+            })
             .count(),
         succeeded: items
             .iter()

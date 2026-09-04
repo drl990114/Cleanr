@@ -1,159 +1,173 @@
 ---
 sidebar_position: 2
-description: Install Cleanr and safely complete your first scan, review, and cleanup.
+description: Install Cleanr and complete a first read-only review of a project.
 ---
 
 # Quick start
 
-## 1. Install Cleanr
+Start with one project you recognize. The first goal is to see and understand
+candidates; no cleanup is required.
 
-Choose one installation method.
+## 1. Install and verify
 
-### npm
+Choose one method:
 
-Requires Node.js 18 or later:
+| Method | Requirement | Install |
+| --- | --- | --- |
+| npm | Node.js 18 or later | `npm install --global cleanr-cli` |
+| Cargo | Rust 1.98 or later | `cargo install cleanr-cli` |
+| Native binary | A matching OS and CPU | Download from [GitHub Releases](https://github.com/drl990114/Cleanr/releases) |
 
-```bash
-npm install --global cleanr-cli
-```
-
-The npm package installs a small launcher and the native binary for your
-operating system and CPU.
-
-### Cargo
-
-Requires Rust 1.98 or later:
+Then run:
 
 ```bash
-cargo install cleanr-cli
+cleanr --version
+cleanr --help
 ```
 
-### Prebuilt binary
+For manual downloads, match the target name to your machine:
 
-Download the binary for your platform from
-[GitHub Releases](https://github.com/drl990114/cleanr/releases). On macOS or
-Linux, make the downloaded file executable and place it somewhere on your
-`PATH`.
+| Platform | Release target |
+| --- | --- |
+| macOS Apple Silicon | `aarch64-apple-darwin` |
+| macOS Intel | `x86_64-apple-darwin` |
+| Linux x86-64 | `x86_64-unknown-linux-musl` |
+| Linux ARM64 | `aarch64-unknown-linux-musl` |
+| Linux ARMv7 hard-float | `arm-unknown-linux-gnueabihf` |
+| Windows x64 | `x86_64-pc-windows-msvc` |
+| Windows x86 | `i686-pc-windows-msvc` |
 
-### Build from source
+Use `uname -m` on macOS/Linux or **Settings → System → About → System type**
+on Windows to check the architecture. A native Windows ARM64 package is not
+listed. Availability and actual verification are separate; see the
+[verification matrix](./support-matrix.md).
+
+Extract the archive if the release asset is archived. On macOS/Linux, make the
+`cleanr` file executable with `chmod +x /path/to/cleanr`, then place it in a
+user-owned directory on `PATH`, such as `~/.local/bin`. Add that directory to
+your shell's `PATH` if needed. On Windows, place `cleanr.exe` in a user-owned
+folder on your user `Path`, then open a new terminal. In PowerShell, test a
+file in the current directory with `.\cleanr.exe --version`.
+
+If your OS blocks a downloaded binary, confirm the source and release asset
+before proceeding. Cleanr does not promise notarization or a signing status
+unless that release documents it; do not disable your OS's security protections.
+
+## 2. Review without cleaning
+
+Launch with a real project directory, quoting paths that contain spaces:
 
 ```bash
-git clone https://github.com/drl990114/cleanr.git
-cd cleanr
-cargo build --release
+cleanr "/path/to/project"
 ```
 
-The binary is written to `target/release/cleanr`.
+For example, use `cleanr "$HOME/projects/my-app"` in a POSIX shell or
+`cleanr "$HOME\projects\my-app"` in PowerShell, if that directory exists.
+Startup sets the root; it does not scan automatically.
 
-## 2. Launch the TUI
+1. Press `s` to scan the project.
+2. When the scan finishes, press `r` to review candidates.
+3. Move with the arrow keys or `j` / `k`, and read the reason and risk note.
+4. Press `?` for help or `q` to leave.
 
-Run Cleanr in the directory you want to inspect:
+Success means the scan completes and you understand the results, even when
+there are no candidates. `Esc` or `x` cancels an active scan.
+
+**Why might the list be empty?** Review normally shows only matching candidates
+whose newest observed modification across the candidate tree is at least
+**90 days** old. Recent projects, excluded paths, and unmatched folders can
+produce an empty list. The scan root itself is never a cleanup candidate: scan
+the project containing `target` or `node_modules`, not that generated directory
+as the root. This does not establish that the whole computer is clean.
+
+To inspect complete rule evidence without moving files:
 
 ```bash
-cleanr
+cleanr analyze "/path/to/project"
 ```
 
-You can also choose one or more scan roots when launching:
+`analyze` includes below-threshold candidates. If you intentionally want a
+different review threshold, use `cleanr --inactive-days 30 "/path/to/project"`.
+`0` removes the age filter; it does not remove safety checks. The persistent
+setting is `[recommendations].preselect_after_days`. Modification time is not
+proof of last use.
 
-```bash
-cleanr ~/projects ~/Downloads
-```
+## 3. Choose an optional next step
 
-For a one-time candidate threshold without changing the configuration, add
-`--inactive-days <DAYS>`:
+### Review a cleanup
 
-```bash
-cleanr --inactive-days 30 ~/projects
-```
+After reading the candidates, press `space` to adjust selection and `c` to
+review the selected total and open confirmation. With the default configuration,
+choose **Yes** and press `Enter` only when you want those items moved to Trash.
 
-Cleanr opens on its home screen. It does **not** scan or clean anything until
-you start an action.
+Trash usually keeps the file's disk blocks allocated. The displayed candidate
+or moved-byte total is not measured free space. `/restore` opens cleanup
+history; recovery needs the Trash item and manifest and cannot overwrite an
+existing path. See [Safety and recovery](./safety-and-recovery.md) before cleanup.
 
-## 3. Complete your first cleanup
+### Review with a coding agent
 
-Inside the TUI:
-
-1. Press `s` to scan the configured roots.
-2. When the scan finishes, press `r` to review candidates that meet the
-   effective observed modification-age threshold.
-3. Move with `j`/`k` or the arrow keys.
-4. Press `space` to select or deselect an item.
-5. Press `c` to review the selected total and open confirmation.
-6. Choose **Yes**, then press `Enter` to move the selected items to trash.
-
-Press `?` at any time to see the keyboard shortcuts. Press `Esc` or `x` during
-a scan to cancel it.
-
-:::tip Start conservatively
-
-For a first run, scan one project rather than your whole home directory.
-Review each candidate's reason and risk note before confirming.
-
-:::
-
-## Scan known system cleanup locations
-
-Press `/`, type the following command, and press `Enter`:
-
-```text
-/scan --global
-```
-
-This searches known user-level cleanup locations for the current platform,
-including developer caches, browser caches, app caches, temporary files, logs,
-and Downloads. It does not mean "scan the entire disk."
-
-To narrow the global scan, add one or more categories:
-
-```text
-/scan --global-kind browser-caches --global-kind logs
-```
-
-## Give a local AI tool read-only evidence
-
-Use `analyze` when another local agent should inspect Cleanr's deterministic
-facts rather than drive the TUI:
-
-```bash
-cleanr analyze ~/projects > cleanr-analysis.json
-```
-
-The command only scans and prints a versioned JSON report with complete
-candidate evidence, including items outside the age threshold. It does not
-create a cleanup plan or move files. The output contains real local paths, so
-keep it on your machine unless you have independently removed sensitive
-details. See [Evidence and privacy](./evidence-and-privacy) for the contract and
-boundary. The long-term threshold is
-`[recommendations].preselect_after_days` (90 days by default); use
-`--inactive-days <DAYS>` for one invocation. Modification time is filesystem
-metadata, not proof of last access.
-
-Install the repository's cross-agent skill directly from GitHub:
+Install the optional cross-agent skill:
 
 ```bash
 npx skills add drl990114/cleanr@cleanr-review-disk-cleanup -g
 ```
 
-It keeps review read-only by default. It can execute an exact plan only after
-the current user reviews its summary and explicitly authorizes its SHA-256;
-successful items go to system trash with a restore manifest. Agent selection
-and invocation are covered in [Evidence and privacy](./evidence-and-privacy).
+Ask the agent to explain one project's candidates before you choose any action.
+The skill installs a missing CLI, but does not upgrade an existing one.
+`cleanr analyze` is read-only. Cleanr does not upload its report; an agent may
+send tool output to a cloud model even when its tools run on your computer.
+Check [Evidence and privacy](./evidence-and-privacy.md) first.
 
-## Use Simplified Chinese
+If saving a report, put it outside the scan roots. Shell redirection creates or
+truncates its output file; it is a separate write from Cleanr's read-only scan.
+Do not post the original JSON to an issue or an external service.
 
-Initialize the built-in Chinese language file:
+### Scan known cache locations
 
-```bash
-cleanr init --locale zh-CN
+Use the TUI command palette (`/`) and enter a narrow scope:
+
+```text
+/scan --global-kind developer-caches
 ```
 
-You can later open `/languages` in the TUI, select a language, and press
-`Enter`. The selection is saved to the default configuration file.
+`--global` means known user-level locations, not the whole disk. Select browser,
+application, log, temporary-file, or download categories only when you want to
+review them. Routine Windows `app-caches` and `temp-files` coverage is limited
+to stale regular files in user Temp and DirectX `D3DSCache`; it is not a Windows
+system optimizer. See [Using Cleanr](./using-cleanr.md).
 
-## Next steps
+## Update, roll back, or uninstall
 
-- Learn all shortcuts and slash commands in [Using Cleanr](./using-cleanr).
-- Understand the rollback boundary in
-  [Safety and recovery](./safety-and-recovery).
-- Exclude directories or change the theme in
-  [Configuration](./configuration).
+Use the same installation method to avoid duplicate executables. Confirm which
+one runs with `command -v cleanr` on macOS/Linux or `Get-Command cleanr` in
+PowerShell. Check the release notes before changing versions.
+
+| Method | Update | Uninstall |
+| --- | --- | --- |
+| npm | `npm install --global cleanr-cli@latest` | `npm uninstall --global cleanr-cli` |
+| Cargo | `cargo install cleanr-cli --locked --force` | `cargo uninstall cleanr-cli` |
+| Native binary | Replace the executable with the matching new release asset | Remove only that executable and any PATH entry you added |
+
+To install a specific previously published version, replace `X.Y.Z` with its
+version number and use `npm install --global cleanr-cli@X.Y.Z` or
+`cargo install cleanr-cli --version X.Y.Z --locked --force`. For a manual
+installation, download that version's matching asset. A binary rollback does
+not guarantee older versions can read newer configuration, plans, or manifests;
+consult the [compatibility notes](./support-matrix.md).
+
+Before upgrading, keep a local copy of configuration and cleanup/restore state
+if you need it. `cleanr config path` shows the default configuration path and
+`cleanr restore list` lists runs. Uninstalling the executable is not a request
+to remove those records or empty Trash. Retain both while recovery may be needed.
+
+## Language and help
+
+Use `cleanr init --locale zh-CN` to initialize the Chinese language file, or
+select an installed language in `/languages`. Initialization may write
+configuration or language files; it is separate from the read-only walkthrough.
+
+[Using Cleanr](./using-cleanr.md) covers shortcuts;
+[Troubleshooting](./troubleshooting.md) covers installation and empty results.
+Features marked **Unreleased** describe repository changes not yet included in
+the published package.

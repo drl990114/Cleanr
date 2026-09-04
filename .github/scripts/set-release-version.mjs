@@ -5,6 +5,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { prepareReleaseNotes } from "./release-notes.mjs";
+import { root } from "./release-lib.mjs";
 
 const version = process.argv[2];
 if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
@@ -12,7 +14,10 @@ if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
   process.exit(1);
 }
 
-const root = new URL("../..", import.meta.url).pathname;
+// Validate notes before touching version files; an old release cannot absorb
+// new Unreleased changes under an already published version number.
+const changelogPath = join(root, "CHANGELOG.md");
+const changelog = prepareReleaseNotes(readFileSync(changelogPath, "utf8"), version);
 
 function workspacePackages() {
   const metadata = JSON.parse(
@@ -120,4 +125,5 @@ crateCargos();
 cargoLock();
 npmPackage();
 plugins();
+writeFileSync(changelogPath, changelog);
 console.log(`release: set version ${version}`);

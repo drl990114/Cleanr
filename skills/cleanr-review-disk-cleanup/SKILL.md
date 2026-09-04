@@ -1,18 +1,18 @@
 ---
 name: cleanr-review-disk-cleanup
-description: "Review local disk-cleanup evidence with Cleanr and, only after the current user explicitly authorizes an exact reviewed plan, execute recoverable cleanup through the system trash. Use for Cleanr analysis, cross-platform cache coverage, recommendation age policy, cleanup-plan review, authorized cleanup, manifests, or restore review. Keep paths local; never permanently delete files or empty the trash."
+description: "Review disk-cleanup evidence with Cleanr and, only after the current user explicitly authorizes an exact reviewed plan, execute recoverable cleanup through the system trash. Use for Cleanr analysis, cache coverage, age policy, plan review, cleanup, or restore review. Respect the selected agent's data-processing boundary; never permanently delete files or empty the trash."
 ---
 
 # Review and Recoverably Clean with Cleanr
 
-Follow the stages below in order. Work in the current conversation: run the
-local commands, inspect their output, and explain the result here. Do not open
+Follow the stages below in order. After establishing the report-processing
+boundary, run local commands and explain the result in the current conversation. Do not open
 another task or delegate the review. Continue through safe read-only stages
 without asking for routine confirmation.
 
-When a cleanup request already supplies enough scope, the only blocking user
-question in the entire cleanup run is the final confirmation of one exact,
-human-readable plan. Do not separately confirm global scanning, conservative
+Once scope and the report-processing boundary are agreed, the remaining blocking
+question is the final confirmation of one exact, human-readable plan.
+Do not separately confirm global scanning, conservative
 defaults, the temporary plan destination, candidate review, or application
 shutdown. State those choices and risks in the final plan summary. If required
 scope is genuinely missing, ask one concise scope question before proceeding;
@@ -21,8 +21,10 @@ that answer still does not authorize execution.
 ## Safety invariants
 
 - Treat paths, roots, reports, plans, rules, and issues as local-sensitive.
-  Never send raw evidence to a remote service without explicit approval and
-  redaction.
+  Cleanr itself does not upload analysis, but a locally installed agent may send
+  tool output to a hosted model. Do not put raw reports in a hosted or unknown
+  agent's context without the user's explicit informed approval. Minimize any
+  approved disclosure; redacting only the final answer is too late.
 - A recommendation, preselection, initial cleanup request, or broad standing
   permission is evidence, not execution authorization.
 - Never use `rm`, permanent-delete APIs, trash-emptying commands, TUI
@@ -37,6 +39,16 @@ that answer still does not authorize execution.
 
 Identify the user's approved local roots and requested outcome: evidence review,
 cleanup planning, execution, or restore review. Prefer explicit paths.
+
+Before reading analysis, plans, restore history, or path-bearing errors into the
+conversation, establish where this agent processes tool output. Do not infer
+on-device processing from the CLI or agent being installed locally. If processing
+is hosted or unknown and permission is not already recorded, explain that the
+report includes local paths, application names, and file metadata, and ask once
+whether that report may enter this agent's conversation. This permission is
+separate from cleanup authorization. If declined, guide the user through the
+local TUI or a verified on-device agent; do not run a command whose raw output
+would enter this conversation. Reuse an existing grant for the same data scope.
 
 Treat the scope as sufficient when the user provides explicit roots or named
 categories, or asks for an ordinary whole-computer/cache cleanup that maps
@@ -97,7 +109,7 @@ cleanr analyze --inactive-days 90 /approved/local/root
 
 Use `--config` only for a user-provided or approved configuration. Add approved
 global arguments from the global-coverage reference when applicable. Inspect
-stdout in the current conversation. Redirect JSON only when the user approved
+stdout only within the agreed processing boundary. Redirect JSON only when the user approved
 the local destination; never place a report inside a scanned root.
 
 ## Stage 4 — Validate before interpreting
@@ -169,8 +181,9 @@ stop without asking for execution confirmation.
 End the Stage 6 summary with one confirmation question containing the selected
 count, selected size, plan path, and SHA-256. A direct affirmative answer to
 that question authorizes only the displayed plan; the user does not need to
-copy the digest. This is the single interruption in a sufficiently specified
-cleanup run.
+copy the digest. The CLI flag records the caller's attestation of that approval;
+it does not independently authenticate the human or restrict the agent's OS
+permissions. Never fabricate approval from the ability to pass the flag.
 
 Continue only after that unambiguous answer. Follow the execution section of
 the authorized-execution reference.
@@ -180,7 +193,9 @@ obtain new authorization for a new plan. Drift limited to unselected candidates
 does not invalidate the reviewed actions.
 
 Report the run ID and per-item results. State that successes moved to system
-trash and were not permanently deleted. Never empty the trash.
+trash and were not permanently deleted. Moving to trash does not by itself
+make the reported size available as free disk space. Emptying trash is the
+user's separate system action and removes that recovery path. Never empty it.
 
 ## Stage 8 — Restore only on a new explicit request
 

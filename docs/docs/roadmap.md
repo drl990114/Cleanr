@@ -7,6 +7,13 @@ description: See the current direction for Cleanr without confusing planned work
 This roadmap describes direction, not a compatibility promise. For behavior
 you can rely on today, use the user guide and the release notes.
 
+## Version scope
+
+Documentation follows the repository. Category labels and filtering, cumulative
+filtered selection, and `Shift+A` global selection are **Unreleased** changes
+after v0.14.0. See the [changelog](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md)
+and [release readiness](./support-matrix.md) before relying on new behavior.
+
 ## Current foundation
 
 The project already includes:
@@ -18,7 +25,8 @@ The project already includes:
 - cancellable single-pass scanning, glob ignores, and known-cache discovery;
 - execution-time path, type, file size, directory fingerprint,
   modification, and protected-path checks;
-- a local authorization boundary that external tools cannot bypass;
+- separate analysis and digest-checked cleanup entry points; the approval flag
+  is a caller assertion, not an OS security boundary for external tools;
 - a versioned, read-only local analysis report for external local agents,
   alongside scan JSON, exact candidate-path selection, digest-bound delegated
   cleanup, dry-run, and restore commands;

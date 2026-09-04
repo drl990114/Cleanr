@@ -1,12 +1,12 @@
 use std::{
     cmp::Reverse,
-    fs,
+    fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
-use cleanr_core::{CleanupPlan, ExecutionManifest, RestoreManifest};
+use cleanr_core::{CleanupPlan, ExecutionManifest, RESTORE_SCHEMA_VERSION, RestoreManifest};
 use serde::de::DeserializeOwned;
 
 pub fn write_execution_manifest(
@@ -53,6 +53,31 @@ impl ManifestRepository {
         &self.state_dir
     }
 
+    /// Hold across history lookup, filesystem mutation, and the final journal write.
+    /// The OS releases the lock when this handle closes, including after a crash.
+    pub(crate) fn lock_operations(&self) -> Result<File> {
+        if self.state_dir.as_os_str().is_empty() {
+            anyhow::bail!("cleanup and restore require a non-empty state directory");
+        }
+        fs::create_dir_all(&self.state_dir)
+            .with_context(|| format!("failed to create {}", self.state_dir.display()))?;
+        let path = self.state_dir.join("operation.lock");
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .with_context(|| format!("failed to open operation lock {}", path.display()))?;
+        lock.try_lock().with_context(|| {
+            format!(
+                "another cleanup or restore may be running; could not lock {}",
+                path.display()
+            )
+        })?;
+        Ok(lock)
+    }
+
     pub fn write_execution(&self, manifest: &ExecutionManifest) -> Result<PathBuf> {
         let path = self.runs_dir().join(format!("{}.json", manifest.run_id));
         atomic_write_json(&path, manifest)?;
@@ -82,6 +107,16 @@ impl ManifestRepository {
 
     pub fn list_restores(&self) -> Result<Vec<RestoreManifest>> {
         let mut manifests = list_json_manifests::<RestoreManifest>(&self.restores_dir())?;
+        for manifest in &manifests {
+            if manifest.schema_version != "cleanr.restore.v1"
+                && manifest.schema_version != RESTORE_SCHEMA_VERSION
+            {
+                anyhow::bail!(
+                    "unsupported restore manifest schema: {}",
+                    manifest.schema_version
+                );
+            }
+        }
         manifests.sort_by_key(|manifest| Reverse(manifest.created_at));
         Ok(manifests)
     }
@@ -111,8 +146,14 @@ where
 }
 
 fn json_manifest_paths(directory: &Path) -> Result<Vec<PathBuf>> {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return Ok(Vec::new());
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("failed to read manifest history {}", directory.display())
+            });
+        }
     };
     let mut paths = Vec::new();
     for entry in entries {

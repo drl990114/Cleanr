@@ -78,6 +78,10 @@ pub struct RestoreSummary {
     pub attempted: usize,
     pub succeeded: usize,
     pub failed: usize,
+    #[serde(default)]
+    pub pending: usize,
+    #[serde(default)]
+    pub not_attempted: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -90,6 +94,10 @@ pub struct RestoreItem {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum RestoreStatus {
+    /// Selected for this run, but the executor has not been called.
+    NotAttempted,
+    /// The operation intent was recorded, but its outcome is not yet durable.
+    Pending,
     Restored,
     Failed,
     Skipped,

@@ -144,7 +144,7 @@ cannot interrupt a filesystem call that is already blocked inside the operating 
 | `enabled_rule_packs` | built-in packs | Rule pack IDs to load |
 
 Disabling confirmation changes the dialog only. The execution layer still
-requires a local user action; see [Safety and recovery](./safety-and-recovery).
+requires a local user action; see [Safety and recovery](./safety-and-recovery.md).
 
 ### `[recommendations]`
 
@@ -174,7 +174,7 @@ itself. Delegated cleanup requires a separately reviewed plan, its SHA-256, and
 explicit current-user authorization. The report includes the effective
 recommendation-policy snapshot and real local paths, so it is not a safe
 remote-sharing format.
-See [Evidence and privacy](./evidence-and-privacy) before giving it to another
+See [Evidence and privacy](./evidence-and-privacy.md) before giving it to another
 tool.
 
 ### `[plugins]`
@@ -184,7 +184,7 @@ tool.
 | `dirs` | platform Cleanr plugin directory | Directories containing plugin bundles or legacy rule files |
 | `trusted` | `[]` | Plugin IDs allowed to preselect high-confidence candidates |
 
-See [Plugins](./plugins) before trusting a third-party bundle.
+See [Plugins](./plugins.md) before trusting a third-party bundle.
 
 ### `[i18n]`
 
@@ -208,3 +208,7 @@ Cleanr rejects unknown fields, unsupported enum values, empty IDs, and
 duplicate trusted plugin or enabled rule-pack IDs. If Cleanr will not start
 after an edit, run it with the same `--config` path and read the reported field
 or value; the existing file is not silently repaired.
+
+An agent can run tools locally while sending their output to a cloud model.
+The approval flag is a caller assertion, not independent human authentication
+or an OS sandbox. See [Evidence and privacy](./evidence-and-privacy.md).

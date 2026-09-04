@@ -141,7 +141,7 @@ max_issue_details = 1024
 | `enabled_rule_packs` | 内置规则包 | 需要加载的规则包 ID |
 
 关闭确认只会改变对话框，执行层仍要求本地用户操作。详见
-[安全与恢复](./safety-and-recovery)。
+[安全与恢复](./safety-and-recovery.md)。
 
 ### `[recommendations]`
 
@@ -164,7 +164,7 @@ Cleanr 不内置模型、Provider、endpoint 或 API Key 配置。同一台机�
 Agent 可以读取只读的 `cleanr analyze` JSON 契约，但分析本身不会授予清理能力。
 委托清理还需要单独审阅的计划、其 SHA-256，以及当前用户的明确授权。报告包含本次
 生效的推荐策略快照和真实本地路径，不能作为安全的远程分享格式；交给其他工具前请先
-阅读[证据与隐私](./evidence-and-privacy)。
+阅读[证据与隐私](./evidence-and-privacy.md)。
 
 ### `[plugins]`
 
@@ -173,7 +173,7 @@ Agent 可以读取只读的 `cleanr analyze` JSON 契约，但分析本身不会
 | `dirs` | 平台 Cleanr 插件目录 | 存放插件 bundle 或旧版规则文件的目录 |
 | `trusted` | `[]` | 允许预选高置信度候选项的插件 ID |
 
-信任第三方 bundle 前请先阅读[插件](./plugins)。
+信任第三方 bundle 前请先阅读[插件](./plugins.md)。
 
 ### `[i18n]`
 
@@ -195,3 +195,6 @@ Agent 可以读取只读的 `cleanr analyze` JSON 契约，但分析本身不会
 Cleanr 会拒绝未知字段、不支持的枚举值、空 ID，以及重复的可信插件或规则包
 ID。编辑后无法启动时，请使用相同的 `--config` 路径重新运行，并根据错误定位
 字段；程序不会静默修复配置文件。
+
+Agent 可以在本机执行工具，同时把输出发送给云端模型。授权参数是调用方声明，
+不是独立的人类身份认证或操作系统沙箱。详见[证据与隐私](./evidence-and-privacy.md)。

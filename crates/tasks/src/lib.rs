@@ -7,6 +7,9 @@ mod runtime;
 mod storage;
 mod workflow;
 
+#[cfg(test)]
+mod recovery_tests;
+
 pub use cleanup::{
     CleanupExecutor, FakeTrashExecutor, TrashExecutor, execute_locally_confirmed_plan,
     execute_locally_confirmed_plan_with_executor,
@@ -63,7 +66,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     use crate::platform::{restore_from_system_trash, trash_with_receipt};
 
-    fn cleanup_entry(path: PathBuf, kind: EntryKind, size_bytes: u64) -> ScanEntry {
+    pub(super) fn cleanup_entry(path: PathBuf, kind: EntryKind, size_bytes: u64) -> ScanEntry {
         ScanEntry {
             path,
             kind,
@@ -86,7 +89,7 @@ mod tests {
         }
     }
 
-    fn restorable_manifest(run_id: &str, path: PathBuf) -> ExecutionManifest {
+    pub(super) fn restorable_manifest(run_id: &str, path: PathBuf) -> ExecutionManifest {
         ExecutionManifest {
             schema_version: EXECUTION_SCHEMA_VERSION.to_string(),
             run_id: run_id.to_string(),
@@ -382,6 +385,7 @@ mod tests {
                 attempted: 0,
                 succeeded: 0,
                 failed: 0,
+                ..RestoreSummary::default()
             },
             items: Vec::new(),
         };
@@ -427,12 +431,8 @@ mod tests {
                 match *calls {
                     1 => {
                         assert_eq!(manifest.summary.attempted, 0);
-                        assert!(
-                            manifest
-                                .items
-                                .iter()
-                                .all(|item| item.status == ExecutionStatus::Pending)
-                        );
+                        assert_eq!(manifest.items[0].status, ExecutionStatus::Pending);
+                        assert_eq!(manifest.items[1].status, ExecutionStatus::Skipped);
                     }
                     2 => {
                         assert_eq!(manifest.summary.attempted, 1);
@@ -888,6 +888,7 @@ mod tests {
                 attempted: succeeded + failed,
                 succeeded,
                 failed,
+                ..RestoreSummary::default()
             },
             items: vec![],
         };

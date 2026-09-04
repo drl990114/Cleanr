@@ -6,8 +6,8 @@ import { themes as prismThemes } from 'prism-react-renderer';
 
 const config: Config = {
   title: 'Cleanr',
-  tagline: 'Reviewable, reversible cleanup for caches and system cleanup locations',
-  favicon: 'img/favicon.ico',
+  tagline: 'Understand your developer caches. Review before you clean.',
+  favicon: 'img/logo.svg',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
@@ -18,12 +18,13 @@ const config: Config = {
   url: 'https://drl990114.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/cleanr/',
+  baseUrl: '/Cleanr/',
+  trailingSlash: true,
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
   organizationName: 'drl990114', // Usually your GitHub org/user name.
-  projectName: 'cleanr', // Usually your repo name.
+  projectName: 'Cleanr', // GitHub Pages project paths are case-sensitive.
 
   onBrokenLinks: 'throw',
 
@@ -49,6 +50,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/drl990114/cleanr/edit/main/docs/',
+          editLocalizedFiles: true,
         },
         blog: false,
         theme: {
@@ -59,8 +61,7 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Replace with your project's social card
-    image: 'img/docusaurus-social-card.jpg',
+    image: 'img/cleanr-social-card.png',
     colorMode: {
       respectPrefersColorScheme: true,
     },

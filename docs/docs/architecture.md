@@ -6,7 +6,7 @@ description: A contributor-oriented map of Cleanr's crates, data flow, and safet
 
 This page is for contributors and plugin authors who need to understand where
 Cleanr's behavior lives. If you only want to use the application, start with
-[Using Cleanr](./using-cleanr).
+[Using Cleanr](./using-cleanr.md).
 
 ## Workspace crates
 
@@ -47,7 +47,7 @@ pending manifest → target revalidation → system trash → manifest update
 ```
 
 The plan builder removes overlapping candidates before it computes selected and
-total reclaimable space.
+total selected file bytes, not an observed free-space increase.
 
 The entry-only `build_cleanup_plan*` functions remain deprecated compatibility
 APIs. Product code must retain scan integrity and provenance through the
@@ -134,3 +134,7 @@ keeps listing, lookup, and atomic writes behind one API for the TUI and CLI.
 
 Writes use temporary files and atomic replacement so a partial write does not
 silently replace a valid config or manifest.
+
+An agent can run tools locally while sending their output to a cloud model.
+The approval flag is a caller assertion, not independent human authentication
+or an OS sandbox. See [Evidence and privacy](./evidence-and-privacy.md).

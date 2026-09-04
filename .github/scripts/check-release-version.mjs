@@ -5,6 +5,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { extractReleaseNotes } from "./release-notes.mjs";
+import { root } from "./release-lib.mjs";
 
 const version = process.argv[2];
 if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
@@ -12,7 +14,6 @@ if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
   process.exit(1);
 }
 
-const root = new URL("../..", import.meta.url).pathname;
 let failed = false;
 
 function workspacePackages() {
@@ -155,6 +156,11 @@ crateCargos();
 npmPackage();
 cargoLock();
 plugins();
+try {
+  extractReleaseNotes(readFileSync(join(root, "CHANGELOG.md"), "utf8"), version);
+} catch (error) {
+  fail(error.message);
+}
 
 if (failed) {
   process.exit(1);

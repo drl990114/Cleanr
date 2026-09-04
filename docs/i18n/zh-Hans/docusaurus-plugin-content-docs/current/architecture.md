@@ -5,7 +5,7 @@ description: 面向贡献者的 Cleanr crate、数据流和安全边界说明。
 # 架构
 
 本页面面向需要理解 Cleanr 内部职责的贡献者和插件作者。只想使用应用时，请从
-[使用 Cleanr](./using-cleanr)开始。
+[使用 Cleanr](./using-cleanr.md)开始。
 
 ## Workspace crate
 
@@ -114,3 +114,6 @@ CI 中的 `node scripts/check-architecture.mjs` 会守住这些边界：禁止 C
 原子写入集中成一套供 TUI 与 CLI 共用的 API。
 
 写入使用临时文件和原子替换，避免写入中断时静默破坏有效配置或清单。
+
+Agent 可以在本机执行工具，同时把输出发送给云端模型。授权参数是调用方声明，
+不是独立的人类身份认证或操作系统沙箱。详见[证据与隐私](./evidence-and-privacy.md)。

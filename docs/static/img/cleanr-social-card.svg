@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#101820"/>
+  <rect x="64" y="62" width="64" height="64" rx="15" fill="#176b4a"/>
+  <path d="M104 81a17 17 0 1 0 3 24" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+  <path d="m93 93 7 7 15-17" fill="none" stroke="#9fe5bf" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <g font-family="Arial, sans-serif">
+    <text x="148" y="108" fill="#e6edf3" font-size="42" font-weight="700">Cleanr</text>
+    <text x="64" y="242" fill="#e6edf3" font-size="66" font-weight="700">Understand your caches.</text>
+    <text x="64" y="326" fill="#9fe5bf" font-size="66" font-weight="700">Review before you clean.</text>
+    <text x="64" y="398" fill="#b4c3ce" font-size="28">Developer caches · Explicit confirmation · System trash</text>
+    <line x1="64" y1="475" x2="1136" y2="475" stroke="#31404d"/>
+    <text x="64" y="538" fill="#b4c3ce" font-size="24">Open source · macOS / Linux / Windows</text>
+    <text x="948" y="538" fill="#9fe5bf" font-size="24">cleanr-cli</text>
+  </g>
+</svg>

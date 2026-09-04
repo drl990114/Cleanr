@@ -26,13 +26,11 @@ cargo build --release
 
 CLI 二进制位于 `target/release/cleanr`。
 
-## 运行与 CI 相同的检查
+## 检查修改的代码
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-targets --all-features --locked
-cargo build --workspace --all-targets --all-features --locked
 ```
 
 校验生成的 JSON Schema：
@@ -98,7 +96,6 @@ pnpm start
 
 ```bash
 pnpm typecheck
-pnpm build
 ```
 
 ## 保持中英文同步
@@ -123,3 +120,6 @@ pnpm docusaurus write-translations --locale zh-Hans
 - 同一次改动中更新英文和简体中文。
 - 示例应可执行，不要把计划中的行为写成已经实现。
 - 运行格式化、Clippy、workspace 测试、类型检查和文档构建。
+
+本地验证只运行相关格式、lint、定向单测与文档类型检查，不需要 build 或全工作区测试。
+发布 CI 是单独门槛；详见[发布流程](https://github.com/drl990114/Cleanr/blob/main/CONTRIBUTING.md#release-process)。

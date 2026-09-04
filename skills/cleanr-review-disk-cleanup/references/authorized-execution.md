@@ -1,7 +1,9 @@
 # Authorized execution
 
 Read this file only when the user wants cleanup planning, plan execution, or a
-restore. Complete each section in order and keep all artifacts local.
+restore. Complete each section in order. Keep report and plan files local;
+read path-bearing tool output only within the report-processing scope agreed
+in Stage 1 of the skill. Local files do not imply on-device model processing.
 
 ## Prepare one exact plan
 
@@ -56,7 +58,7 @@ If `selected_count` is zero, explain why and stop without an execution prompt.
 Do not paste the plan JSON or require the user to inspect it. Build the summary
 from selected `items` and their retained evidence, using the user's language.
 
-Start with one total line: selected item count, expected reclaimed size,
+Start with one total line: selected item count, selected total size,
 file/directory mix, and `system-trash+manifest` rollback. Then group selected
 items by the most specific human rule label from `evidence.matched_rules`;
 fall back to `category` plus `rule_id` when no label is available.
@@ -72,9 +74,13 @@ For every group, show:
 - up to three representative local paths. If a group has at most ten items,
   list every path instead.
 
-Do not call directories files, do not claim the size is guaranteed free space,
+Do not call directories files. Selected size is not a measured free-space
+increase; moving files to Trash usually keeps their disk blocks allocated.
+Do not claim the size is guaranteed free space,
 and do not collapse different risks into one generic "cache" group. Keep raw
-paths local to the conversation.
+paths within the report-processing scope agreed before analysis. A conversation
+with a hosted model is not local storage; do not expose new paths merely to
+complete this summary without permission for that scope.
 
 After selected groups, add a short "Not included" section with counts and sizes
 for `available`, `review`, `suppressed`, and `excluded` candidates that are not

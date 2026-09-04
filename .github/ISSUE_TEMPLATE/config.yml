@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas / 问题与建议
+    url: https://github.com/drl990114/Cleanr/discussions
+    about: Ask usage questions or suggest improvements; do not share private reports.
+  - name: Private security report / 私密安全报告
+    url: https://github.com/drl990114/Cleanr/security/advisories/new
+    about: Report suspected vulnerabilities privately, with a minimized reproduction.
+  - name: Supported platforms and verification / 平台与验证范围
+    url: https://drl990114.github.io/Cleanr/docs/support-matrix
+    about: Check version scope, actual platform evidence, and remaining verification.

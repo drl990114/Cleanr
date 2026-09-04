@@ -13,41 +13,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+
   verify-release:
     name: Verify release metadata and packages
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
 
       - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Check release version
         run: node .github/scripts/check-release-version.mjs "${GITHUB_REF_NAME#v}"
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Check architecture boundaries
-        run: node scripts/check-architecture.mjs
-
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
-      - name: Run tests
-        run: cargo test --workspace --all-targets --all-features --locked
 
       - name: Verify Cargo workspace packages
         run: |
@@ -106,10 +98,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.98.0
           targets: ${{ matrix.target }}
@@ -132,61 +124,153 @@ jobs:
           fi
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cleanr-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
           if-no-files-found: error
 
+  prepare-artifacts:
+    name: Package release files once
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Download binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: cleanr-*
+          path: artifacts
+      - name: Pack npm tarballs and stage GitHub assets
+        run: |
+          node .github/scripts/pack-npm-packages.mjs "${GITHUB_REF_NAME#v}"
+          node .github/scripts/generate-install-json.mjs "${GITHUB_REF_NAME#v}"
+      - name: Upload exact files for smoke and publish
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-files
+          path: |
+            release-assets
+            npm-tarballs
+          if-no-files-found: error
+
+  smoke:
+    name: Install smoke (${{ matrix.target }})
+    needs: prepare-artifacts
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Download the files to be published
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-files
+      - name: Install asset and npm tarballs in isolated directories
+        shell: bash
+        run: node .github/scripts/smoke-release.mjs "${GITHUB_REF_NAME#v}" "${{ matrix.target }}"
+      - name: Upload smoke evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: smoke-${{ matrix.target }}
+          path: smoke-reports/*.json
+          if-no-files-found: error
+
+  release-ready:
+    name: Require same-commit quality and installation evidence
+    if: ${{ always() }}
+    needs: [quality, verify-release, prepare-artifacts, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Download release files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-files
+      - name: Download all smoke evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: smoke-*
+          path: smoke-reports
+          merge-multiple: true
+      - name: Reject missing, failed, skipped, stale or mismatched evidence
+        env:
+          RELEASE_NEEDS: ${{ toJSON(needs) }}
+        run: node .github/scripts/check-release-gate.mjs "${GITHUB_REF_NAME#v}"
+      - name: Attest the files to be published
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/*
+            npm-tarballs/*.tgz
+      - name: Upload verified files and release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-release-files
+          path: |
+            release-assets
+            npm-tarballs
+          if-no-files-found: error
+
   create-draft-release:
     name: Create draft GitHub release
-    needs: build-binaries
+    needs: release-ready
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-
-      - name: Download binary artifacts
-        uses: actions/download-artifact@v4
+      - name: Download verified release files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: artifacts
-
-      - name: Create draft release and upload binaries
+          name: verified-release-files
+      - name: Create draft release and upload verified assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" \
-              --draft \
-              --generate-notes \
-              --title "${GITHUB_REF_NAME}"
+          node .github/scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" --output release-notes.md
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            draft=$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq .isDraft)
+            [ "$draft" = true ] || { echo "Refusing to overwrite an already published release" >&2; exit 1; }
+          else
+            gh release create "${GITHUB_REF_NAME}" --draft --notes-file release-notes.md --title "${GITHUB_REF_NAME}"
           fi
-
-          for dir in artifacts/cleanr-*; do
-            target=$(basename "$dir" | sed 's/^cleanr-//')
-            source=$(find "$dir" -maxdepth 1 -type f -print -quit)
-            case "$source" in
-              *.exe) output="cleanr-${target}.exe" ;;
-              *) output="cleanr-${target}" ;;
-            esac
-            cp "$source" "$output"
-            gh release upload "${GITHUB_REF_NAME}" "$output" --clobber
-          done
-
-      - name: Generate and upload install.json
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          node .github/scripts/generate-install-json.mjs "${GITHUB_REF_NAME#v}"
-          gh release upload "${GITHUB_REF_NAME}" install.json --clobber
+          gh release edit "${GITHUB_REF_NAME}" --notes-file release-notes.md
+          gh release upload "${GITHUB_REF_NAME}" release-assets/* --clobber
 
   publish-crates:
     name: Publish to crates.io
@@ -197,17 +281,17 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.98.0
 
       - name: Authenticate with crates.io using OIDC
         if: vars.CRATES_IO_TRUSTED_PUBLISHING == 'true'
         id: crates-io-auth
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
 
       - name: Publish workspace crates
         env:
@@ -223,10 +307,10 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org/
@@ -234,16 +318,16 @@ jobs:
       - name: Install npm with trusted publishing support
         run: npm install --global npm@11.5.1
 
-      - name: Download binary artifacts
-        uses: actions/download-artifact@v4
+      - name: Download verified npm tarballs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: artifacts
+          name: verified-release-files
 
       - name: Publish platform packages and wrapper
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: ${{ !github.event.repository.private }}
-        run: node .github/scripts/publish-npm-packages.mjs "${GITHUB_REF_NAME#v}"
+        run: node .github/scripts/publish-npm-packages.mjs "${GITHUB_REF_NAME#v}" --from-tarballs npm-tarballs
 
   publish-release:
     name: Publish GitHub release

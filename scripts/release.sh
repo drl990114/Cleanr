@@ -22,7 +22,7 @@ Examples:
   scripts/release.sh 0.2.0 --check
 
 Options:
-  --prepare     Update version files without committing, tagging, or pushing.
+  --prepare     Update version files and promote Unreleased notes; do not publish.
   --check       Validate that files already match <version>; do not edit files.
   --publish     Explicitly select the default publish mode.
   -h, --help    Show this help.
@@ -30,7 +30,9 @@ Options:
 By default the script requires a clean worktree, updates all version files,
 creates a release commit and annotated v<version> tag, then pushes the branch
 and tag to origin. The tag starts release.yml, where CI validates, builds, and
-publishes the release.
+publishes the release after same-commit quality and installation checks pass.
+Write concrete changes under CHANGELOG.md's Unreleased heading before preparing
+a new version; review the promoted version notes alongside the version changes.
 EOF
 }
 
@@ -45,7 +47,7 @@ need() {
 
 is_release_file() {
   case "$1" in
-    Cargo.toml|Cargo.lock|npm/cleanr/package.json|crates/*/Cargo.toml|plugins/index.json|plugins/*/plugin.toml|plugins/*/rules/*.toml|plugins/*/locations/*.toml|plugins/*/locales/*.yml|plugins/*/locales/*.yaml|crates/rules/builtin-plugins/*/plugin.toml|crates/rules/builtin-plugins/*/rules/*.toml|crates/rules/builtin-plugins/*/locations/*.toml|crates/rules/builtin-plugins/*/locales/*.yml|crates/rules/builtin-plugins/*/locales/*.yaml)
+    Cargo.toml|Cargo.lock|CHANGELOG.md|npm/cleanr/package.json|crates/*/Cargo.toml|plugins/index.json|plugins/*/plugin.toml|plugins/*/rules/*.toml|plugins/*/locations/*.toml|plugins/*/locales/*.yml|plugins/*/locales/*.yaml|crates/rules/builtin-plugins/*/plugin.toml|crates/rules/builtin-plugins/*/rules/*.toml|crates/rules/builtin-plugins/*/locations/*.toml|crates/rules/builtin-plugins/*/locales/*.yml|crates/rules/builtin-plugins/*/locales/*.yaml)
       return 0
       ;;
     *)
@@ -177,6 +179,7 @@ EOF
 git add \
   Cargo.toml \
   Cargo.lock \
+  CHANGELOG.md \
   crates/*/Cargo.toml \
   crates/rules/builtin-plugins \
   plugins \

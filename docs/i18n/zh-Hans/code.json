@@ -326,31 +326,82 @@
     "message": "标签",
     "description": "The title of the tag list page"
   },
-  "Review caches and system cleanup candidates, reclaim disk space, and keep a path back.": {
-    "message": "审阅缓存和系统清理候选项，释放磁盘空间，同时保留恢复路径。"
+  "home.title": {
+    "message": "看懂你的开发缓存"
   },
-  "Install and start": {
-    "message": "安装并开始使用"
+  "home.description": {
+    "message": "在终端审阅开发缓存，了解每个候选项，只将确认的内容移入系统回收站。开源，支持可选的 Agent 工作流。"
   },
-  "How safety works": {
-    "message": "了解安全机制"
+  "home.eyebrow": {
+    "message": "开源 · 终端优先"
   },
-  "See before you clean": {
-    "message": "清理前看得明白"
+  "home.heading": {
+    "message": "看懂缓存，再决定清理什么。"
   },
-  "Every candidate includes its size, confidence, reason, and risk note. You control the final selection.": {
-    "message": "每个候选项都会显示大小、置信度、匹配原因和风险说明，最终选择由你决定。"
+  "home.subtitle": {
+    "message": "查找旧项目和开发工具的生成文件。看清匹配原因，选择需要清理的内容，通过系统回收站保留恢复路径。"
   },
-  "Move to trash, then restore": {
-    "message": "移入回收站，仍可恢复"
+  "home.start": {
+    "message": "从只读扫描开始"
   },
-  "Selected items go to the system trash. Cleanup manifests keep a local, auditable path to restore supported platforms.": {
-    "message": "已选内容会进入系统回收站；清理清单为受支持的平台保留本地、可审计的恢复路径。"
+  "home.agent": {
+    "message": "配合 Agent 使用"
   },
-  "Built for known cleanup locations": {
-    "message": "面向已知清理位置"
+  "home.platforms": {
+    "message": "macOS · Linux · Windows"
   },
-  "Built-in rules understand common dependency, build, package, browser, and application caches. Declarative plugins add more without executing code by default.": {
-    "message": "内置规则理解常见依赖、构建、包、浏览器和应用缓存；声明式插件默认无需执行代码即可扩展覆盖范围。"
+  "home.support": {
+    "message": "平台支持与限制"
+  },
+  "home.previewAlt": {
+    "message": "Cleanr 在真实终端中只读扫描生成的示例项目。"
+  },
+  "home.previewCaption": {
+    "message": "真实终端会话，使用生成的示例项目。候选大小不代表实际释放的磁盘空间。"
+  },
+  "home.walkthrough": {
+    "message": "看看第一次扫描"
+  },
+  "home.walkthroughDescription": {
+    "message": "扫描一个项目，查看候选项，然后退出，全程不改变文件。"
+  },
+  "home.videoFallback": {
+    "message": "你的浏览器不支持视频播放。"
+  },
+  "home.transcript": {
+    "message": "阅读演示步骤与复现方法"
+  },
+  "home.boundaryTitle": {
+    "message": "清楚下一步会发生什么"
+  },
+  "home.trashBoundary": {
+    "message": "确认的内容会移入系统回收站。在你自行清空回收站前，空间不一定释放；清空后，Cleanr 无法再恢复这些内容。"
+  },
+  "home.safetyLink": {
+    "message": "恢复限制"
+  },
+  "home.aiBoundary": {
+    "message": "Cleanr 不会上传分析报告。使用云端 AI Agent 时，Agent 可能将工具输出发送给服务商。共享报告前，请先决定允许它读取哪些信息。"
+  },
+  "home.privacyLink": {
+    "message": "Agent 数据边界"
+  },
+  "home.featureInspect": {
+    "message": "发现候选项"
+  },
+  "home.featureInspectText": {
+    "message": "检查一个项目或已知缓存位置。扫描和审阅不会改变文件。"
+  },
+  "home.featureReview": {
+    "message": "了解清理的代价"
+  },
+  "home.featureReviewText": {
+    "message": "查看大小、匹配原因、置信度与重建风险。近期或证据不明确的内容不会自动选中。"
+  },
+  "home.featureRecover": {
+    "message": "确认要移动的内容"
+  },
+  "home.featureRecoverText": {
+    "message": "移入系统回收站前会再次校验所选内容。本地历史记录保存结果，并支持尽力恢复。"
   }
 }

@@ -1,0 +1,68 @@
+name: Cleanup or restore failure / 清理或恢复失败
+description: Report a failed or interrupted operation while preserving recovery evidence.
+title: "[Recovery] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English or 简体中文 is welcome. Use generated paths and redacted excerpts.
+        Do not attach original analysis JSON, plans, manifests, home-directory listings, or credentials.
+        请使用生成路径与脱敏片段，不要上传原始分析 JSON、计划、清单、主目录列表或凭证。
+        Security issue? Use [private reporting](https://github.com/drl990114/Cleanr/security/advisories/new).
+  - type: markdown
+    attributes:
+      value: |
+        Keep the original Trash item and local Cleanr records. Do not empty Trash or repeat an operation on a changed target.
+        请保留回收站条目和本地记录，不要清空回收站或对已变化目标重复执行。
+  - type: input
+    id: version
+    attributes:
+      label: Cleanr version / 版本
+      description: Output of cleanr --version, or say the program could not start.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS, CPU, and terminal / 系统、CPU 与终端
+      placeholder: macOS 15, Apple Silicon, Terminal
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method / 安装方式
+      options:
+        - npm
+        - Cargo
+        - GitHub Release binary
+        - Source checkout
+    validations:
+      required: true
+  - type: textarea
+    id: operation
+    attributes:
+      label: Operation and result / 操作与结果
+      description: Describe cleanup or restore, whether it was interrupted, and the redacted error. Do not attach the manifest.
+    validations:
+      required: true
+  - type: dropdown
+    id: trash
+    attributes:
+      label: Is the item still in system Trash? / 条目是否仍在回收站？
+      options:
+        - Yes / 是
+        - No / 否
+        - Unknown / 不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: original
+    attributes:
+      label: Does the original path now exist? / 原路径现在是否存在？
+      options:
+        - Yes / 是
+        - No / 否
+        - Unknown / 不确定
+    validations:
+      required: true

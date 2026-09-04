@@ -7,6 +7,7 @@ on:
     paths:
       - "docs/**"
       - ".github/workflows/pages.yml"
+      - ".github/scripts/verify-docs-site.mjs"
   workflow_dispatch:
 
 permissions:
@@ -17,23 +18,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quality:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/quality.yml
+
   deploy:
     name: Deploy docs
+    needs: quality
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: docs
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: pnpm
@@ -46,12 +53,19 @@ jobs:
         run: pnpm typecheck
 
       - name: Build docs
-        run: pnpm build
+        run: |
+          node --input-type=module -e 'import {writeFileSync} from "node:fs"; writeFileSync("static/deployment.json", JSON.stringify({commit:process.env.GITHUB_SHA}) + "\n")'
+          pnpm build
 
       - name: Deploy to gh-pages
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: docs/build
           commit_message: Deploy docs from ${{ github.sha }}
+
+      - name: Verify the deployed commit, English and Chinese pages, CSS and JavaScript
+        timeout-minutes: 10
+        working-directory: .
+        run: node .github/scripts/verify-docs-site.mjs https://drl990114.github.io/Cleanr/ "$GITHUB_SHA"

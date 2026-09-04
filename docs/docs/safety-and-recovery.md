@@ -8,6 +8,12 @@ description: Learn what Cleanr protects, what cleanup changes, and when restore 
 Cleanr is designed to make cleanup reviewable and reversible, but "moved to
 trash" is not the same as a permanent backup. This page defines the boundary.
 
+Moving an item to Trash usually keeps its disk blocks allocated. Candidate and
+moved-byte totals describe files, not measured increases in free disk space.
+Emptying Trash is a separate user decision; once emptied, Cleanr cannot restore
+those items. Filesystem compression, shared blocks, and snapshots can also make
+file-byte totals differ from physical space.
+
 ## What happens during cleanup
 
 For every selected item, Cleanr:
@@ -126,6 +132,12 @@ system trash, with an execution manifest and restore locator. The manifest
 records whether authorization came from local TUI confirmation or explicit user
 delegation.
 
+`--authorized-by-user` is an assertion supplied by the caller, not an
+independent proof of human approval. The digest checks the plan contents; it
+does not authenticate a person. These protections apply to execution through
+Cleanr and do not sandbox an agent that can invoke other filesystem tools.
+The agent must obtain and honor the user's actual authorization.
+
 Setting `cleanup.require_confirm = false` removes the interactive confirmation
 dialog for a direct local `/clean` request. It does not turn `analyze` into an
 execution interface or remove the delegated command's digest and authorization
@@ -142,3 +154,5 @@ and both plan creation and the execution layer fail closed before any trash or m
 - Do not empty the system trash until you are confident the cleanup was
   correct.
 - Keep Cleanr's state directory while you still need restore history.
+
+See [Release readiness](./support-matrix.md) for version and platform verification limits.

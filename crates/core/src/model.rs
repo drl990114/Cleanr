@@ -11,7 +11,7 @@ use crate::evidence::{
 
 pub const CLEANUP_PLAN_SCHEMA_VERSION: &str = "cleanr.cleanup-plan.v1";
 pub const EXECUTION_SCHEMA_VERSION: &str = "cleanr.execution.v1";
-pub const RESTORE_SCHEMA_VERSION: &str = "cleanr.restore.v1";
+pub const RESTORE_SCHEMA_VERSION: &str = "cleanr.restore.v2";
 
 #[derive(
     Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,

@@ -9,6 +9,18 @@ a model. `cleanr analyze` is the read-only evidence boundary. A separate,
 bounded `cleanr clean` command can move an exact reviewed plan to system trash
 only after explicit user authorization.
 
+## Before using a coding agent
+
+Cleanr does not upload scan evidence. However, “local agent” describes where
+its tools execute, not where its model runs: a cloud-backed agent may transmit
+raw paths and report contents as tool output. Check its provider and data
+settings before allowing it to read a report. For review without an AI provider,
+use Cleanr's TUI directly.
+
+The `--authorized-by-user` flag is the caller's assertion that approval was
+obtained. Cleanr validates the digest and current filesystem evidence but cannot
+independently authenticate human approval or constrain an agent's other tools.
+
 ## Local analysis contract
 
 Run analysis for one or more roots:
@@ -183,7 +195,15 @@ obtain authorization for a new plan.
 `AnalysisReport` and cleanup plan files are intentionally **local** contracts.
 They contain raw local paths, scan roots, rule reasons and risk notes, and issue
 paths. Cleanr has no embedded AI provider, API-key setting, prompt transport,
-or telemetry that sends them elsewhere.
+or telemetry that sends them elsewhere. Its optional update check contacts
+GitHub for release information; plugin installation can contact the selected
+index or download host. These are distinct from sending scan evidence. See
+[Troubleshooting](./troubleshooting.md#disable-the-update-check) to disable the
+update check.
+
+If you save JSON through shell redirection, choose a file outside the scan roots.
+The shell creates or truncates that file before Cleanr scans. That output write
+is not part of the read-only analysis guarantee.
 
 ## Budget-limited evidence
 
