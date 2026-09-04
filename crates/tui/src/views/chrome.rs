@@ -144,30 +144,40 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
                     hint_budget,
                 );
             } else if app.view == View::Scan {
-                if list_len > 0 {
+                push_hint_if_fits(
+                    &mut hints,
+                    key_hint("f", app.i18n.t("hint_filter"), app.theme),
+                    hint_budget,
+                );
+                if app.plan.is_some() {
                     push_hint_if_fits(
                         &mut hints,
-                        key_hint("j/k", app.i18n.t("hint_move"), app.theme),
+                        key_hint("a", app.i18n.t("hint_all_filtered"), app.theme),
                         hint_budget,
                     );
                     push_hint_if_fits(
                         &mut hints,
-                        key_hint("space", app.i18n.t("hint_select"), app.theme),
+                        key_hint("A", app.i18n.t("hint_all_global"), app.theme),
                         hint_budget,
                     );
-                    if app.plan.is_some() {
+                    push_hint_if_fits(
+                        &mut hints,
+                        key_hint("c", app.i18n.t("hint_clean"), app.theme),
+                        hint_budget,
+                    );
+                    if list_len > 0 {
                         push_hint_if_fits(
                             &mut hints,
-                            key_hint("c", app.i18n.t("hint_clean"), app.theme),
-                            hint_budget,
-                        );
-                        push_hint_if_fits(
-                            &mut hints,
-                            key_hint("a", app.i18n.t("hint_all"), app.theme),
+                            key_hint("space", app.i18n.t("hint_select"), app.theme),
                             hint_budget,
                         );
                     }
                 }
+                push_hint_if_fits(
+                    &mut hints,
+                    key_hint("?", app.i18n.t("hint_help"), app.theme),
+                    hint_budget,
+                );
                 push_hint_if_fits(
                     &mut hints,
                     key_hint("/", app.i18n.t("hint_commands"), app.theme),
@@ -335,6 +345,8 @@ pub(crate) fn render_help(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
         Line::from(""),
         Line::from(app.i18n.t("help_move")),
         Line::from(app.i18n.t("help_select_all")),
+        Line::from(app.i18n.t("help_select_global")),
+        Line::from(app.i18n.t("help_categories")),
         Line::from(app.i18n.t("help_toggle")),
         Line::from(app.i18n.t("help_actions")),
         Line::from(app.i18n.t("help_command")),
@@ -401,49 +413,75 @@ pub(crate) fn render_confirm(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
         )
     };
 
-    let lines = vec![
-        Line::from(""),
-        Line::from(body).alignment(ratatui::layout::Alignment::Center),
-        Line::from(""),
-        Line::from(vec![
-            confirm_button(
-                "Y",
-                app.i18n.t("confirm_yes"),
-                app.confirm_choice == ConfirmChoice::Yes,
-                action_color,
-                app.theme,
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(app.theme.border))
+        .padding(Padding::horizontal(1))
+        .style(Style::default().bg(app.theme.surface))
+        .title(format!(" {title} "))
+        .title_style(
+            Style::default()
+                .fg(action_color)
+                .add_modifier(Modifier::BOLD),
+        );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let hint_height = if inner.width < 54 { 2 } else { 1 };
+    // Reserve buttons independently so wrapped scope information never pushes them off screen.
+    let rows = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+        Constraint::Length(hint_height),
+    ])
+    .split(inner);
+    let mut body_lines = vec![Line::from(body)];
+    if !restoring && app.scan_view.hidden_selected_count > 0 {
+        body_lines.push(Line::from(Span::styled(
+            app.i18n.format(
+                "confirm_hidden_selection",
+                &[
+                    ("count", app.scan_view.hidden_selected_count.to_string()),
+                    ("size", format_bytes(app.scan_view.hidden_selected_bytes)),
+                ],
             ),
-            Span::raw("   "),
-            confirm_button(
-                "N",
-                app.i18n.t("confirm_no"),
-                app.confirm_choice == ConfirmChoice::No,
-                app.theme.accent,
-                app.theme,
-            ),
-        ])
-        .alignment(ratatui::layout::Alignment::Center),
-        Line::from(Span::styled(
-            app.i18n.t("confirm_hint"),
-            Style::default().fg(app.theme.fg_dim),
-        ))
-        .alignment(ratatui::layout::Alignment::Center),
-    ];
-    let paragraph = Paragraph::new(lines).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(app.theme.border))
-            .padding(Padding::horizontal(2))
-            .style(Style::default().bg(app.theme.surface))
-            .title(format!(" {title} "))
-            .title_style(
-                Style::default()
-                    .fg(action_color)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Style::default().fg(app.theme.warn),
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(body_lines)
+            .wrap(Wrap { trim: true })
+            .alignment(ratatui::layout::Alignment::Center),
+        rows[0],
     );
-    frame.render_widget(paragraph, area);
+    let buttons = Line::from(vec![
+        confirm_button(
+            "Y",
+            app.i18n.t("confirm_yes"),
+            app.confirm_choice == ConfirmChoice::Yes,
+            action_color,
+            app.theme,
+        ),
+        Span::raw("   "),
+        confirm_button(
+            "N",
+            app.i18n.t("confirm_no"),
+            app.confirm_choice == ConfirmChoice::No,
+            app.theme.accent,
+            app.theme,
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(buttons).alignment(ratatui::layout::Alignment::Center),
+        rows[1],
+    );
+    frame.render_widget(
+        Paragraph::new(app.i18n.t("confirm_hint"))
+            .style(Style::default().fg(app.theme.fg_dim))
+            .wrap(Wrap { trim: true })
+            .alignment(ratatui::layout::Alignment::Center),
+        rows[2],
+    );
 }
 
 pub(crate) fn confirm_button(

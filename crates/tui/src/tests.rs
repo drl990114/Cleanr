@@ -40,6 +40,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "tests/scan_category.rs"]
+mod scan_category;
+
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent {
         code,
@@ -315,7 +318,8 @@ fn scan_layout_keeps_selection_and_details_distinct() {
     assert!(screen.contains("[✓]"));
     assert!(screen.contains("Details"));
     assert!(screen.contains("space select"));
-    assert!(screen.contains("Current item"));
+    assert!(screen.contains("Category:"));
+    assert!(screen.contains("Rule: Node dependency directory"));
     assert!(screen.contains("Reason"));
     assert!(screen.contains("Risk"));
     assert!(!screen.contains("Matched rules"));
@@ -378,7 +382,7 @@ fn bulk_selection_includes_review_items_and_toggles_the_whole_plan() {
             .iter()
             .all(|item| item.selected)
     );
-    assert!(app.status().contains("Selected all 2 item(s)"));
+    assert!(app.status().contains("Selected all 2 filtered item(s)"));
     assert!(app.status().contains("1 require review"));
 
     app.toggle_all_scan_selection();
@@ -411,7 +415,7 @@ fn a_selects_and_deselects_a_review_only_scan_plan() {
     assert!(selected.items[0].selected);
     assert_eq!(selected.summary.selected_count, 1);
     assert_eq!(selected.summary.selected_size_bytes, 414 * 1024 * 1024);
-    assert!(app.status().contains("Selected all 1 item(s)"));
+    assert!(app.status().contains("Selected all 1 filtered item(s)"));
     assert!(app.status().contains("1 require review"));
     app.build_plan();
     assert!(app.plan().expect("rebuilt plan").items[0].selected);
@@ -485,13 +489,20 @@ fn chinese_scan_layout_uses_translations_for_details_labels() {
         .collect::<String>();
 
     assert!(compact.contains("详情"));
-    assert!(compact.contains("当前项"));
+    assert!(compact.contains("分类"));
+    assert!(compact.contains("规则"));
     assert!(compact.contains("路径"));
 }
 
 #[test]
 fn chinese_scan_progress_keeps_loading_compact_and_focused() {
     let temp = tempfile::tempdir().expect("tempdir");
+    let relative_path = PathBuf::from("node_modules")
+        .join("@babel")
+        .join("traverse")
+        .join("lib")
+        .join("context.js");
+    let expected_path = relative_path.display().to_string();
     let mut app = Workbench::new(
         vec![temp.path().to_path_buf()],
         Config::default(),
@@ -506,14 +517,7 @@ fn chinese_scan_progress_keeps_loading_compact_and_focused() {
         entries_scanned: 155_840,
         bytes_scanned: (12.74 * 1024.0 * 1024.0 * 1024.0) as u64,
         errors: 0,
-        current_path: Some(
-            temp.path()
-                .join("node_modules")
-                .join("@babel")
-                .join("traverse")
-                .join("lib")
-                .join("context.js"),
-        ),
+        current_path: Some(temp.path().join(relative_path)),
     });
 
     let screen = render_text(&mut app, 111, 33);
@@ -534,7 +538,7 @@ fn chinese_scan_progress_keeps_loading_compact_and_focused() {
     assert!(!screen.contains('○'));
     assert!(!screen.contains("证据"));
     assert!(!screen.contains("155840 / 0"));
-    assert!(screen.contains("node_modules/@babel/traverse/lib/context.js"));
+    assert!(screen.contains(&expected_path), "{screen}");
 }
 
 #[test]
@@ -1313,7 +1317,9 @@ fn cleanup_success_starts_background_refresh_scan() {
 #[test]
 fn cleanup_result_highlights_count_size_and_path_on_scan_and_home() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let cleaned_path = temp.path().join("target").join("artifact-cache");
+    let relative_path = PathBuf::from("target").join("artifact-cache");
+    let expected_path = relative_path.display().to_string();
+    let cleaned_path = temp.path().join(relative_path);
     let mut app = app(temp.path().to_path_buf());
     app.last_cleanup_result = Some(CleanupResult {
         succeeded: 1,
@@ -1330,7 +1336,7 @@ fn cleanup_result_highlights_count_size_and_path_on_scan_and_home() {
         scan.contains("1 item(s)  ·  414.00 MiB moved to Trash"),
         "{scan}"
     );
-    assert!(scan.contains("target/artifact-cache"), "{scan}");
+    assert!(scan.contains(&expected_path), "{scan}");
     assert!(!scan.contains("Candidates"), "{scan}");
     assert!(!scan.contains("No cleanup plan"), "{scan}");
     let narrow_scan = render_text(&mut app, 60, 12);
@@ -1345,7 +1351,10 @@ fn cleanup_result_highlights_count_size_and_path_on_scan_and_home() {
         home.contains("1 item(s)  ·  414.00 MiB moved to Trash"),
         "{home}"
     );
-    assert!(home.contains("Cleaned  target/artifact-cache"), "{home}");
+    assert!(
+        home.contains(&format!("Cleaned  {expected_path}")),
+        "{home}"
+    );
 }
 
 #[test]

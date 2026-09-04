@@ -17,7 +17,7 @@ use unicode_truncate::UnicodeTruncateStr;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{ConfirmChoice, Mode, View, Workbench},
+    app::{CandidateCategory, CategoryKey, ConfirmChoice, Mode, View, Workbench},
     effects::{ScanStage, ScanTaskProgress},
     theme::Theme,
 };

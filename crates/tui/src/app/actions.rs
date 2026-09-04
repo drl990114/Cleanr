@@ -38,8 +38,10 @@ impl Workbench {
             return;
         }
         if self.plan.is_none() {
-            self.build_plan();
+            self.status = self.i18n.t("scan_read_only");
+            return;
         }
+        self.ensure_scan_view_projection();
         let Some(plan) = self.plan.clone() else {
             return;
         };
@@ -342,11 +344,13 @@ impl Workbench {
     }
 
     pub(crate) fn build_plan_for_view(&mut self, activate_scan: bool) {
+        let entering_scan = activate_scan && self.view != View::Scan;
         if activate_scan {
             self.view = View::Scan;
         }
         if self.scan_is_budget_limited() {
             self.plan = None;
+            self.invalidate_scan_view_projection();
             self.reject_budget_limited_action();
             return;
         }
@@ -376,13 +380,16 @@ impl Workbench {
             Ok(plan) => plan,
             Err(error) => {
                 self.plan = None;
+                self.invalidate_scan_view_projection();
                 self.status = error.to_string();
                 return;
             }
         };
         self.status = self.plan_ready_status(&plan, inactive_days);
         self.plan = Some(plan);
-        if self.view == View::Scan {
+        self.invalidate_scan_view_projection();
+        self.ensure_scan_view_projection();
+        if entering_scan {
             self.select_first();
         }
     }
@@ -447,6 +454,7 @@ impl Workbench {
 
     pub(crate) fn reject_budget_limited_action(&mut self) {
         self.plan = None;
+        self.invalidate_scan_view_projection();
         self.status = self.i18n.t("status_scan_budget_read_only");
     }
 

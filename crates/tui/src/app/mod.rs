@@ -149,6 +149,7 @@ pub struct Workbench {
     pub(crate) scan_budget_exceeded: Vec<ScanBudgetExceeded>,
     pub(crate) scan_explicit_roots: Vec<PathBuf>,
     pub(crate) scan_global_evidence: GlobalScanEvidence,
+    pub(crate) scan_view: ScanViewState,
     pub(crate) candidate_count: usize,
     pub(crate) candidate_entry_indices: Vec<usize>,
     pub(crate) candidate_projection_entries_len: usize,
@@ -200,7 +201,10 @@ pub struct Workbench {
     pub(crate) ime_guard_phase: bool,
 }
 
+pub(crate) use categories::{CandidateCategory, CategoryKey, ScanViewState};
+
 mod actions;
+mod categories;
 mod core;
 mod input;
 mod navigation;

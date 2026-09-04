@@ -44,6 +44,7 @@ impl Workbench {
             scan_budget_exceeded: Vec::new(),
             scan_explicit_roots: Vec::new(),
             scan_global_evidence: GlobalScanEvidence::default(),
+            scan_view: ScanViewState::default(),
             candidate_count: 0,
             candidate_entry_indices: Vec::new(),
             candidate_projection_entries_len: 0,

@@ -209,6 +209,7 @@ impl Workbench {
         self.candidate_count = candidate_count;
         self.candidate_entry_indices = candidate_entry_indices;
         self.entries = report.entries;
+        self.scan_view = ScanViewState::default();
         self.candidate_projection_entries_len = self.entries.len();
         self.analysis = None;
         self.candidate_ids_by_path.clear();
@@ -259,6 +260,7 @@ impl Workbench {
                 self.selection = selection;
                 self.status = self.plan_ready_status(&plan, inactive_days);
                 self.plan = Some(plan);
+                self.invalidate_scan_view_projection();
                 if self.view == View::Scan {
                     self.select_first();
                 }
@@ -276,6 +278,7 @@ impl Workbench {
         }
         if !self.scan_budget_exceeded.is_empty() {
             self.plan = None;
+            self.invalidate_scan_view_projection();
             self.status = self.i18n.t("status_scan_budget_read_only");
         }
     }
@@ -362,6 +365,7 @@ impl Workbench {
         self.frame_durations.clear();
         self.input_durations.clear();
         self.entries.clear();
+        self.scan_view = ScanViewState::default();
         self.scan_budget_exceeded.clear();
         self.candidate_count = 0;
         self.candidate_entry_indices.clear();

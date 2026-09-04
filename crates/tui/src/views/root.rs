@@ -1,6 +1,9 @@
 use super::*;
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &mut Workbench) {
+    if app.view == View::Scan || app.confirmation_pending() {
+        app.ensure_scan_view_projection();
+    }
     let area = frame.area();
     frame.render_widget(
         Block::default().style(Style::default().bg(app.theme.bg)),
@@ -44,10 +47,17 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut Workbench) {
         render_palette(frame, popup, app);
     }
     if app.help_open {
-        render_help(frame, centered_bounded_rect(area, 72, 16, 88), app);
+        render_help(frame, centered_bounded_rect(area, 72, 18, 88), app);
+    }
+    if app.scan_view.filter_open {
+        let height = u16::try_from(app.scan_view.groups.len())
+            .unwrap_or(u16::MAX)
+            .saturating_add(5)
+            .min(18);
+        render_category_filter(frame, centered_bounded_rect(area, 64, height, 76), app);
     }
     if app.confirmation_pending() {
-        render_confirm(frame, centered_bounded_rect(area, 68, 9, 84), app);
+        render_confirm(frame, centered_bounded_rect(area, 68, 11, 84), app);
     }
     if matches!(app.mode, Mode::Normal) {
         render_ime_guard(frame, area, app);

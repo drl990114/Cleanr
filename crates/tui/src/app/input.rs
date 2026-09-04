@@ -12,7 +12,10 @@ impl Workbench {
         self.ime_guard_phase = !self.ime_guard_phase;
 
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if matches!(self.mode, Mode::Command) {
+            if self.scan_view.filter_open {
+                self.scan_view.filter_open = false;
+                self.clear_pending();
+            } else if matches!(self.mode, Mode::Command) {
                 self.close_command();
             } else if self.confirmation_pending() {
                 self.cancel_confirmation();
@@ -44,6 +47,14 @@ impl Workbench {
                 KeyCode::Esc => self.cancel_confirmation(),
                 _ => {}
             }
+            return;
+        }
+
+        if self.view == View::Scan {
+            self.ensure_scan_view_projection();
+        }
+        if self.scan_view.filter_open {
+            self.handle_scan_filter_key(key);
             return;
         }
 
@@ -148,6 +159,18 @@ impl Workbench {
             }
             KeyCode::Char('a') | KeyCode::Char('%') => {
                 self.toggle_all_scan_selection();
+                self.clear_pending();
+            }
+            KeyCode::Char('A') => {
+                self.toggle_global_scan_selection();
+                self.clear_pending();
+            }
+            KeyCode::Char('f')
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.open_scan_filter();
                 self.clear_pending();
             }
             KeyCode::PageDown => {
@@ -478,6 +501,12 @@ impl Workbench {
     fn is_repeatable_key(&self, key: KeyEvent) -> bool {
         if self.help_open {
             return false;
+        }
+        if self.scan_view.filter_open {
+            return matches!(
+                key.code,
+                KeyCode::Up | KeyCode::Down | KeyCode::Char('j' | 'k')
+            );
         }
         if self.confirmation_pending() {
             return matches!(key.code, KeyCode::Left | KeyCode::Right);

@@ -4,12 +4,7 @@ impl Workbench {
     pub(crate) fn list_len(&self) -> usize {
         match self.view {
             View::Home => 0,
-            View::Scan => {
-                if let Some(plan) = &self.plan {
-                    return plan.items.len();
-                }
-                self.candidate_count_cached()
-            }
+            View::Scan => self.scan_visible_count(),
             View::Languages => self.i18n.packs().len(),
             View::Rules => self
                 .registry
@@ -57,6 +52,9 @@ impl Workbench {
     }
 
     pub(crate) fn reset_list_selection(&mut self) {
+        if self.view == View::Scan {
+            self.ensure_scan_view_projection();
+        }
         if self.list_len() > 0 {
             self.list_state.select(Some(0));
         } else {
@@ -93,6 +91,9 @@ impl Workbench {
     }
 
     pub(crate) fn select_next_n(&mut self, n: usize) {
+        if self.view == View::Scan {
+            self.ensure_scan_view_projection();
+        }
         let len = self.list_len();
         if len == 0 {
             return;
@@ -105,6 +106,13 @@ impl Workbench {
     }
 
     pub(crate) fn select_previous_n(&mut self, n: usize) {
+        if self.view == View::Scan {
+            self.ensure_scan_view_projection();
+        }
+        if self.list_len() == 0 {
+            self.list_state.select(None);
+            return;
+        }
         let prev = self
             .list_state
             .selected()
@@ -117,6 +125,9 @@ impl Workbench {
     }
 
     pub(crate) fn select_last(&mut self) {
+        if self.view == View::Scan {
+            self.ensure_scan_view_projection();
+        }
         let len = self.list_len();
         if len > 0 {
             self.list_state.select(Some(len - 1));
@@ -124,6 +135,9 @@ impl Workbench {
     }
 
     pub(crate) fn select_line(&mut self, line: usize) {
+        if self.view == View::Scan {
+            self.ensure_scan_view_projection();
+        }
         let len = self.list_len();
         if len == 0 {
             return;
@@ -185,15 +199,19 @@ impl Workbench {
             self.reject_budget_limited_action();
             return;
         }
-        if self.plan.is_none() && !self.entries.is_empty() {
-            self.build_plan();
+        self.ensure_scan_view_projection();
+        if self.plan.is_none() {
+            self.status = self.i18n.t("scan_read_only");
+            return;
         }
+        let Some(idx) = self.selected_scan_row().map(|row| row.source_index) else {
+            return;
+        };
         let (path, selected) = {
             let Some(plan) = &mut self.plan else {
                 self.status = self.i18n.t("status_no_scan_results");
                 return;
             };
-            let idx = self.list_state.selected().unwrap_or(0);
             let Some(item) = plan.items.get_mut(idx) else {
                 return;
             };
@@ -208,6 +226,7 @@ impl Workbench {
             (item.path.clone(), item.selected)
         };
         self.set_analysis_selection_for_path(&path, selected);
+        self.cache_scan_selection_summary();
         let state = if selected {
             self.i18n.t("state_selected")
         } else {
@@ -223,6 +242,14 @@ impl Workbench {
     }
 
     pub(crate) fn toggle_all_scan_selection(&mut self) {
+        self.toggle_scan_selection_scope(false);
+    }
+
+    pub(crate) fn toggle_global_scan_selection(&mut self) {
+        self.toggle_scan_selection_scope(true);
+    }
+
+    fn toggle_scan_selection_scope(&mut self, global: bool) {
         if self.view != View::Scan {
             self.status = self.i18n.t("status_select_scan_only");
             return;
@@ -231,57 +258,85 @@ impl Workbench {
             self.reject_budget_limited_action();
             return;
         }
-        if self.plan.is_none() && !self.entries.is_empty() {
-            self.build_plan();
-        }
-        let (target, item_count, review_count, updates) = {
-            let Some(plan) = &mut self.plan else {
-                self.status = self.i18n.t("status_no_scan_results");
-                return;
-            };
-            if plan.items.is_empty() {
-                self.status = self.i18n.t("status_no_scan_results");
-                return;
-            }
-            let target = plan.items.iter().any(|item| !item.selected);
-            let item_count = plan.items.len();
-            let review_count = plan
-                .items
-                .iter()
-                .filter(|item| {
-                    item.evidence.as_ref().is_some_and(|evidence| {
-                        evidence.recommendation_state == RecommendationState::Review
-                    })
-                })
-                .count();
-            let mut updates = Vec::with_capacity(item_count);
-            plan.summary.selected_size_bytes = 0;
-            for item in &mut plan.items {
-                item.selected = target;
-                updates.push((item.path.clone(), target));
-                if item.selected {
-                    plan.summary.selected_size_bytes += item.size_bytes;
-                }
-            }
-            plan.summary.selected_count = if target { item_count } else { 0 };
-            (target, item_count, review_count, updates)
+        self.ensure_scan_view_projection();
+        let Some(plan) = &mut self.plan else {
+            self.status = self.i18n.t("scan_read_only");
+            return;
         };
-
+        let indices = if global {
+            (0..plan.items.len()).collect::<Vec<_>>()
+        } else {
+            self.scan_view
+                .visible
+                .iter()
+                .map(|index| self.scan_view.rows[*index].source_index)
+                .collect()
+        };
+        if indices.is_empty() {
+            return;
+        }
+        let target = indices.iter().any(|index| !plan.items[*index].selected);
+        let item_count = indices.len();
+        let mut review_count = 0;
+        let mut updates = Vec::with_capacity(item_count);
+        for index in indices {
+            let item = &mut plan.items[index];
+            if item.evidence.as_ref().is_some_and(|evidence| {
+                evidence.recommendation_state == RecommendationState::Review
+            }) {
+                review_count += 1;
+            }
+            if item.selected == target {
+                continue;
+            }
+            item.selected = target;
+            if target {
+                plan.summary.selected_count += 1;
+                plan.summary.selected_size_bytes += item.size_bytes;
+            } else {
+                plan.summary.selected_count -= 1;
+                plan.summary.selected_size_bytes -= item.size_bytes;
+            }
+            updates.push((item.path.clone(), target));
+        }
         for (path, selected) in updates {
             self.set_analysis_selection_for_path(&path, selected);
         }
+        if global {
+            self.refresh_hidden_scan_selection();
+        } else {
+            self.cache_scan_selection_summary();
+        }
         self.status = if target && review_count > 0 {
             self.i18n.format(
-                "status_all_toggled_selected_review",
+                if global {
+                    "status_all_toggled_selected_review"
+                } else {
+                    "status_filtered_toggled_selected_review"
+                },
                 &[
                     ("count", item_count.to_string()),
                     ("review", review_count.to_string()),
                 ],
             )
         } else if target {
-            self.i18n.t("status_all_toggled_selected")
+            self.i18n.format(
+                if global {
+                    "status_all_toggled_selected"
+                } else {
+                    "status_filtered_toggled_selected"
+                },
+                &[("count", item_count.to_string())],
+            )
         } else {
-            self.i18n.t("status_all_toggled_deselected")
+            self.i18n.format(
+                if global {
+                    "status_all_toggled_deselected"
+                } else {
+                    "status_filtered_toggled_deselected"
+                },
+                &[("count", item_count.to_string())],
+            )
         };
     }
 

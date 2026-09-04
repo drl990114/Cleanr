@@ -70,8 +70,9 @@ pass the quoted path when launching Cleanr instead.
 
 ## Review and select candidates
 
-After a scan, press `r` or run `/review`. The review view shows the candidate
-path, size, confidence, reason, and risk note. By default, it includes only
+After a scan, press `r` or run `/review`. Each candidate row shows its size,
+category, and path; details show the full category, matched rules, confidence,
+reason, and risk note. By default, the view includes only
 candidates whose newest observed modification time across the candidate tree
 meets the configured threshold, which is 90 days by default.
 
@@ -84,15 +85,33 @@ Change the long-term threshold with
 one invocation. `0` removes the age filter and shows all otherwise eligible
 candidates. Modification time is filesystem metadata, not proof of last access.
 
+Categories describe rule content, such as build caches or logs; they are
+separate from the locations chosen with `--global-kind`. Built-in categories
+use translated labels, while custom plugin categories keep their original
+names. Conflicting rules with different effective categories appear under
+**Multiple categories**, with details listing the categories and conflict.
+
+Press `f` to open a single-category filter with each category's candidate count
+and size. Choose with `↑` / `↓` or `j` / `k`, then press `Enter` to apply or
+`Esc` to cancel. Filtering preserves selections across categories. The list
+shows the filtered count and the global selection total, including the count
+and size selected outside the filter. Switching views keeps the filter;
+starting a new scan, including the automatic scan after cleanup, resets it
+to **All**. Partial results without a cleanup plan show tentative categories
+and remain read-only.
+
 Useful keys while reviewing:
 
 | Key | Action |
 | --- | --- |
 | `j` / `k`, `↓` / `↑` | Move through the list |
 | `gg` / `G` | Jump to the first / last item |
+| `Ctrl+f` / `Ctrl+b` | Page down / up |
 | `space` or `Enter` | Select or deselect the current item |
-| `a` or `%` | Select or deselect all items |
-| `c` | Continue to cleanup confirmation |
+| `f` | Open the category filter |
+| `a` or `%` | Select all items in the current filter, across all pages; deselect them if all are selected |
+| `Shift+A` | Select all candidates globally; deselect them if all are selected |
+| `c` | Confirm cleanup of all selected items, including those outside the filter |
 | `h` or `Esc` | Return home |
 | `?` | Open keyboard help |
 | `q` | Quit |
@@ -104,7 +123,8 @@ items and `12G` jumps to item 12.
 
 Press `c` or run `/clean` to review the selected count and size. With the
 default configuration, Cleanr asks for confirmation and initially selects
-**No**.
+**No**. Cleanup uses the global selection. When a category filter hides selected
+items, the confirmation also states their count and size.
 
 After confirmation, each selected item is validated again and moved to the
 system trash. Failures are recorded per item; one failed item does not hide
