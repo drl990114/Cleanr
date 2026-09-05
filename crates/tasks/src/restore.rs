@@ -12,7 +12,9 @@ use cleanr_core::{
 };
 use uuid::Uuid;
 
-use crate::{ManifestRepository, platform::restore_from_system_trash};
+use crate::{
+    ManifestRepository, OperationPhase, OperationProgress, platform::restore_from_system_trash,
+};
 
 pub trait RestoreExecutor {
     fn restore(&self, path: &Path, receipt: &RollbackReceipt, deleted_at: i64) -> Result<()>;
@@ -54,6 +56,21 @@ pub fn restore_execution_manifest(
     executor: &impl RestoreExecutor,
     state_dir: impl AsRef<Path>,
 ) -> Result<RestoreManifest> {
+    restore_execution_manifest_with_progress(manifest, executor, state_dir, &mut |_| {})
+}
+
+pub fn restore_execution_manifest_with_progress(
+    manifest: &ExecutionManifest,
+    executor: &impl RestoreExecutor,
+    state_dir: impl AsRef<Path>,
+    progress: &mut impl FnMut(OperationProgress),
+) -> Result<RestoreManifest> {
+    progress(OperationProgress {
+        phase: OperationPhase::Validating,
+        completed: 0,
+        total: manifest.items.len(),
+        current_path: None,
+    });
     let repository = ManifestRepository::new(state_dir);
     let _operation_lock = repository.lock_operations()?;
     let deleted_at = manifest.created_at.timestamp();
@@ -108,6 +125,12 @@ pub fn restore_execution_manifest(
     repository.write_restore(&restore)?;
 
     for (index, item) in manifest.items.iter().enumerate() {
+        progress(OperationProgress {
+            phase: OperationPhase::Restoring,
+            completed: index,
+            total: manifest.items.len(),
+            current_path: Some(item.path.clone()),
+        });
         if restore.items[index].status != RestoreStatus::NotAttempted {
             continue;
         }
@@ -146,7 +169,19 @@ pub fn restore_execution_manifest(
                 restore.restore_id, item.path.display(), restore.items[index].status,
             )
         })?;
+        progress(OperationProgress {
+            phase: OperationPhase::Restoring,
+            completed: index + 1,
+            total: manifest.items.len(),
+            current_path: Some(item.path.clone()),
+        });
     }
+    progress(OperationProgress {
+        phase: OperationPhase::Restoring,
+        completed: manifest.items.len(),
+        total: manifest.items.len(),
+        current_path: None,
+    });
     Ok(restore)
 }
 

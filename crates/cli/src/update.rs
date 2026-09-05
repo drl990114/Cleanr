@@ -3,6 +3,7 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::mpsc::{self, Receiver},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -14,7 +15,31 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_VERSION_URL: &str =
     "https://github.com/drl990114/cleanr/releases/latest/download/install.json";
 const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
-const REQUEST_TIMEOUT: Duration = Duration::from_millis(1500);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+pub fn spawn_update_check(
+    current_version: &'static str,
+) -> Option<Receiver<cleanr_tui::UpdateNotice>> {
+    spawn_check(move || check_for_update(current_version))
+}
+
+fn spawn_check(
+    check: impl FnOnce() -> Option<UpdateAvailable> + Send + 'static,
+) -> Option<Receiver<cleanr_tui::UpdateNotice>> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("cleanr-update-check".into())
+        .spawn(move || {
+            if let Some(update) = check() {
+                let _ = sender.send(cleanr_tui::UpdateNotice {
+                    version: update.version,
+                    release_url: update.release_url,
+                });
+            }
+        })
+        .ok()?;
+    Some(receiver)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateAvailable {
@@ -154,6 +179,31 @@ fn write_cache(path: &PathBuf, cache: &UpdateCache) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_check_returns_before_network_work_finishes() {
+        let (release, wait) = mpsc::sync_channel(0);
+        let receiver = spawn_check(move || {
+            wait.recv().expect("release background check");
+            Some(UpdateAvailable {
+                version: "1.0.0".into(),
+                release_url: "https://example.com/release".into(),
+            })
+        })
+        .expect("worker");
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        release.send(()).expect("worker is waiting independently");
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("notice")
+                .version,
+            "1.0.0"
+        );
+    }
 
     #[test]
     fn reports_only_newer_semantic_versions() {

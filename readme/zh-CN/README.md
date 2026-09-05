@@ -105,17 +105,6 @@ cleanr /path/to/project
 给出了授权。摘要与重扫校验保护通过 Cleanr 命令执行的已审阅计划，但不是约束具有
 其他文件操作工具的 Agent 的操作系统沙箱。
 
-## 版本和帮助
-
-分类筛选、跨筛选累积选择和 `Shift+A` 全局选择适用于 **0.15.0 及后续版本**。
-0.15.0 同时引入 `cleanr.restore.v2` 恢复记录，回退版本前请阅读兼容性说明。
-请结合 `cleanr --version` 和[更新记录](../../CHANGELOG.md)阅读。
-
-- [安全与恢复](https://drl990114.github.io/Cleanr/zh-Hans/docs/safety-and-recovery)
-- [故障排查](https://drl990114.github.io/Cleanr/zh-Hans/docs/troubleshooting)
-- [支持与反馈](../../SUPPORT.md) · [安全问题报告](../../SECURITY.md)
-- [发布准备与平台验证](https://drl990114.github.io/Cleanr/zh-Hans/docs/support-matrix)
-
 ## 致谢与许可证
 
 Cleanr 包含改编自 [Byron/dua-cli](https://github.com/Byron/dua-cli) 的代码，原项目由

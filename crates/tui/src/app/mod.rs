@@ -11,11 +11,12 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use cleanr_config::{Config, default_config_path, default_state_dir};
+#[cfg(test)]
+use cleanr_core::RecommendationPolicyError;
 use cleanr_core::{
     AnalysisReport, CandidateId, CleanupPlan, ExecutionManifest, ExecutionStatus,
-    GlobalScanEvidence, RecommendationPolicy, RecommendationPolicyError, RecommendationState,
-    SafetyPolicy, ScanBudgetExceeded, ScanEntry, ScanIssue, ScanRequest, ScanSummary,
-    UserSelection,
+    GlobalScanEvidence, RecommendationPolicy, RecommendationState, SafetyPolicy,
+    ScanBudgetExceeded, ScanEntry, ScanIssue, ScanRequest, ScanSummary, UserSelection,
 };
 use cleanr_fs::ScanOptions;
 use cleanr_i18n::I18n;
@@ -23,15 +24,14 @@ use cleanr_plugin_api::PluginDiagnostic;
 use cleanr_rules::RuleRegistry;
 #[cfg(test)]
 use cleanr_tasks::CleanupExecutor;
-use cleanr_tasks::{
-    build_workflow_analysis_from_parts, build_workflow_plan, restored_run_ids,
-    safety_policy_for_config,
-};
+#[cfg(test)]
+use cleanr_tasks::{build_workflow_analysis_from_parts, build_workflow_plan};
+use cleanr_tasks::{restored_run_ids, safety_policy_for_config};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::ListState;
 
 #[cfg(test)]
-use crate::effects::execute_cleanup;
+use crate::effects::{build_usage_projection, execute_cleanup};
 use crate::{
     commands::{
         ActionRequest, CleanupIntent, command_name_for_status, filtered_palette_commands,
@@ -40,8 +40,7 @@ use crate::{
     effects::{
         OperationEvent, OperationKind, PreparedPlanning, PreparedScan, ScanDiagnostics,
         ScanFailure, ScanPreparation, ScanSample, ScanStage, ScanTaskProgress, TaskEvent,
-        build_usage_projection, export_cleanup_plan, load_history, save_config, spawn_cleanup,
-        spawn_restore, spawn_scan,
+        export_cleanup_plan, save_config, spawn_cleanup, spawn_restore, spawn_scan,
     },
     theme::Theme,
     views::format_bytes,
@@ -62,7 +61,7 @@ pub(crate) enum ConfirmChoice {
     No,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum View {
     Home,
     Scan,
@@ -139,10 +138,14 @@ pub struct Workbench {
     pub(crate) view: View,
     pub(crate) palette_open: bool,
     pub(crate) help_open: bool,
+    pub(crate) help_scroll: u16,
+    pub(crate) help_max_scroll: u16,
     pub(crate) status: String,
+    pub(crate) update_notice: Option<crate::UpdateNotice>,
+    pub(crate) update_notice_rx: Option<Receiver<crate::UpdateNotice>>,
     /// Operation result restored after an automatic post-mutation refresh scan finishes.
     pub(crate) status_after_scan: Option<String>,
-    pub(crate) entries: Vec<ScanEntry>,
+    pub(crate) entries: Arc<Vec<ScanEntry>>,
     pub(crate) scan_summary: ScanSummary,
     pub(crate) scan_as_of: DateTime<Utc>,
     pub(crate) scan_issues: Vec<ScanIssue>,
@@ -150,15 +153,16 @@ pub struct Workbench {
     pub(crate) scan_explicit_roots: Vec<PathBuf>,
     pub(crate) scan_global_evidence: GlobalScanEvidence,
     pub(crate) scan_view: ScanViewState,
+    pub(crate) scan_data_revision: u64,
     pub(crate) candidate_count: usize,
     pub(crate) candidate_entry_indices: Vec<usize>,
     pub(crate) candidate_projection_entries_len: usize,
     /// One immutable report per completed scan. Candidate IDs remain stable while the user edits
     /// selection and rebuilds a plan.
-    pub(crate) analysis: Option<AnalysisReport>,
+    pub(crate) analysis: Option<Arc<AnalysisReport>>,
     pub(crate) candidate_ids_by_path: HashMap<PathBuf, CandidateId>,
     pub(crate) selection: UserSelection,
-    pub(crate) plan: Option<CleanupPlan>,
+    pub(crate) plan: Option<Arc<CleanupPlan>>,
     pub(crate) task_log: Vec<String>,
     /// Result of the latest cleanup completed in this process. Sizes come from the reviewed plan;
     /// persisted execution manifests intentionally remain backward-compatible.
@@ -179,8 +183,12 @@ pub struct Workbench {
     pub(crate) scan_diagnostics: Option<ScanDiagnostics>,
     pub(crate) frame_durations: DurationRecorder,
     pub(crate) input_durations: DurationRecorder,
+    pub(crate) input_to_frame_durations: DurationRecorder,
+    pub(crate) task_commit_durations: DurationRecorder,
     pub(crate) operation_rx: Option<Receiver<OperationEvent>>,
     pub(crate) operation_kind: Option<OperationKind>,
+    pub(crate) operation_sample_rx: Option<Receiver<cleanr_tasks::OperationProgress>>,
+    pub(crate) operation_progress: Option<cleanr_tasks::OperationProgress>,
     /// Stable, size-sorted indices used by the usage view. Keeping this outside the renderer
     /// avoids sorting the full scan result on every frame and every navigation key.
     pub(crate) usage_order: Vec<usize>,
@@ -191,8 +199,15 @@ pub struct Workbench {
     pub(crate) clean_waiting_for_confirmation: bool,
     pub(crate) restore_waiting_for_confirmation: Option<String>,
     pub(crate) confirm_choice: ConfirmChoice,
+    pub(crate) confirm_content_visible: bool,
     pub(crate) should_quit: bool,
     pub(crate) list_state: ListState,
+    pub(crate) saved_list_states: HashMap<View, ListState>,
+    pub(crate) usage_ready: bool,
+    pub(crate) usage_rx: Option<Receiver<crate::effects::UsageProjection>>,
+    pub(crate) plan_cancel: Option<Arc<AtomicBool>>,
+    pub(crate) plan_rx: Option<Receiver<crate::effects::PreparedPlan>>,
+    pub(crate) history_rx: Option<Receiver<crate::effects::HistoryResult>>,
     pub(crate) palette_state: ListState,
     pub(crate) count_buffer: String,
     pub(crate) pending_key: Option<char>,
@@ -209,3 +224,4 @@ mod core;
 mod input;
 mod navigation;
 mod tasks;
+mod view_controls;

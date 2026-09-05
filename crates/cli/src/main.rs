@@ -611,25 +611,22 @@ fn main() -> Result<()> {
         args.paths
     };
 
-    let update_available = if args.no_update_check {
+    let update_notice_rx = if args.no_update_check {
         None
     } else {
-        update::check_for_update(env!("CARGO_PKG_VERSION"))
-    }
-    .map(|update| cleanr_tui::UpdateNotice {
-        version: update.version,
-        release_url: update.release_url,
-    });
+        update::spawn_update_check(env!("CARGO_PKG_VERSION"))
+    };
 
     let _ = args.log_file;
-    cleanr_tui::run_with_config_path_and_inactivity_override(
+    cleanr_tui::run_with_services(
         cleanr_tui::TuiOptions {
             roots,
             config,
-            update_available,
+            update_available: None,
         },
         config_path,
         args.inactive_days,
+        cleanr_tui::TuiServices { update_notice_rx },
     )
 }
 

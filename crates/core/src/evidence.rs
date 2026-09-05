@@ -768,7 +768,32 @@ fn build_analysis_report_inner(
     policy: RecommendationPolicy,
     context: AnalysisScanContext<'_>,
 ) -> Result<AnalysisReport, RecommendationPolicyError> {
-    policy.validate()?;
+    crate::control::uninterrupted(build_analysis_report_with_scan_context_cancellable(
+        as_of,
+        completed_at,
+        scan_roots,
+        entries,
+        issues,
+        policy,
+        context,
+        &|| false,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_analysis_report_with_scan_context_cancellable(
+    as_of: DateTime<Utc>,
+    completed_at: DateTime<Utc>,
+    scan_roots: Vec<PathBuf>,
+    entries: &[ScanEntry],
+    issues: &[ScanIssue],
+    policy: RecommendationPolicy,
+    context: AnalysisScanContext<'_>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<AnalysisReport, crate::WorkError<RecommendationPolicyError>> {
+    use crate::control::{WorkError, check_work};
+    check_work(cancelled)?;
+    policy.validate().map_err(WorkError::Failed)?;
     let integrity = ReportIntegrity::from_scan(issues, context.budget_exceeded);
     let recommendation_context = RecommendationContext {
         scan_roots: &scan_roots,
@@ -780,10 +805,15 @@ fn build_analysis_report_inner(
     };
     let issue_scopes = IssueScopes::new(issues, !context.budget_exceeded.is_empty());
     let activity_by_path = activity_by_path(entries, as_of, &issue_scopes);
+    check_work(cancelled)?;
     let mut candidates = entries
         .iter()
         .filter(|entry| !entry.rule_hits.is_empty())
-        .map(|entry| {
+        .enumerate()
+        .map(|(index, entry)| {
+            if index % 256 == 0 {
+                check_work(cancelled)?;
+            }
             let coverage = issue_scopes.coverage(&entry.path);
             let rules = resolve_rules(&entry.rule_hits);
             let activity = activity_by_path
@@ -817,7 +847,7 @@ fn build_analysis_report_inner(
                 recommendation.initial_selected = false;
             }
             let runtime_guards = effective_runtime_guards(&rules);
-            CandidateEvidence {
+            Ok(CandidateEvidence {
                 id: CandidateId::new_random(),
                 local_path: entry.path.clone(),
                 kind: entry.kind,
@@ -830,9 +860,10 @@ fn build_analysis_report_inner(
                 rollback_method: "system-trash+manifest".to_string(),
                 known_global_location,
                 runtime_guards,
-            }
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, WorkError<RecommendationPolicyError>>>()?;
+    check_work(cancelled)?;
     candidates.sort_by(|left, right| left.local_path.cmp(&right.local_path));
     let mut report = AnalysisReport {
         schema_version: ANALYSIS_REPORT_SCHEMA_VERSION.to_string(),
@@ -849,8 +880,11 @@ fn build_analysis_report_inner(
         },
         candidates,
     };
+    check_work(cancelled)?;
     suppress_unrequested_global_candidates(&mut report, context.explicit_roots);
+    check_work(cancelled)?;
     resolve_overlaps(&mut report.candidates, &report.policy);
+    check_work(cancelled)?;
     Ok(report)
 }
 
@@ -1656,6 +1690,84 @@ mod tests {
             modified_at,
             rule_hits,
         }
+    }
+
+    #[test]
+    fn cancellable_evidence_and_plan_discard_partial_work() {
+        use std::cell::Cell;
+        let as_of = Utc::now();
+        let entries = (0..1024)
+            .map(|i| {
+                entry(
+                    &format!("/repo/cache-{i}"),
+                    Some(as_of - Duration::days(100)),
+                    vec![hit(Confidence::High, true, RuleTrust::Builtin)],
+                )
+            })
+            .collect::<Vec<_>>();
+        let checks = Cell::new(0);
+        let result = build_analysis_report_with_scan_context_cancellable(
+            as_of,
+            as_of,
+            vec!["/repo".into()],
+            &entries,
+            &[],
+            RecommendationPolicy::default(),
+            AnalysisScanContext::default(),
+            &|| {
+                checks.set(checks.get() + 1);
+                checks.get() >= 4
+            },
+        );
+        assert!(matches!(result, Err(crate::WorkError::Cancelled)));
+        assert_eq!(checks.get(), 4);
+        let report = build_analysis_report(
+            as_of,
+            as_of,
+            vec!["/repo".into()],
+            &entries,
+            &[],
+            RecommendationPolicy::default(),
+        )
+        .unwrap();
+        let selection = UserSelection::from_recommendations(&report);
+        let safety = SafetyPolicy::new(vec![], true);
+        checks.set(0);
+        let result = crate::build_cleanup_plan_from_analysis_cancellable(
+            vec!["/repo".into()],
+            vec![],
+            &entries,
+            &report,
+            &selection,
+            &safety,
+            &|| {
+                checks.set(checks.get() + 1);
+                checks.get() >= 4
+            },
+        );
+        assert!(matches!(result, Err(crate::WorkError::Cancelled)));
+        let normal = crate::build_cleanup_plan_from_analysis(
+            vec!["/repo".into()],
+            vec![],
+            &entries,
+            &report,
+            &selection,
+            &safety,
+        )
+        .unwrap();
+        let cancellable = crate::build_cleanup_plan_from_analysis_cancellable(
+            vec!["/repo".into()],
+            vec![],
+            &entries,
+            &report,
+            &selection,
+            &safety,
+            &|| false,
+        )
+        .unwrap();
+        assert_eq!(normal.items, cancellable.items);
+        assert_eq!(normal.summary, cancellable.summary);
+        assert_eq!(normal.safety, cancellable.safety);
     }
 
     #[test]

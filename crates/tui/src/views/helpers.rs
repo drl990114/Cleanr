@@ -4,7 +4,7 @@ use super::*;
 // Helpers
 // -------------------------------------------------------------------------
 pub(crate) fn detail_line(
-    label: &'static str,
+    label: &str,
     value: String,
     value_color: Color,
     theme: Theme,

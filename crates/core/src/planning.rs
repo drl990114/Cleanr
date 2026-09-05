@@ -113,13 +113,38 @@ pub fn build_cleanup_plan_from_analysis(
     selection: &UserSelection,
     policy: &SafetyPolicy,
 ) -> Result<CleanupPlan, CleanupPlanBuildError> {
+    crate::control::uninterrupted(build_cleanup_plan_from_analysis_cancellable(
+        scan_roots,
+        ruleset_versions,
+        entries,
+        analysis,
+        selection,
+        policy,
+        &|| false,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_cleanup_plan_from_analysis_cancellable(
+    scan_roots: Vec<PathBuf>,
+    ruleset_versions: Vec<RulesetVersion>,
+    entries: &[ScanEntry],
+    analysis: &AnalysisReport,
+    selection: &UserSelection,
+    policy: &SafetyPolicy,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<CleanupPlan, crate::WorkError<CleanupPlanBuildError>> {
+    use crate::control::{WorkError, check_work};
+    check_work(cancelled)?;
     if analysis.schema_version != ANALYSIS_REPORT_SCHEMA_VERSION {
-        return Err(CleanupPlanBuildError::UnsupportedAnalysisSchema {
-            found: analysis.schema_version.clone(),
-        });
+        return Err(WorkError::Failed(
+            CleanupPlanBuildError::UnsupportedAnalysisSchema {
+                found: analysis.schema_version.clone(),
+            },
+        ));
     }
     if !analysis.scan.budget_exceeded.is_empty() {
-        return Err(CleanupPlanBuildError::ScanBudgetExceeded);
+        return Err(WorkError::Failed(CleanupPlanBuildError::ScanBudgetExceeded));
     }
     let mut selected_candidates = analysis
         .candidates
@@ -140,21 +165,29 @@ pub fn build_cleanup_plan_from_analysis(
             .then_with(|| left.local_path.cmp(&right.local_path))
     });
     let mut selected_by_path = HashMap::<&Path, &CandidateEvidence>::new();
-    for candidate in selected_candidates {
+    check_work(cancelled)?;
+    for (index, candidate) in selected_candidates.into_iter().enumerate() {
+        if index % 256 == 0 {
+            check_work(cancelled)?;
+        }
         if let Some(ancestor) = candidate
             .local_path
             .ancestors()
             .find_map(|path| selected_by_path.get(path).copied())
         {
-            return Err(CleanupPlanBuildError::OverlappingSelection {
-                left: ancestor.local_path.clone(),
-                right: candidate.local_path.clone(),
-            });
+            return Err(WorkError::Failed(
+                CleanupPlanBuildError::OverlappingSelection {
+                    left: ancestor.local_path.clone(),
+                    right: candidate.local_path.clone(),
+                },
+            ));
         }
         selected_by_path.insert(candidate.local_path.as_path(), candidate);
     }
     let normalized_scan_roots = normalize_protected_paths(scan_roots.clone());
+    check_work(cancelled)?;
     let tree_fingerprints = tree_fingerprints(entries);
+    check_work(cancelled)?;
     let entries_by_path = entries
         .iter()
         .map(|entry| (entry.path.as_path(), entry))
@@ -162,7 +195,11 @@ pub fn build_cleanup_plan_from_analysis(
     let items = analysis
         .candidates
         .iter()
-        .filter_map(|candidate| {
+        .enumerate()
+        .filter_map(|(index, candidate)| {
+            if index % 256 == 0 && cancelled() {
+                return Some(Err(WorkError::Cancelled));
+            }
             if matches!(
                 candidate.recommendation.state,
                 RecommendationState::Suppressed | RecommendationState::Excluded
@@ -201,7 +238,7 @@ pub fn build_cleanup_plan_from_analysis(
             let modified_at = entries_by_path
                 .get(candidate.local_path.as_path())
                 .and_then(|entry| entry.modified_at);
-            Some(CleanupItem {
+            Some(Ok(CleanupItem {
                 path: candidate.local_path.clone(),
                 kind: candidate.kind,
                 size_bytes: candidate.size_bytes,
@@ -230,9 +267,9 @@ pub fn build_cleanup_plan_from_analysis(
                 selected,
                 planned_action: PlannedAction::Trash,
                 rollback_method: candidate.rollback_method.clone(),
-            })
+            }))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, WorkError<CleanupPlanBuildError>>>()?;
 
     let source_scan = CleanupPlanSourceScan {
         analysis_id: analysis.analysis_id.clone(),
@@ -241,13 +278,16 @@ pub fn build_cleanup_plan_from_analysis(
         recommendation_policy: Some(analysis.policy.clone()),
         scope: None,
     };
-    Ok(finish_cleanup_plan(
+    check_work(cancelled)?;
+    let plan = finish_cleanup_plan(
         scan_roots,
         ruleset_versions,
         remove_overlapping_items(items),
         policy,
         Some(source_scan),
-    ))
+    );
+    check_work(cancelled)?;
+    Ok(plan)
 }
 
 fn finish_cleanup_plan(

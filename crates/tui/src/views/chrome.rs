@@ -7,6 +7,11 @@ pub(crate) fn render_command(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(app.theme.border))
         .padding(Padding::horizontal(1));
+    let block = if app.scan_view.search_open {
+        block.title(app.i18n.t("scan_search_title"))
+    } else {
+        block
+    };
     let inner = block.inner(content_area);
     let mut cursor_column = None;
     let content = match app.mode {
@@ -59,6 +64,7 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
     let mut right = Vec::new();
     if let Some(plan) = &app.plan
         && !app.is_scan_running()
+        && app.view == View::Home
     {
         right.extend([
             Span::styled(
@@ -144,45 +150,36 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
                     hint_budget,
                 );
             } else if app.view == View::Scan {
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("f", app.i18n.t("hint_filter"), app.theme),
-                    hint_budget,
-                );
-                if app.plan.is_some() {
-                    push_hint_if_fits(
-                        &mut hints,
-                        key_hint("a", app.i18n.t("hint_all_filtered"), app.theme),
-                        hint_budget,
-                    );
-                    push_hint_if_fits(
-                        &mut hints,
-                        key_hint("A", app.i18n.t("hint_all_global"), app.theme),
-                        hint_budget,
-                    );
-                    push_hint_if_fits(
-                        &mut hints,
-                        key_hint("c", app.i18n.t("hint_clean"), app.theme),
-                        hint_budget,
-                    );
-                    if list_len > 0 {
-                        push_hint_if_fits(
-                            &mut hints,
-                            key_hint("space", app.i18n.t("hint_select"), app.theme),
-                            hint_budget,
-                        );
+                let hints_for_scan = if app.scan_view.details_focused {
+                    vec![("↑↓", "hint_move"), ("Tab/Esc", "hint_close")]
+                } else {
+                    let mut keys = Vec::new();
+                    if app.plan.is_some() && !app.has_background_task() {
+                        if list_len > 0 {
+                            keys.push(("space", "hint_select"));
+                        }
+                        keys.push(("c", "hint_clean"));
                     }
+                    keys.extend([
+                        ("Tab", "label_details"),
+                        ("?", "hint_help"),
+                        ("p", "hint_find_path"),
+                        ("f", "hint_filter"),
+                        ("o", "hint_sort"),
+                        ("v", "scan_selected_only"),
+                    ]);
+                    if app.plan.is_some() && !app.has_background_task() {
+                        keys.extend([("a", "hint_all_filtered"), ("A", "hint_all_global")]);
+                    }
+                    keys
+                };
+                for (key, label) in hints_for_scan {
+                    push_hint_if_fits(
+                        &mut hints,
+                        key_hint(key, app.i18n.t(label), app.theme),
+                        hint_budget,
+                    );
                 }
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("?", app.i18n.t("hint_help"), app.theme),
-                    hint_budget,
-                );
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("/", app.i18n.t("hint_commands"), app.theme),
-                    hint_budget,
-                );
             } else if list_len > 0 {
                 push_hint_if_fits(
                     &mut hints,
@@ -333,7 +330,7 @@ pub(crate) fn render_palette(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
     frame.render_stateful_widget(list, area, &mut app.palette_state);
 }
 
-pub(crate) fn render_help(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
+pub(crate) fn render_help(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench) {
     frame.render_widget(Clear, area);
     let lines = vec![
         Line::from(vec![Span::styled(
@@ -347,6 +344,9 @@ pub(crate) fn render_help(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
         Line::from(app.i18n.t("help_select_all")),
         Line::from(app.i18n.t("help_select_global")),
         Line::from(app.i18n.t("help_categories")),
+        Line::from(app.i18n.t("help_query_sort")),
+        Line::from(app.i18n.t("help_details")),
+        Line::from(app.i18n.t("help_restore_result")),
         Line::from(app.i18n.t("help_toggle")),
         Line::from(app.i18n.t("help_actions")),
         Line::from(app.i18n.t("help_command")),
@@ -358,7 +358,7 @@ pub(crate) fn render_help(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
         Line::from(app.i18n.t("help_confirm_no")),
         Line::from(app.i18n.t("help_quit")),
     ];
-    let paragraph = Paragraph::new(lines).block(
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
@@ -372,10 +372,17 @@ pub(crate) fn render_help(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
                     .add_modifier(Modifier::BOLD),
             ),
     );
-    frame.render_widget(paragraph, area);
+    app.help_max_scroll = u16::try_from(
+        paragraph
+            .line_count(area.width)
+            .saturating_sub(area.height as usize),
+    )
+    .unwrap_or(u16::MAX);
+    app.help_scroll = app.help_scroll.min(app.help_max_scroll);
+    frame.render_widget(paragraph.scroll((app.help_scroll, 0)), area);
 }
 
-pub(crate) fn render_confirm(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
+pub(crate) fn render_confirm(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench) {
     frame.render_widget(Clear, area);
     let restoring = app.restore_waiting_for_confirmation.is_some();
     let (title, body, action_color) = if restoring {
@@ -436,6 +443,15 @@ pub(crate) fn render_confirm(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
     ])
     .split(inner);
     let mut body_lines = vec![Line::from(body)];
+    if !restoring {
+        if app.scan_view.selected_review_count > 0 {
+            body_lines.push(Line::from(app.i18n.format(
+                "confirm_review_count",
+                &[("count", app.scan_view.selected_review_count.to_string())],
+            )));
+        }
+        body_lines.push(Line::from(app.i18n.t("confirm_review_selected")));
+    }
     if !restoring && app.scan_view.hidden_selected_count > 0 {
         body_lines.push(Line::from(Span::styled(
             app.i18n.format(
@@ -448,12 +464,22 @@ pub(crate) fn render_confirm(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
             Style::default().fg(app.theme.warn),
         )));
     }
-    frame.render_widget(
-        Paragraph::new(body_lines)
-            .wrap(Wrap { trim: true })
-            .alignment(ratatui::layout::Alignment::Center),
-        rows[0],
-    );
+    let body_paragraph = Paragraph::new(body_lines)
+        .wrap(Wrap { trim: true })
+        .alignment(ratatui::layout::Alignment::Center);
+    app.confirm_content_visible = rows[0].width >= 20
+        && rows[1].height == 1
+        && body_paragraph.line_count(rows[0].width) <= rows[0].height as usize;
+    if app.confirm_content_visible {
+        frame.render_widget(body_paragraph, rows[0]);
+    } else {
+        frame.render_widget(
+            Paragraph::new(app.i18n.t("confirm_resize"))
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(app.theme.warn)),
+            rows[0],
+        );
+    }
     let buttons = Line::from(vec![
         confirm_button(
             "Y",

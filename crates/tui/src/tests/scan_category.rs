@@ -1,26 +1,28 @@
 use super::*;
 use crate::app::CategoryKey;
 
-fn category_app(root: PathBuf, categories: &[&str]) -> Workbench {
+pub(super) fn category_app(root: PathBuf, categories: &[&str]) -> Workbench {
     let mut app = app(root.clone());
     app.config.cleanup.require_confirm = true;
-    app.entries = categories
-        .iter()
-        .enumerate()
-        .map(|(index, category)| {
-            let mut hit = test_rule_hit(&format!("category-{index}"));
-            hit.label = format!("Cache rule {index}");
-            hit.category = (*category).into();
-            hit.default_selected = false;
-            ScanEntry {
-                path: root.join(format!("cache-{index:05}")),
-                kind: EntryKind::File,
-                size_bytes: (index as u64 + 1) * 1024,
-                modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
-                rule_hits: vec![hit],
-            }
-        })
-        .collect();
+    app.entries = Arc::new(
+        categories
+            .iter()
+            .enumerate()
+            .map(|(index, category)| {
+                let mut hit = test_rule_hit(&format!("category-{index}"));
+                hit.label = format!("Cache rule {index}");
+                hit.category = (*category).into();
+                hit.default_selected = false;
+                ScanEntry {
+                    path: root.join(format!("cache-{index:05}")),
+                    kind: EntryKind::File,
+                    size_bytes: (index as u64 + 1) * 1024,
+                    modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
+                    rule_hits: vec![hit],
+                }
+            })
+            .collect(),
+    );
     app.build_plan();
     app.view = View::Scan;
     app.ensure_scan_view_projection();
@@ -52,6 +54,7 @@ fn filter_category(app: &mut Workbench, category: Option<&str>) {
     }
     app.handle_key(key(KeyCode::Enter));
     assert!(!app.scan_view.filter_open);
+    settle_projection(app);
     assert_eq!(
         app.scan_view.filter,
         category.map(|category| CategoryKey::Named(category.into()))
@@ -299,6 +302,13 @@ fn scan_category_nine_labels_remain_visible_with_size_in_both_languages_and_them
                 );
                 assert!(screen.contains("1.00 KiB"), "{screen}");
                 assert!(screen.contains("[ ]"), "{screen}");
+                app.handle_key(key(KeyCode::Tab));
+                let screen = render_text(&mut app, 72, 26);
+                let compact = screen
+                    .chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .collect::<String>();
+                assert!(app.scan_view.details_focused);
                 assert!(
                     compact.contains(category),
                     "raw category is absent from details:\n{screen}"
@@ -391,8 +401,22 @@ fn scan_category_hidden_selection_remains_visible_and_is_included_in_confirmatio
         app.handle_key(key(KeyCode::Char('c')));
         assert!(app.clean_waiting_for_confirmation);
         assert_eq!(app.confirm_choice, ConfirmChoice::No);
-        for (width, height) in [(40, 10), (60, 24), (120, 24)] {
+        for (width, height) in [(40, 6), (60, 24), (120, 24)] {
             let screen = render_text(&mut app, width, height);
+            if width == 40 {
+                assert!(!app.confirm_content_visible);
+                assert!(
+                    compact(&screen).contains(&compact(&app.i18n.t("confirm_resize")[..6])),
+                    "{screen}"
+                );
+                app.handle_key(key(KeyCode::Char('y')));
+                app.handle_key(key(KeyCode::Enter));
+                assert!(app.clean_waiting_for_confirmation);
+                assert!(!app.is_operation_running());
+                app.handle_key(key(KeyCode::Char('n')));
+                continue;
+            }
+            assert!(app.confirm_content_visible, "{screen}");
             assert!(
                 compact(&screen).contains(&compact(&expected_confirm)),
                 "{screen}"
@@ -435,7 +459,7 @@ fn scan_category_plugin_names_and_conflicting_categories_are_explained_in_detail
     conflict.rule_id = "conflicting-cache".into();
     conflict.label = "Conflicting log rule".into();
     conflict.category = "logs".into();
-    app.entries[0].rule_hits.push(conflict);
+    Arc::make_mut(&mut app.entries)[0].rule_hits.push(conflict);
     app.analysis = None;
     app.plan = None;
     app.build_plan();
@@ -450,4 +474,13 @@ fn scan_category_plugin_names_and_conflicting_categories_are_explained_in_detail
     assert_eq!(app.scan_view.groups[0].key, CategoryKey::Multiple);
     assert_eq!(app.scan_view.groups[0].count, 1);
     assert_eq!(app.scan_view.groups[0].size_bytes, 1024);
+}
+
+pub(super) fn settle_projection(app: &mut Workbench) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.scan_projection_pending() {
+        assert!(Instant::now() < deadline, "projection must complete");
+        app.poll_tasks();
+        thread::sleep(Duration::from_millis(1));
+    }
 }

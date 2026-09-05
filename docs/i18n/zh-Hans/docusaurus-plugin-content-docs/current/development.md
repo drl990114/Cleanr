@@ -82,6 +82,28 @@ cargo test -p cleanr-tui --locked \
   scan_view_render_performance -- --ignored --nocapture
 ```
 
+候选基准会断言年龄策略应用后仍有预期数量的可见行；空计划的绘制结果不能用作大列表
+性能证据。测量按键处理加绘制延迟，以及重复切换的快照保留情况：
+
+```bash
+CLEANR_BENCH_CANDIDATES=100000 \
+cargo test -p cleanr-tui --locked interaction_performance_large_snapshots -- \
+  --ignored --nocapture
+```
+
+该测试在预热后的 120×40 `TestBackend` 上测量导航、单项选择和确认，再进行 20 次
+查询与视图切换。50 毫秒 P95 是本地开发目标。`rss_start/end/peak_kib` 是采样驻留内存；
+请对输出中的测试可执行文件直接使用 `/usr/bin/time -l`，测量不含编译器内存的进程
+峰值 RSS。测试保留一个共享计划和扫描索引，数据不代表终端绘制、操作系统输入队列或
+其他平台。实际终端可运行忽略的 `interactive_terminal_fixture` 测试，它只创建临时
+测试数据，按 `q` 退出，不应在 CI 中运行。
+
+`/tasks` 的本地诊断面板分别显示按键处理、绘制、读取输入至帧完成、后台结果提交的
+最近 128 次 P95 和最大耗时。输入计时从 Crossterm 读取事件开始，包含等待前一批导航
+帧的时间，不包含仍在操作系统队列中的等待。空闲视图不重绘，活跃任务每 80 毫秒唤醒
+动画。取消请求立即反馈，规则、证据和计划阶段的工作线程采用协作取消。
+
+
 ## 本地运行文档站点
 
 ```bash

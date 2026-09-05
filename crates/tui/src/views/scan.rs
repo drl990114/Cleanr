@@ -29,6 +29,7 @@ pub(crate) fn render_scan_workspace(frame: &mut Frame<'_>, area: Rect, app: &mut
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(result_height),
+            Constraint::Length(if workspace.width < 64 { 2 } else { 1 }),
             Constraint::Fill(1),
             Constraint::Length(selection_height),
         ])
@@ -36,6 +37,35 @@ pub(crate) fn render_scan_workspace(frame: &mut Frame<'_>, area: Rect, app: &mut
     if result_height > 0 {
         render_cleanup_result(frame, rows[0], app);
     }
+    let days = app.analysis.as_ref().map_or_else(
+        || app.effective_inactive_days(None),
+        |a| a.policy.preselect_after_days,
+    );
+    let scope = app.i18n.format(
+        if days == 0 {
+            "scan_scope_all_ages"
+        } else {
+            "scan_scope_age"
+        },
+        &[
+            (
+                "scope",
+                compact_path_for_width(
+                    &app.roots.first().cloned().unwrap_or_default(),
+                    &[],
+                    usize::from(workspace.width.saturating_sub(28)),
+                ),
+            ),
+            ("days", days.to_string()),
+            ("roots", app.roots.len().to_string()),
+        ],
+    );
+    frame.render_widget(
+        Paragraph::new(scope)
+            .style(Style::default().fg(app.theme.fg_dim))
+            .wrap(Wrap { trim: true }),
+        rows[1],
+    );
     let has_candidates = app.plan.as_ref().map_or_else(
         || app.candidate_count_cached() > 0,
         |plan| plan.summary.candidate_count > 0,
@@ -48,11 +78,20 @@ pub(crate) fn render_scan_workspace(frame: &mut Frame<'_>, area: Rect, app: &mut
         app.viewport_height = 1;
         return;
     }
-    let columns = responsive_workspace(rows[1], 62);
-
-    render_candidates(frame, columns[0], app, wide);
-    render_preview(frame, columns[1], app);
-    render_scan_selection(frame, rows[2], app);
+    // The details overlay must cover the selection footer in narrow terminals.
+    render_scan_selection(frame, rows[3], app);
+    if wide {
+        let columns = responsive_workspace(rows[2], 62);
+        render_candidates(frame, columns[0], app, true);
+        render_preview(frame, columns[1], app);
+    } else {
+        render_candidates(frame, rows[2], app, false);
+        if app.scan_view.details_focused {
+            let popup = centered_bounded_rect(area, area.width, area.height.saturating_sub(2), 88);
+            frame.render_widget(Clear, popup);
+            render_preview(frame, popup, app);
+        }
+    }
 }
 
 fn render_scan_selection(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
@@ -346,9 +385,24 @@ pub(crate) fn render_candidates(
             ("total", app.scan_total_count().to_string()),
         ],
     );
-    let filter_text = app
+    let mut filter_text = app
         .i18n
         .format("scan_filter_active", &[("category", filter_label)]);
+    if !app.scan_view.query.is_empty() {
+        filter_text.push_str(&format!("  [p] {}", app.scan_view.query));
+    }
+    if app.scan_view.only_selected {
+        filter_text.push_str(&format!("  [v] {}", app.i18n.t("scan_selected_only")));
+    }
+    if app.scan_view.sort != crate::projection::ScanSort::Plan {
+        filter_text.push_str(&format!(
+            "  [o] {}",
+            app.i18n.t(app.scan_view.sort.label_key())
+        ));
+    }
+    if app.scan_projection_pending() {
+        filter_text = app.i18n.t("scan_filter_processing");
+    }
     let inline_filter =
         display_width(&heading) + display_width(&filter_text) + 6 <= area.width as usize;
     let area = if inline_filter {
@@ -430,7 +484,7 @@ pub(crate) fn render_candidates(
     }
     if item_count == 0 {
         frame.render_widget(
-            Paragraph::new(app.i18n.t("scan_filter_empty"))
+            Paragraph::new(scan_empty_text(app))
                 .style(Style::default().fg(app.theme.fg_dim))
                 .wrap(Wrap { trim: true })
                 .block(list_block),
@@ -522,10 +576,8 @@ fn confidence_label(confidence: Confidence) -> &'static str {
     }
 }
 
-pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
+pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench) {
     let mut lines: Vec<Line> = Vec::new();
-    let path_label = app.i18n.t("detail_path");
-    let path_width = (area.width as usize).saturating_sub(4 + display_width(&path_label));
 
     if let Some(row) = app.selected_scan_row() {
         lines.push(preview_field(
@@ -551,20 +603,45 @@ pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
             .as_ref()
             .and_then(|plan| plan.items.get(row.source_index))
         {
-            lines.push(preview_field(
-                app.i18n.t("detail_path"),
-                truncate_text(&item.path.display().to_string(), path_width),
-                app.theme.fg,
-                app.theme,
-            ));
             lines.push(Line::from(Span::styled(
                 format!(
                     "{}  ·  {}",
                     format_bytes(item.size_bytes),
-                    confidence_label(item.confidence)
+                    app.i18n
+                        .t(&format!("confidence_{}", confidence_label(item.confidence)))
                 ),
                 Style::default().fg(confidence_color(item.confidence, app.theme)),
             )));
+            lines.push(preview_field(
+                app.i18n.t("detail_recommendation"),
+                item.evidence.as_ref().map_or_else(
+                    || "—".into(),
+                    |evidence| {
+                        app.i18n
+                            .t(&format!("recommendation_{}", evidence.recommendation_state))
+                    },
+                ),
+                app.theme.fg,
+                app.theme,
+            ));
+            lines.push(Line::from(Span::styled(
+                app.i18n.t(if item.selected {
+                    "state_selected"
+                } else {
+                    "state_deselected"
+                }),
+                Style::default().fg(if item.selected {
+                    app.theme.ok
+                } else {
+                    app.theme.fg_dim
+                }),
+            )));
+            lines.push(preview_field(
+                app.i18n.t("detail_risk"),
+                preview_rule_text(item, |rule| &rule.risk_note, &item.risk_note),
+                app.theme.warn,
+                app.theme,
+            ));
             lines.push(preview_field(
                 app.i18n.t("detail_rule"),
                 preview_rule_text(item, |rule| &rule.label, &item.rule_id),
@@ -578,15 +655,15 @@ pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
                 app.theme,
             ));
             lines.push(preview_field(
-                app.i18n.t("detail_risk"),
-                preview_rule_text(item, |rule| &rule.risk_note, &item.risk_note),
-                app.theme.warn,
+                app.i18n.t("detail_path"),
+                item.path.display().to_string(),
+                app.theme.fg,
                 app.theme,
             ));
         } else if let Some(entry) = app.entries.get(row.source_index) {
             lines.push(preview_field(
                 app.i18n.t("detail_path"),
-                truncate_text(&entry.path.display().to_string(), path_width),
+                entry.path.display().to_string(),
                 app.theme.fg,
                 app.theme,
             ));
@@ -612,23 +689,130 @@ pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
     } else if app.scan_total_count() > 0 {
         lines.push(Line::from(app.i18n.t("scan_filter_empty")));
     } else {
-        lines.push(Line::from(app.i18n.t("plan_empty")));
-        lines.push(Line::from(app.i18n.t("plan_empty_hint")));
+        lines.push(Line::from(scan_empty_text(app)));
     }
 
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
         Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(app.theme.border))
+            .style(Style::default().bg(app.theme.bg).fg(app.theme.fg))
+            .borders(if app.scan_view.details_focused {
+                Borders::ALL
+            } else {
+                Borders::TOP
+            })
+            .border_style(Style::default().fg(if app.scan_view.details_focused {
+                app.theme.accent
+            } else {
+                app.theme.border
+            }))
             .padding(Padding::horizontal(1))
-            .title(format!(" {} ", app.i18n.t("label_details")))
+            .title(format!(" {} [Tab] ", app.i18n.t("label_details")))
             .title_style(
                 Style::default()
                     .fg(app.theme.accent)
                     .add_modifier(Modifier::BOLD),
             ),
     );
-    frame.render_widget(paragraph, area);
+    app.scan_view.details_max_scroll = u16::try_from(
+        paragraph
+            .line_count(area.width)
+            .saturating_sub(area.height as usize),
+    )
+    .unwrap_or(u16::MAX);
+    app.scan_view.details_scroll = app
+        .scan_view
+        .details_scroll
+        .min(app.scan_view.details_max_scroll);
+    frame.render_widget(paragraph.scroll((app.scan_view.details_scroll, 0)), area);
+}
+
+pub(crate) fn scan_empty_text(app: &Workbench) -> String {
+    if app.scan_projection_pending() {
+        return app.i18n.t("scan_filter_processing");
+    }
+    if app.scan_total_count() > 0 {
+        return app.i18n.t("scan_query_empty");
+    }
+    if app.scan_is_budget_limited() || (app.plan.is_none() && !app.entries.is_empty()) {
+        return app.i18n.t("scan_read_only");
+    }
+    if let Some(analysis) = &app.analysis {
+        if app.scan_view.age_excluded_candidates {
+            return app.i18n.format(
+                "scan_age_empty",
+                &[("days", analysis.policy.preselect_after_days.to_string())],
+            );
+        }
+        return app.i18n.t("scan_candidates_empty");
+    }
+    app.i18n.t("plan_empty_hint")
+}
+
+pub(crate) fn render_operation_progress(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
+    let content = fluid_content_rect(area, 100, 8);
+    let (phase, completed, total, path) = if let Some(progress) = &app.operation_progress {
+        let key = match progress.phase {
+            cleanr_tasks::OperationPhase::Validating => "operation_validating",
+            cleanr_tasks::OperationPhase::Trashing => "operation_trashing",
+            cleanr_tasks::OperationPhase::Restoring => "operation_restoring",
+        };
+        (
+            key,
+            progress.completed,
+            progress.total,
+            progress.current_path.as_ref(),
+        )
+    } else {
+        (
+            "operation_validating",
+            0,
+            app.plan.as_ref().map_or(0, |p| p.summary.selected_count),
+            None,
+        )
+    };
+    let mut lines = vec![
+        home_title(app.i18n.t(phase), app.theme),
+        Line::from(app.i18n.format(
+            "operation_count",
+            &[
+                ("done", completed.to_string()),
+                ("total", total.to_string()),
+            ],
+        )),
+        Line::from(""),
+    ];
+    if let Some(path) = path {
+        lines.push(Line::from(compact_path_for_width(
+            path,
+            &app.roots,
+            content.width as usize,
+        )));
+    }
+    lines.push(Line::from(app.i18n.t("operation_selection_frozen")));
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), content);
+}
+
+pub(crate) fn render_scan_sort(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench) {
+    frame.render_widget(Clear, area);
+    let items = crate::projection::ScanSort::ALL
+        .iter()
+        .map(|sort| ListItem::new(app.i18n.t(sort.label_key())))
+        .collect::<Vec<_>>();
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .style(Style::default().bg(app.theme.surface))
+                .title(app.i18n.t("scan_sort_title")),
+        )
+        .highlight_symbol("› ")
+        .highlight_style(
+            Style::default()
+                .fg(app.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+    frame.render_stateful_widget(list, area, &mut app.scan_view.sort_state);
 }
 
 fn category_detail(category: &CandidateCategory, app: &Workbench) -> String {

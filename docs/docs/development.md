@@ -93,6 +93,33 @@ cargo test -p cleanr-tui --locked \
   scan_view_render_performance -- --ignored --nocapture
 ```
 
+The candidate fixture asserts that the inactivity policy leaves the requested
+number of rows visible; a benchmark over an empty plan is invalid. For handler
+plus draw latency and repeated-view retention, run:
+
+```bash
+CLEANR_BENCH_CANDIDATES=100000 \
+cargo test -p cleanr-tui --locked interaction_performance_large_snapshots -- \
+  --ignored --nocapture
+```
+
+This measures navigation, single selection, and confirmation against a warmed
+120×40 `TestBackend` and then performs 20 query/view changes. Its 50 ms local
+P95 guard is a development target. `rss_start/end/peak_kib` are sampled residency;
+use `/usr/bin/time -l` on the printed test executable to measure process peak
+RSS without compiler memory. It retains one shared plan and scan index. TestBackend
+results do not measure terminal painting, OS input queues, or other platforms.
+For real terminal smoke checks with generated temporary data, use the ignored
+`interactive_terminal_fixture` test and exit with `q`; do not run it in CI.
+
+In `/tasks`, the local diagnostic panel separately reports key handling, draw,
+input-read-to-frame completion, and task-result commit P95/max durations over
+the latest 128 samples. Input timing begins when Crossterm reads the event,
+including the wait behind a batched-navigation frame, but excludes input still
+queued by the OS. Idle views do not redraw; active task animation wakes at
+80 ms. Cancellation feedback is immediate, while worker cancellation remains
+cooperative during rules, evidence, and planning.
+
 ## Run the documentation site
 
 ```bash

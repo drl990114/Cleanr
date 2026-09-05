@@ -16,8 +16,9 @@ use cleanr_core::{
 
 use crate::{
     CleanupAuthorization, CleanupExecutor, FakeRestoreExecutor, FakeTrashExecutor,
-    ManifestRepository, RestoreExecutor, execute_cleanup_plan, restore_execution_manifest,
-    restored_run_ids,
+    ManifestRepository, OperationPhase, RestoreExecutor, execute_cleanup_plan,
+    execute_locally_confirmed_plan_with_progress, restore_execution_manifest,
+    restore_execution_manifest_with_progress, restored_run_ids,
     tests::{cleanup_entry, restorable_manifest},
 };
 
@@ -220,13 +221,16 @@ fn successful_cleanup_with_failed_journal_write_preserves_pending_and_locator_er
             locator: Some("test-recovery-locator".to_string()),
         })
     });
-    let error = execute_cleanup_plan(
-        &plan,
-        &executor,
-        &state,
-        Some(&CleanupAuthorization::explicit_user_confirmation()),
-    )
-    .expect_err("write fails");
+    let mut samples = Vec::new();
+    let error =
+        execute_locally_confirmed_plan_with_progress(&plan, &executor, &state, &mut |sample| {
+            samples.push(sample)
+        })
+        .expect_err("write fails");
+    assert!(
+        samples.iter().all(|sample| sample.completed == 0),
+        "unrecorded outcomes must not advance progress"
+    );
     assert!(error.to_string().contains("test-recovery-locator"));
     assert_eq!(calls.get(), 1);
     assert_eq!(
@@ -454,4 +458,47 @@ fn system_trash_round_trip_records_receipt() {
         fs::read(target.join("artifact.bin")).expect("restored contents"),
         b"platform acceptance"
     );
+}
+
+#[test]
+fn operation_progress_never_precedes_durable_cleanup_or_restore_outcomes() {
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join("cache");
+    fs::write(&target, b"cache").unwrap();
+    let state = temp.path().join("state");
+    let plan = build_cleanup_plan(
+        vec![temp.path().into()],
+        vec![],
+        &[cleanup_entry(target.clone(), EntryKind::File, 5)],
+    );
+    let fake = FakeTrashExecutor::default();
+    let mut phases = Vec::new();
+    let manifest =
+        execute_locally_confirmed_plan_with_progress(&plan, &fake, &state, &mut |sample| {
+            phases.push(sample.phase);
+            if sample.completed > 0 {
+                let history = ManifestRepository::new(&state).list_executions().unwrap();
+                assert_eq!(history[0].summary.succeeded, sample.completed);
+            }
+        })
+        .unwrap();
+    assert_eq!(phases[0], OperationPhase::Validating);
+    assert_eq!(phases.last(), Some(&OperationPhase::Trashing));
+    assert_eq!(fs::read(&target).unwrap(), b"cache", "fake cleanup only");
+    let restore = FakeRestoreExecutor::default();
+    let mut completed = 0;
+    let restored =
+        restore_execution_manifest_with_progress(&manifest, &restore, &state, &mut |sample| {
+            completed = sample.completed;
+            if completed > 0 {
+                let history = ManifestRepository::new(&state).list_restores().unwrap();
+                assert_eq!(
+                    history[0].summary.succeeded + history[0].summary.failed,
+                    completed
+                );
+            }
+        })
+        .unwrap();
+    assert_eq!(completed, 1);
+    assert_eq!(restored.summary.succeeded + restored.summary.failed, 1);
 }

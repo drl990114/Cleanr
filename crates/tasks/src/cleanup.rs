@@ -15,7 +15,7 @@ use cleanr_core::{
 use uuid::Uuid;
 
 use crate::{
-    ManifestRepository,
+    ManifestRepository, OperationPhase, OperationProgress,
     platform::{absolute_path, trash_with_receipt},
     runtime::{validate_current_runtime_guards, validate_plan_current_runtime_guards},
 };
@@ -86,8 +86,24 @@ pub(crate) fn execute_cleanup_plan(
     state_dir: impl AsRef<Path>,
     authorization: Option<&CleanupAuthorization>,
 ) -> Result<ExecutionManifest> {
+    execute_cleanup_plan_with_progress(plan, executor, state_dir, authorization, &mut |_| {})
+}
+
+fn execute_cleanup_plan_with_progress(
+    plan: &CleanupPlan,
+    executor: &impl CleanupExecutor,
+    state_dir: impl AsRef<Path>,
+    authorization: Option<&CleanupAuthorization>,
+    progress: &mut impl FnMut(OperationProgress),
+) -> Result<ExecutionManifest> {
     let authorization =
         authorization.context("cleanup requires explicit local user authorization")?;
+    progress(OperationProgress {
+        phase: OperationPhase::Validating,
+        completed: 0,
+        total: plan.summary.selected_count,
+        current_path: None,
+    });
     validate_recoverable_plan(plan)?;
     let repository = ManifestRepository::new(state_dir);
     let selected_items = plan
@@ -123,6 +139,12 @@ pub(crate) fn execute_cleanup_plan(
 
     repository.write_execution(&manifest)?;
     for (index, item) in selected_items.iter().enumerate() {
+        progress(OperationProgress {
+            phase: OperationPhase::Trashing,
+            completed: index,
+            total: selected_items.len(),
+            current_path: Some(item.path.clone()),
+        });
         manifest.items[index].status = ExecutionStatus::Pending;
         manifest.items[index].error = Some(
             "cleanup started but its outcome has not been recorded; the item may already be in system trash; inspect the original path and system trash before manual recovery".to_string(),
@@ -168,6 +190,12 @@ pub(crate) fn execute_cleanup_plan(
                 recorded.rollback_receipt.as_ref().and_then(|receipt| receipt.locator.as_deref()).unwrap_or("unavailable"),
             )
         })?;
+        progress(OperationProgress {
+            phase: OperationPhase::Trashing,
+            completed: index + 1,
+            total: selected_items.len(),
+            current_path: Some(item.path.clone()),
+        });
     }
     Ok(manifest)
 }
@@ -191,6 +219,17 @@ pub fn execute_locally_confirmed_plan_with_executor(
 ) -> Result<ExecutionManifest> {
     let authorization = CleanupAuthorization::explicit_user_confirmation();
     execute_cleanup_plan(plan, executor, state_dir, Some(&authorization))
+}
+
+/// Observe a plan explicitly confirmed by a local user; agent delegation must use the digest-bound workflow.
+pub fn execute_locally_confirmed_plan_with_progress(
+    plan: &CleanupPlan,
+    executor: &impl CleanupExecutor,
+    state_dir: impl AsRef<Path>,
+    progress: &mut impl FnMut(OperationProgress),
+) -> Result<ExecutionManifest> {
+    let authorization = CleanupAuthorization::explicit_user_confirmation();
+    execute_cleanup_plan_with_progress(plan, executor, state_dir, Some(&authorization), progress)
 }
 
 fn execution_summary(items: &[ExecutionItem]) -> ExecutionSummary {

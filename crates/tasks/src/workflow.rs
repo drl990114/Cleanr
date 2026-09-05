@@ -17,8 +17,9 @@ use cleanr_core::{
     AnalysisReport, AnalysisScanContext, CleanupPlan, CleanupPlanBuildError, CleanupPlanScanScope,
     GlobalScanEvidence, GlobalScanKind, RecommendationPolicy, RecommendationPolicyError,
     RecommendationState, RulesetVersion, SafetyPolicy, ScanBudgetExceeded, ScanEntry, ScanIssue,
-    ScanRequest, UserSelection, build_analysis_report_with_scan_context,
-    build_cleanup_plan_from_analysis,
+    ScanRequest, UserSelection, WorkError, build_analysis_report_with_scan_context,
+    build_analysis_report_with_scan_context_cancellable, build_cleanup_plan_from_analysis,
+    build_cleanup_plan_from_analysis_cancellable,
 };
 use cleanr_fs::{
     ScanOptions, ScanProgress, ScanReport, global_scan_evidence, resolve_scan_roots_with_locations,
@@ -324,9 +325,13 @@ pub fn run_scan_workflow(
         scan_is_complete || input.preparation_mode != ScanPreparationMode::Planning;
     if annotate_entries {
         observer.stage_changed(ScanWorkflowStage::Rules);
-        input
-            .registry
-            .annotate_entries_at(&mut report.entries, report.as_of);
+        if !input.registry.annotate_entries_at_cancellable(
+            &mut report.entries,
+            report.as_of,
+            &|| cancellation.load(Ordering::Relaxed),
+        ) {
+            return Err(ScanWorkflowError::Cancelled);
+        }
         capture_and_resolve_runtime_guards(&mut report.entries);
         ensure_scan_active(cancellation)?;
     }
@@ -345,14 +350,15 @@ pub fn run_scan_workflow(
     };
     let analysis = if should_build_analysis {
         observer.stage_changed(ScanWorkflowStage::Evidence);
-        let analysis = build_workflow_analysis(
+        let analysis = build_workflow_analysis_cancellable(
             &report,
             input.recommendation_policy.clone(),
             &input.safety_policy,
             &explicit_roots,
             &global_scan,
+            &|| cancellation.load(Ordering::Relaxed),
         )
-        .map_err(scan_message)?;
+        .map_err(scan_work_error)?;
         ensure_scan_active(cancellation)?;
         Some(analysis)
     } else {
@@ -368,7 +374,7 @@ pub fn run_scan_workflow(
             .as_ref()
             .map(|analysis| {
                 observer.stage_changed(ScanWorkflowStage::Plan);
-                build_workflow_plan(
+                build_workflow_plan_cancellable(
                     report.summary.roots.clone(),
                     ruleset_versions.clone(),
                     &report.entries,
@@ -377,8 +383,9 @@ pub fn run_scan_workflow(
                     &input.safety_policy,
                     &explicit_roots,
                     &global_scan,
+                    &|| cancellation.load(Ordering::Relaxed),
                 )
-                .map_err(scan_message)
+                .map_err(scan_work_error)
             })
             .transpose()?
     } else {
@@ -427,6 +434,72 @@ pub fn build_workflow_plan(
         ));
     }
     Ok(plan)
+}
+
+/// Construct a complete replacement plan, or discard it when the source snapshot is cancelled.
+#[allow(clippy::too_many_arguments)]
+pub fn build_workflow_plan_cancellable(
+    scan_roots: Vec<PathBuf>,
+    ruleset_versions: Vec<RulesetVersion>,
+    entries: &[ScanEntry],
+    analysis: &AnalysisReport,
+    selection: &UserSelection,
+    policy: &SafetyPolicy,
+    explicit_roots: &[PathBuf],
+    global_scan: &GlobalScanEvidence,
+    cancelled: &dyn Fn() -> bool,
+) -> std::result::Result<CleanupPlan, WorkError<CleanupPlanBuildError>> {
+    let mut plan = build_cleanup_plan_from_analysis_cancellable(
+        scan_roots,
+        ruleset_versions,
+        entries,
+        analysis,
+        selection,
+        policy,
+        cancelled,
+    )?;
+    if let Some(source) = plan.source_scan.as_mut() {
+        source.scope = Some(CleanupPlanScanScope::new(
+            explicit_roots.to_vec(),
+            global_scan.requested_kinds.clone(),
+        ));
+    }
+    if cancelled() {
+        return Err(WorkError::Cancelled);
+    }
+    Ok(plan)
+}
+
+fn build_workflow_analysis_cancellable(
+    report: &ScanReport,
+    recommendation_policy: RecommendationPolicy,
+    safety_policy: &SafetyPolicy,
+    explicit_roots: &[PathBuf],
+    global_scan: &GlobalScanEvidence,
+    cancelled: &dyn Fn() -> bool,
+) -> std::result::Result<AnalysisReport, WorkError<RecommendationPolicyError>> {
+    build_analysis_report_with_scan_context_cancellable(
+        report.as_of,
+        Utc::now(),
+        report.summary.roots.clone(),
+        &report.entries,
+        &report.issues,
+        recommendation_policy,
+        AnalysisScanContext {
+            budget_exceeded: &report.budget_exceeded,
+            safety_policy: Some(safety_policy),
+            global: Some(global_scan),
+            explicit_roots,
+        },
+        cancelled,
+    )
+}
+
+fn scan_work_error(error: WorkError<impl fmt::Display>) -> ScanWorkflowError {
+    match error {
+        WorkError::Cancelled => ScanWorkflowError::Cancelled,
+        WorkError::Failed(error) => scan_message(error),
+    }
 }
 
 pub fn build_workflow_analysis(
@@ -759,6 +832,50 @@ mod tests {
             semantic_explicit_roots(&ScanRequest::default(), std::slice::from_ref(&root)),
             vec![root]
         );
+    }
+
+    #[test]
+    fn cancellation_discards_rules_evidence_and_plan_stages() {
+        struct CancelAt<'a> {
+            stage: ScanWorkflowStage,
+            flag: &'a AtomicBool,
+        }
+        impl ScanWorkflowObserver for CancelAt<'_> {
+            fn stage_changed(&mut self, stage: ScanWorkflowStage) {
+                if stage == self.stage {
+                    self.flag.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("node_modules")).unwrap();
+        for stage in [
+            ScanWorkflowStage::Rules,
+            ScanWorkflowStage::Evidence,
+            ScanWorkflowStage::Plan,
+        ] {
+            let cancellation = AtomicBool::new(false);
+            let result = run_scan_workflow(
+                ScanWorkflowInput {
+                    request: ScanRequest::paths(vec![temp.path().into()]),
+                    configured_global_kinds: vec![],
+                    options: ScanOptions::default(),
+                    registry: Arc::new(RuleRegistry::builtin().unwrap()),
+                    safety_policy: SafetyPolicy::new(vec![], true),
+                    recommendation_policy: RecommendationPolicy::new(0).unwrap(),
+                    preparation_mode: ScanPreparationMode::Interactive,
+                },
+                Some(&cancellation),
+                &mut CancelAt {
+                    stage,
+                    flag: &cancellation,
+                },
+            );
+            assert!(
+                matches!(result, Err(ScanWorkflowError::Cancelled)),
+                "cancelled at {stage:?}"
+            );
+        }
     }
 
     #[test]

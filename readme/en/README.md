@@ -119,18 +119,6 @@ Cleanr cannot independently verify who gave it. Digest and rescan checks protect
 the reviewed plan through Cleanr's command path. They are not an OS sandbox for
 an agent with other filesystem tools.
 
-## Versions and help
-
-Category filtering, cumulative filtered selection, and `Shift+A` global
-selection apply to **0.15.0 and later**. Version 0.15.0 also introduces
-`cleanr.restore.v2` restore records; read the compatibility notes before rolling
-back. Check `cleanr --version` and the [changelog](../../CHANGELOG.md).
-
-- [Safety and recovery](https://drl990114.github.io/Cleanr/docs/safety-and-recovery)
-- [Troubleshooting](https://drl990114.github.io/Cleanr/docs/troubleshooting)
-- [Support and feedback](../../SUPPORT.md) · [Security reporting](../../SECURITY.md)
-- [Release readiness and verified platforms](https://drl990114.github.io/Cleanr/docs/support-matrix)
-
 ## Acknowledgements and license
 
 Cleanr includes code adapted from [Byron/dua-cli](https://github.com/Byron/dua-cli),

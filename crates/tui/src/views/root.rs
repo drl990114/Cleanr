@@ -56,8 +56,11 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut Workbench) {
             .min(18);
         render_category_filter(frame, centered_bounded_rect(area, 64, height, 76), app);
     }
+    if app.scan_view.sort_open {
+        render_scan_sort(frame, centered_bounded_rect(area, 48, 6, 64), app);
+    }
     if app.confirmation_pending() {
-        render_confirm(frame, centered_bounded_rect(area, 68, 11, 84), app);
+        render_confirm(frame, centered_bounded_rect(area, 68, 14, 84), app);
     }
     if matches!(app.mode, Mode::Normal) {
         render_ime_guard(frame, area, app);
@@ -123,6 +126,10 @@ pub(crate) fn render_header(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
 
 pub(crate) fn render_body(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench) {
     app.viewport_height = area.height.max(1);
+    if app.is_operation_running() {
+        render_operation_progress(frame, area, app);
+        return;
+    }
     match app.view {
         View::Home => render_home(frame, area, app),
         View::Scan => render_scan_workspace(frame, area, app),

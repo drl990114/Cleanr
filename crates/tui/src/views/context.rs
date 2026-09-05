@@ -325,7 +325,7 @@ pub(crate) fn render_tasks(frame: &mut Frame<'_>, area: Rect, app: &mut Workbenc
             .collect::<Vec<_>>()
     };
 
-    let details = vec![
+    let mut details = vec![
         detail_line(
             "Task count",
             app.task_log.len().to_string(),
@@ -349,6 +349,24 @@ pub(crate) fn render_tasks(frame: &mut Frame<'_>, area: Rect, app: &mut Workbenc
             app.theme,
         ),
     ];
+    for (label, recorder) in [
+        ("metrics_handler", &app.input_durations),
+        ("metrics_frame", &app.frame_durations),
+        ("metrics_input_frame", &app.input_to_frame_durations),
+        ("metrics_commit", &app.task_commit_durations),
+    ] {
+        let summary = recorder.summary();
+        details.push(detail_line(
+            &app.i18n.t(label),
+            format!(
+                "P95 {:.2} ms · max {:.2} ms",
+                summary.p95.as_secs_f64() * 1000.0,
+                summary.max.as_secs_f64() * 1000.0
+            ),
+            app.theme.fg_dim,
+            app.theme,
+        ));
+    }
     let title = app.i18n.t("label_tasks");
     let detail_title = app.i18n.t("label_details");
 

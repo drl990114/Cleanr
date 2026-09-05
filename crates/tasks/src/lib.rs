@@ -2,6 +2,7 @@
 
 mod cleanup;
 mod platform;
+mod progress;
 mod restore;
 mod runtime;
 mod storage;
@@ -12,15 +13,17 @@ mod recovery_tests;
 
 pub use cleanup::{
     CleanupExecutor, FakeTrashExecutor, TrashExecutor, execute_locally_confirmed_plan,
-    execute_locally_confirmed_plan_with_executor,
+    execute_locally_confirmed_plan_with_executor, execute_locally_confirmed_plan_with_progress,
 };
 
 pub(crate) use cleanup::{CleanupAuthorization, execute_cleanup_plan, validate_recoverable_plan};
 
 pub use restore::{
     FakeRestoreExecutor, RestoreExecutor, SystemRestoreExecutor, restore_execution_manifest,
-    restored_run_ids,
+    restore_execution_manifest_with_progress, restored_run_ids,
 };
+
+pub use progress::{OperationPhase, OperationProgress};
 
 pub use storage::{
     ManifestRepository, list_execution_manifests, list_restore_manifests, write_cleanup_plan,
@@ -31,10 +34,10 @@ pub use workflow::{
     ConfiguredWorkflowScan, DelegatedCleanupRequest, PreparedWorkflowScan, ScanPreparationMode,
     ScanWorkflowError, ScanWorkflowInput, ScanWorkflowObserver, ScanWorkflowStage,
     SelectionOverrides, build_workflow_analysis, build_workflow_analysis_from_parts,
-    build_workflow_plan, exact_selection, execute_delegated_cleanup, recommendation_policy,
-    recommendation_policy_for_plan_rescan, run_configured_scan, run_scan_workflow,
-    safety_policy_for_config, selection_with_overrides, semantic_explicit_roots,
-    validate_plan_sha256, verify_plan_unchanged,
+    build_workflow_plan, build_workflow_plan_cancellable, exact_selection,
+    execute_delegated_cleanup, recommendation_policy, recommendation_policy_for_plan_rescan,
+    run_configured_scan, run_scan_workflow, safety_policy_for_config, selection_with_overrides,
+    semantic_explicit_roots, validate_plan_sha256, verify_plan_unchanged,
 };
 
 #[cfg(test)]

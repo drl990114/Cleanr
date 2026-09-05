@@ -84,14 +84,33 @@ impl RuleRegistry {
 
     /// Annotate a scan with one fixed reference time for all age-based rules.
     pub fn annotate_entries_at(&self, entries: &mut [ScanEntry], as_of: DateTime<Utc>) {
+        self.annotate_entries_at_cancellable(entries, as_of, &|| false);
+    }
+
+    /// Return false on cancellation. The caller must discard the partially annotated snapshot.
+    pub fn annotate_entries_at_cancellable(
+        &self,
+        entries: &mut [ScanEntry],
+        as_of: DateTime<Utc>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> bool {
+        if cancelled() {
+            return false;
+        }
         let project_roots = self.project_roots(entries);
+        if cancelled() {
+            return false;
+        }
         let context = ScanContext::from_entries(
             entries,
             &project_roots,
             &self.project_marker_filter,
             &self.project_root_dir_filter,
         );
-        for entry in entries {
+        for (index, entry) in entries.iter_mut().enumerate() {
+            if index % 256 == 0 && cancelled() {
+                return false;
+            }
             entry.rule_hits = self.hits_for_at_with_context(
                 entry,
                 as_of,
@@ -99,6 +118,7 @@ impl RuleRegistry {
                 RulePlatform::current(),
             );
         }
+        !cancelled()
     }
 
     /// Match rules that depend only on one entry.

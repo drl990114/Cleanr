@@ -19,7 +19,8 @@ cleanr-rules = { version = "0.15.0", path = "../rules" }
 cleanr-tasks = { version = "0.15.0", path = "../tasks" }
 chrono.workspace = true
 crossterm.workspace = true
-ratatui.workspace = true
+# Use the renderer's own wrapping rules for scrolling and confirmation visibility.
+ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 serde_json.workspace = true
 terminal-light.workspace = true
 unicode-segmentation.workspace = true

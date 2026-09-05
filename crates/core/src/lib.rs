@@ -6,7 +6,11 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use chrono::Utc;
 
+mod control;
 mod evidence;
+pub use control::WorkError;
+pub use evidence::build_analysis_report_with_scan_context_cancellable;
+pub use planning::build_cleanup_plan_from_analysis_cancellable;
 mod manifests;
 mod model;
 mod planning;

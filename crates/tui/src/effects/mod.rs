@@ -20,11 +20,12 @@ use cleanr_fs::{ScanOptions, ScanPhase, ScanProgress, ScanReport};
 use cleanr_i18n::I18n;
 use cleanr_plugin_api::discover_bundles;
 use cleanr_rules::RuleRegistry;
+#[cfg(test)]
+use cleanr_tasks::{CleanupExecutor, execute_locally_confirmed_plan_with_executor};
 use cleanr_tasks::{
-    CleanupExecutor, ManifestRepository, ScanPreparationMode as WorkflowPreparationMode,
-    ScanWorkflowError, ScanWorkflowInput, ScanWorkflowObserver, ScanWorkflowStage,
-    SystemRestoreExecutor, execute_locally_confirmed_plan_with_executor,
-    restore_execution_manifest, run_scan_workflow, write_cleanup_plan,
+    ManifestRepository, ScanPreparationMode as WorkflowPreparationMode, ScanWorkflowError,
+    ScanWorkflowInput, ScanWorkflowObserver, ScanWorkflowStage, SystemRestoreExecutor,
+    run_scan_workflow, write_cleanup_plan,
 };
 
 pub(crate) enum TaskEvent {
@@ -103,6 +104,7 @@ pub(crate) struct PreparedScan {
     pub candidate_entry_indices: Vec<usize>,
     pub usage: Option<UsageProjection>,
     pub planning: std::result::Result<Option<PreparedPlanning>, String>,
+    pub index: crate::projection::ScanIndex,
 }
 
 pub(crate) struct PreparedPlanning {
@@ -139,6 +141,110 @@ pub(crate) struct ScanEffect {
 pub(crate) struct OperationEffect {
     pub kind: OperationKind,
     pub receiver: Receiver<OperationEvent>,
+    pub sample_receiver: Receiver<cleanr_tasks::OperationProgress>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ProjectedScan {
+    pub data_revision: u64,
+    pub query_revision: u64,
+    pub visible: Arc<Vec<usize>>,
+}
+
+pub(crate) struct PlanPreparation {
+    pub source_revision: u64,
+    pub entries: Arc<Vec<ScanEntry>>,
+    pub analysis: Arc<AnalysisReport>,
+    pub selection: UserSelection,
+    pub roots: Vec<PathBuf>,
+    pub registry: Arc<RuleRegistry>,
+    pub safety: SafetyPolicy,
+    pub explicit_roots: Vec<PathBuf>,
+    pub global_scan: GlobalScanEvidence,
+}
+
+pub(crate) struct PreparedPlan {
+    pub source_revision: u64,
+    pub result: std::result::Result<(CleanupPlan, crate::projection::ScanIndex), String>,
+}
+
+pub(crate) fn spawn_plan(
+    input: PlanPreparation,
+) -> Result<(Receiver<PreparedPlan>, Arc<AtomicBool>)> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = Arc::clone(&cancel);
+    std::thread::Builder::new()
+        .name("cleanr-plan".into())
+        .spawn(move || {
+            let result = cleanr_tasks::build_workflow_plan_cancellable(
+                input.roots,
+                input.registry.versions(),
+                &input.entries,
+                &input.analysis,
+                &input.selection,
+                &input.safety,
+                &input.explicit_roots,
+                &input.global_scan,
+                &|| worker_cancel.load(Ordering::Relaxed),
+            )
+            .map(|plan| {
+                let index = crate::projection::prepare_scan_index(Some(&plan), &input.entries);
+                (plan, index)
+            })
+            .map_err(|error| error.to_string());
+            if !worker_cancel.load(Ordering::Relaxed) {
+                let _ = sender.send(PreparedPlan {
+                    source_revision: input.source_revision,
+                    result,
+                });
+            }
+        })
+        .context("failed to spawn plan worker")?;
+    Ok((receiver, cancel))
+}
+
+pub(crate) type HistoryResult =
+    std::result::Result<(Vec<ExecutionManifest>, Vec<RestoreManifest>), String>;
+
+pub(crate) fn spawn_history(state_dir: PathBuf) -> Result<Receiver<HistoryResult>> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("cleanr-history".into())
+        .spawn(move || {
+            let _ = sender.send(load_history(&state_dir).map_err(|error| error.to_string()));
+        })
+        .context("failed to spawn history worker")?;
+    Ok(receiver)
+}
+
+pub(crate) fn spawn_projection(
+    index: Arc<crate::projection::ScanIndex>,
+    query: crate::projection::ScanQuery,
+    selected: Arc<Vec<bool>>,
+    data_revision: u64,
+    query_revision: u64,
+) -> Result<(Receiver<ProjectedScan>, Arc<AtomicBool>)> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let worker_cancel = Arc::clone(&cancel);
+    std::thread::Builder::new()
+        .name("cleanr-filter".into())
+        .spawn(move || {
+            let visible =
+                crate::projection::project_scan(&index, &query, &selected, &worker_cancel);
+            drop(selected);
+            drop(index);
+            if let Some(visible) = visible {
+                let _ = sender.send(ProjectedScan {
+                    data_revision,
+                    query_revision,
+                    visible,
+                });
+            }
+        })
+        .context("failed to spawn candidate projection worker")?;
+    Ok((receiver, cancel))
 }
 
 pub(crate) fn load_runtime(config: &Config) -> Result<(RuleRegistry, I18n)> {
@@ -247,6 +353,15 @@ fn run_scan_worker(
         None
     };
 
+    let index = crate::projection::prepare_scan_index(
+        planning
+            .as_ref()
+            .ok()
+            .and_then(|p| p.as_ref())
+            .map(|p| &p.plan),
+        &prepared.report.entries,
+    );
+    ensure_scan_active(cancellation)?;
     Ok(PreparedScan {
         report: prepared.report,
         explicit_roots: prepared.explicit_roots,
@@ -255,6 +370,7 @@ fn run_scan_worker(
         candidate_entry_indices: prepared.candidate_entry_indices,
         usage,
         planning,
+        index,
     })
 }
 
@@ -491,20 +607,49 @@ pub(crate) fn build_usage_projection(entries: &[ScanEntry], roots: &[PathBuf]) -
     }
 }
 
-pub(crate) fn spawn_cleanup(plan: CleanupPlan, state_dir: PathBuf) -> Result<OperationEffect> {
+pub(crate) fn spawn_usage(
+    entries: Arc<Vec<ScanEntry>>,
+    roots: Vec<PathBuf>,
+) -> Result<Receiver<UsageProjection>> {
     let (sender, receiver) = mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("cleanr-usage".into())
+        .spawn(move || {
+            let _ = sender.send(build_usage_projection(&entries, &roots));
+        })
+        .context("failed to spawn usage worker")?;
+    Ok(receiver)
+}
+
+pub(crate) fn spawn_cleanup(plan: Arc<CleanupPlan>, state_dir: PathBuf) -> Result<OperationEffect> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let (samples, sample_receiver) = mpsc::sync_channel(1);
     std::thread::Builder::new()
         .name("cleanr-cleanup".to_string())
         .spawn(move || {
             let executor = cleanr_tasks::TrashExecutor;
-            let result = execute_cleanup(&plan, &executor, &state_dir, true)
-                .map_err(|error| error.to_string());
+            let mut last_sample = None;
+            let result = cleanr_tasks::execute_locally_confirmed_plan_with_progress(
+                &plan,
+                &executor,
+                &state_dir,
+                &mut |sample| {
+                    if last_sample
+                        .is_none_or(|at: Instant| at.elapsed() >= Duration::from_millis(100))
+                        && samples.try_send(sample).is_ok()
+                    {
+                        last_sample = Some(Instant::now());
+                    }
+                },
+            )
+            .map_err(|error| error.to_string());
             let _ = sender.send(OperationEvent::CleanupFinished(result));
         })
         .context("failed to spawn cleanup worker")?;
     Ok(OperationEffect {
         kind: OperationKind::Cleanup,
         receiver,
+        sample_receiver,
     })
 }
 
@@ -513,16 +658,32 @@ pub(crate) fn spawn_restore(
     state_dir: PathBuf,
 ) -> Result<OperationEffect> {
     let (sender, receiver) = mpsc::sync_channel(1);
+    let (samples, sample_receiver) = mpsc::sync_channel(1);
     std::thread::Builder::new()
         .name("cleanr-restore".to_string())
         .spawn(move || {
-            let result = restore_cleanup(&manifest, &state_dir).map_err(|error| error.to_string());
+            let mut last_sample = None;
+            let result = cleanr_tasks::restore_execution_manifest_with_progress(
+                &manifest,
+                &SystemRestoreExecutor,
+                &state_dir,
+                &mut |sample| {
+                    if last_sample
+                        .is_none_or(|at: Instant| at.elapsed() >= Duration::from_millis(100))
+                        && samples.try_send(sample).is_ok()
+                    {
+                        last_sample = Some(Instant::now());
+                    }
+                },
+            )
+            .map_err(|error| error.to_string());
             let _ = sender.send(OperationEvent::RestoreFinished(result));
         })
         .context("failed to spawn restore worker")?;
     Ok(OperationEffect {
         kind: OperationKind::Restore,
         receiver,
+        sample_receiver,
     })
 }
 
@@ -532,6 +693,7 @@ pub(crate) fn load_history(
     ManifestRepository::new(state_dir).history()
 }
 
+#[cfg(test)]
 pub(crate) fn execute_cleanup(
     plan: &CleanupPlan,
     executor: &impl CleanupExecutor,
@@ -542,13 +704,6 @@ pub(crate) fn execute_cleanup(
         anyhow::bail!("cleanup requires explicit local user authorization");
     }
     execute_locally_confirmed_plan_with_executor(plan, executor, state_dir)
-}
-
-pub(crate) fn restore_cleanup(
-    manifest: &ExecutionManifest,
-    state_dir: &Path,
-) -> Result<RestoreManifest> {
-    restore_execution_manifest(manifest, &SystemRestoreExecutor, state_dir)
 }
 
 pub(crate) fn export_cleanup_plan(plan: &CleanupPlan, path: &Path) -> Result<()> {

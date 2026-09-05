@@ -1,7 +1,12 @@
 use super::*;
 
 pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
-    let mut content = fluid_content_rect(area, 120, 10);
+    let height = if area.height > 10 {
+        area.height - 1
+    } else {
+        area.height
+    };
+    let mut content = fluid_content_rect(area, 120, height);
     if area.height > content.height {
         content.y = content.y.saturating_add(1);
     }
@@ -33,14 +38,14 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
                 home_action_line(app.theme, "s", app.i18n.t("home_action_rescan"), true),
                 home_secondary_actions(
                     app.theme,
+                    "z",
+                    app.i18n.t("hint_restore_result"),
                     "u",
                     app.i18n.t("home_action_usage"),
-                    "/",
-                    app.i18n.t("home_action_more"),
                 ),
                 cleanup_result_path_line(app, 76),
             )
-        } else if app.scan_summary.entries_seen == 0 {
+        } else if !app.has_scan_results() {
             (
                 app.i18n.t("home_welcome"),
                 app.i18n.t("home_subtitle"),
@@ -62,7 +67,7 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
         } else if candidate_count == 0 {
             (
                 app.i18n.t("home_result_title"),
-                app.i18n.t("home_result_empty"),
+                scan_empty_text(app),
                 home_action_line(app.theme, "s", app.i18n.t("home_action_rescan"), true),
                 home_secondary_actions(
                     app.theme,
@@ -116,7 +121,7 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
             )
         };
 
-    let lines = vec![
+    let mut lines = vec![
         home_title(title, app.theme),
         Line::from(Span::styled(summary, Style::default().fg(app.theme.fg_dim))),
         Line::from(""),
@@ -126,6 +131,18 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
         detail,
         home_safety_line(app),
     ];
+    if let Some(notice) = &app.update_notice {
+        lines.push(Line::from(Span::styled(
+            app.i18n.format(
+                "status_update_available",
+                &[
+                    ("version", notice.version.clone()),
+                    ("url", notice.release_url.clone()),
+                ],
+            ),
+            Style::default().fg(app.theme.fg_dim),
+        )));
+    }
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })

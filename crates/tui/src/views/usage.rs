@@ -21,15 +21,20 @@ pub(crate) fn render_usage(frame: &mut Frame<'_>, area: Rect, app: &mut Workbenc
         .map_or_else(
             || {
                 vec![
-                    detail_line("Roots", join_paths(&app.roots), app.theme.fg_dim, app.theme),
                     detail_line(
-                        "Total",
+                        &app.i18n.t("home_detail_scope"),
+                        join_paths(&app.roots),
+                        app.theme.fg_dim,
+                        app.theme,
+                    ),
+                    detail_line(
+                        &app.i18n.t("usage_metric_total"),
                         format_bytes(app.scan_summary.total_size_bytes),
                         app.theme.cyan,
                         app.theme,
                     ),
                     detail_line(
-                        "Entries",
+                        &app.i18n.t("usage_metric_entries"),
                         app.scan_summary.entries_seen.to_string(),
                         app.theme.fg,
                         app.theme,
@@ -43,25 +48,25 @@ pub(crate) fn render_usage(frame: &mut Frame<'_>, area: Rect, app: &mut Workbenc
             |(index, entry)| {
                 vec![
                     detail_line(
-                        "Path",
+                        &app.i18n.t("detail_path"),
                         entry.path.display().to_string(),
                         app.theme.fg_dim,
                         app.theme,
                     ),
                     detail_line(
-                        "Size",
+                        &app.i18n.t("detail_size"),
                         format_bytes(entry.size_bytes),
                         app.theme.cyan,
                         app.theme,
                     ),
                     detail_line(
-                        "Kind",
+                        &app.i18n.t("detail_kind"),
                         kind_label(entry.kind).to_string(),
                         app.theme.fg,
                         app.theme,
                     ),
                     detail_line(
-                        "Contained",
+                        &app.i18n.t("detail_contained"),
                         app.usage_descendant_counts
                             .get(index)
                             .copied()
@@ -71,7 +76,7 @@ pub(crate) fn render_usage(frame: &mut Frame<'_>, area: Rect, app: &mut Workbenc
                         app.theme,
                     ),
                     detail_line(
-                        "Rule hits",
+                        &app.i18n.t("detail_matched_rules"),
                         entry.rule_hits.len().to_string(),
                         app.theme.warn,
                         app.theme,
@@ -136,7 +141,11 @@ pub(crate) fn render_usage(frame: &mut Frame<'_>, area: Rect, app: &mut Workbenc
         area.bottom()
             .saturating_sub(summary_area.y.saturating_add(summary_area.height)),
     );
-    let empty_message = app.i18n.t("status_no_scan_results");
+    let empty_message = app.i18n.t(if app.usage_rx.is_some() {
+        "scan_phase_usage"
+    } else {
+        "status_no_scan_results"
+    });
     let entries = &app.entries;
     let usage_order = &app.usage_order;
     let max_size = app.usage_max_size;

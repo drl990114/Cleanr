@@ -40,3 +40,10 @@ plus the cleanup receipt locator when available. Keep that error and inspect
 the original path, system Trash, and manifests before manual recovery. macOS
 restore uses an atomic no-replace rename; it does not overwrite a target that
 appears after the initial existence check.
+
+Cancellable scan stages and `build_workflow_plan_cancellable` discard partial
+rule, evidence, or plan work. Cancellation is cooperative; it cannot interrupt
+a blocked OS call or an individual sort. Existing synchronous APIs remain.
+The progress-enabled local cleanup/restore variants emit stage samples and only
+advance processed counts after the outcome journal is durable. Progress is
+observational and never changes authorization or the final validation order.

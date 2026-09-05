@@ -1,6 +1,17 @@
 use super::*;
 
 impl Workbench {
+    pub(crate) fn switch_view(&mut self, view: View) {
+        if self.view != view {
+            self.saved_list_states
+                .insert(self.view, self.list_state.clone());
+            self.view = view;
+            self.list_state = self.saved_list_states.remove(&view).unwrap_or_default();
+            if self.list_state.selected().is_none() && self.list_len() > 0 {
+                self.list_state.select(Some(0));
+            }
+        }
+    }
     pub(crate) fn list_len(&self) -> usize {
         match self.view {
             View::Home => 0,
@@ -19,11 +30,13 @@ impl Workbench {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn rebuild_usage_order(&mut self) {
         let projection = build_usage_projection(&self.entries, &self.roots);
         self.usage_order = projection.order;
         self.usage_max_size = projection.max_size;
         self.usage_descendant_counts = projection.descendant_counts;
+        self.usage_ready = true;
     }
 
     pub(crate) fn candidate_count_cached(&self) -> usize {
@@ -37,6 +50,7 @@ impl Workbench {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn rebuild_candidate_projection_if_stale(&mut self) {
         if self.candidate_projection_entries_len == self.entries.len() {
             return;
@@ -195,6 +209,9 @@ impl Workbench {
     }
 
     pub(crate) fn toggle_scan_selection(&mut self) {
+        if self.has_background_task() {
+            return;
+        }
         if self.scan_is_budget_limited() {
             self.reject_budget_limited_action();
             return;
@@ -207,8 +224,8 @@ impl Workbench {
         let Some(idx) = self.selected_scan_row().map(|row| row.source_index) else {
             return;
         };
-        let (path, selected) = {
-            let Some(plan) = &mut self.plan else {
+        let (path, selected, review) = {
+            let Some(plan) = self.plan.as_mut().map(Arc::make_mut) else {
                 self.status = self.i18n.t("status_no_scan_results");
                 return;
             };
@@ -223,10 +240,17 @@ impl Workbench {
                 plan.summary.selected_count -= 1;
                 plan.summary.selected_size_bytes -= item.size_bytes;
             }
-            (item.path.clone(), item.selected)
+            (
+                item.path.clone(),
+                item.selected,
+                item.evidence
+                    .as_ref()
+                    .is_some_and(|e| e.recommendation_state == RecommendationState::Review),
+            )
         };
+        self.update_scan_selection_flag(idx, selected, review);
         self.set_analysis_selection_for_path(&path, selected);
-        self.cache_scan_selection_summary();
+        self.finish_scan_selection_change(false);
         let state = if selected {
             self.i18n.t("state_selected")
         } else {
@@ -250,6 +274,9 @@ impl Workbench {
     }
 
     fn toggle_scan_selection_scope(&mut self, global: bool) {
+        if self.has_background_task() {
+            return;
+        }
         if self.view != View::Scan {
             self.status = self.i18n.t("status_select_scan_only");
             return;
@@ -259,7 +286,7 @@ impl Workbench {
             return;
         }
         self.ensure_scan_view_projection();
-        let Some(plan) = &mut self.plan else {
+        let Some(plan) = self.plan.as_mut().map(Arc::make_mut) else {
             self.status = self.i18n.t("scan_read_only");
             return;
         };
@@ -297,16 +324,20 @@ impl Workbench {
                 plan.summary.selected_count -= 1;
                 plan.summary.selected_size_bytes -= item.size_bytes;
             }
-            updates.push((item.path.clone(), target));
+            updates.push((
+                item.path.clone(),
+                target,
+                index,
+                item.evidence
+                    .as_ref()
+                    .is_some_and(|e| e.recommendation_state == RecommendationState::Review),
+            ));
         }
-        for (path, selected) in updates {
+        for (path, selected, index, review) in updates {
             self.set_analysis_selection_for_path(&path, selected);
+            self.update_scan_selection_flag(index, selected, review);
         }
-        if global {
-            self.refresh_hidden_scan_selection();
-        } else {
-            self.cache_scan_selection_summary();
-        }
+        self.finish_scan_selection_change(global);
         self.status = if target && review_count > 0 {
             self.i18n.format(
                 if global {
@@ -384,7 +415,7 @@ impl Workbench {
     }
 
     pub(crate) fn has_scan_results(&self) -> bool {
-        self.scan_rx.is_none() && !self.entries.is_empty()
+        self.scan_rx.is_none() && (!self.entries.is_empty() || !self.scan_summary.roots.is_empty())
     }
 
     pub(crate) fn filtered_palette_commands_for(

@@ -40,6 +40,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "tests/interaction.rs"]
+mod interaction;
 #[path = "tests/scan_category.rs"]
 mod scan_category;
 
@@ -245,7 +247,7 @@ fn home_layout_switches_to_a_concise_scan_result() {
     let mut report =
         scan_paths(&[temp.path().to_path_buf()], &ScanOptions::default()).expect("scan");
     app.registry.annotate_entries(&mut report.entries);
-    app.entries = report.entries;
+    app.entries = Arc::new(report.entries);
     app.scan_summary = report.summary;
     app.build_plan_for_view(false);
 
@@ -308,7 +310,7 @@ fn scan_layout_keeps_selection_and_details_distinct() {
     let mut report =
         scan_paths(&[temp.path().to_path_buf()], &ScanOptions::default()).expect("scan");
     app.registry.annotate_entries(&mut report.entries);
-    app.entries = report.entries;
+    app.entries = Arc::new(report.entries);
     app.scan_summary = report.summary;
     app.build_plan();
 
@@ -337,7 +339,7 @@ fn bulk_selection_includes_review_items_and_toggles_the_whole_plan() {
     let as_of = chrono::Utc::now();
     let mut app = app(temp.path().to_path_buf());
     app.scan_as_of = as_of;
-    app.entries = vec![
+    app.entries = Arc::new(vec![
         ScanEntry {
             path: temp.path().join("eligible-cache"),
             kind: EntryKind::Directory,
@@ -352,7 +354,7 @@ fn bulk_selection_includes_review_items_and_toggles_the_whole_plan() {
             modified_at: Some(as_of - chrono::Duration::days(100)),
             rule_hits: vec![review_hit],
         },
-    ];
+    ]);
     app.build_plan();
 
     let review_index = app
@@ -399,13 +401,13 @@ fn a_selects_and_deselects_a_review_only_scan_plan() {
     review_hit.confidence = Confidence::Medium;
     review_hit.default_selected = false;
     let mut app = app(temp.path().to_path_buf());
-    app.entries = vec![ScanEntry {
+    app.entries = Arc::new(vec![ScanEntry {
         path: temp.path().join("target").join("aarch64-apple-darwin"),
         kind: EntryKind::Directory,
         size_bytes: 414 * 1024 * 1024,
         modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
         rule_hits: vec![review_hit],
-    }];
+    }]);
     app.build_plan();
     app.view = View::Scan;
 
@@ -422,7 +424,7 @@ fn a_selects_and_deselects_a_review_only_scan_plan() {
     let selected_screen = render_text(&mut app, 120, 24);
     assert!(selected_screen.contains("[✓]"), "{selected_screen}");
     assert!(
-        selected_screen.contains("1 / 1 selected"),
+        selected_screen.contains("Selected globally: 1 item(s)"),
         "{selected_screen}"
     );
     assert!(selected_screen.contains("414.00 MiB"), "{selected_screen}");
@@ -438,7 +440,7 @@ fn a_selects_and_deselects_a_review_only_scan_plan() {
 fn scan_layout_truncates_long_paths_without_hiding_size_or_confidence() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
-    app.entries = vec![ScanEntry {
+    app.entries = Arc::new(vec![ScanEntry {
         path: temp
             .path()
             .join("very-long-generated-directory-name")
@@ -449,7 +451,7 @@ fn scan_layout_truncates_long_paths_without_hiding_size_or_confidence() {
         size_bytes: 12 * 1024 * 1024 * 1024,
         modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
         rule_hits: vec![test_rule_hit("generated")],
-    }];
+    }]);
     app.build_plan();
 
     let screen = render_text(&mut app, 76, 22);
@@ -457,8 +459,11 @@ fn scan_layout_truncates_long_paths_without_hiding_size_or_confidence() {
 
     assert!(screen.contains("[✓]"));
     assert!(screen.contains("12.00 GiB"));
-    assert!(screen.contains("high"));
     assert!(screen.contains("…"));
+    app.handle_key(key(KeyCode::Tab));
+    let details = render_text(&mut app, 76, 22);
+    assert!(details.contains("high confidence"), "{details}");
+    assert!(details.contains("12.00 GiB"), "{details}");
 }
 
 #[test]
@@ -472,13 +477,13 @@ fn chinese_scan_layout_uses_translations_for_details_labels() {
         Theme::dark(),
     );
     app.config.recommendations.preselect_after_days = 0;
-    app.entries = vec![ScanEntry {
+    app.entries = Arc::new(vec![ScanEntry {
         path: temp.path().join("target"),
         kind: EntryKind::Directory,
         size_bytes: 1024 * 1024,
         modified_at: None,
         rule_hits: vec![test_rule_hit("generated")],
-    }];
+    }]);
     app.build_plan();
 
     let screen = render_text(&mut app, 120, 24);
@@ -701,6 +706,16 @@ fn restore_view_requests_confirmation_for_selected_run() {
 
     app.dispatch(ActionRequest::Restore);
     app.handle_key(key(KeyCode::Enter));
+    assert!(
+        app.restore_waiting_for_confirmation.is_none(),
+        "history is still loading"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.history_rx.is_some() && Instant::now() < deadline {
+        app.poll_tasks();
+        thread::sleep(Duration::from_millis(1));
+    }
+    app.handle_key(key(KeyCode::Enter));
 
     assert_eq!(
         app.restore_waiting_for_confirmation.as_deref(),
@@ -814,6 +829,7 @@ fn cancelled_scan_rejects_a_queued_prepared_result() {
         .send(TaskEvent::ScanFinished {
             job_id: 7,
             result: Ok(Box::new(PreparedScan {
+                index: Default::default(),
                 report,
                 explicit_roots: vec![temp.path().to_path_buf()],
                 global_scan: Default::default(),
@@ -852,6 +868,7 @@ fn stale_scan_job_cannot_replace_current_state() {
         .send(TaskEvent::ScanFinished {
             job_id: 7,
             result: Ok(Box::new(PreparedScan {
+                index: Default::default(),
                 report,
                 explicit_roots: vec![temp.path().to_path_buf()],
                 global_scan: Default::default(),
@@ -897,6 +914,7 @@ fn completed_scan_atomically_commits_worker_resolved_scope() {
         .send(TaskEvent::ScanFinished {
             job_id: 17,
             result: Ok(Box::new(PreparedScan {
+                index: Default::default(),
                 report,
                 explicit_roots: vec![explicit_root.clone()],
                 global_scan: global_scan.clone(),
@@ -1087,13 +1105,13 @@ fn tui_analysis_suppresses_candidates_from_unrequested_global_kinds() {
     let mut app = app(scan_root.clone());
     app.roots = resolved.roots.clone();
     app.scan_global_evidence = global_scan_evidence(&request, &[], &resolved, &app.roots);
-    app.entries = vec![ScanEntry {
+    app.entries = Arc::new(vec![ScanEntry {
         path: pnpm,
         kind: EntryKind::Directory,
         size_bytes: 1024,
         modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
         rule_hits: vec![test_rule_hit("pnpm-cache")],
-    }];
+    }]);
 
     app.build_plan();
 
@@ -1128,15 +1146,17 @@ fn scan_view_can_render_selection_beyond_old_candidate_cap() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
     app.config.recommendations.preselect_after_days = 0;
-    app.entries = (0..501)
-        .map(|index| ScanEntry {
-            path: temp.path().join(format!("candidate-{index:03}")),
-            kind: EntryKind::File,
-            size_bytes: 1,
-            modified_at: None,
-            rule_hits: vec![test_rule_hit("generated")],
-        })
-        .collect();
+    app.entries = Arc::new(
+        (0..501)
+            .map(|index| ScanEntry {
+                path: temp.path().join(format!("candidate-{index:03}")),
+                kind: EntryKind::File,
+                size_bytes: 1,
+                modified_at: None,
+                rule_hits: vec![test_rule_hit("generated")],
+            })
+            .collect(),
+    );
     app.build_plan();
     app.list_state.select(Some(500));
     let selected_name = app.plan().expect("plan").items[500]
@@ -1156,15 +1176,17 @@ fn scan_view_virtualizes_ten_thousand_candidates_and_keeps_last_selected_visible
     let root = PathBuf::from("/workspace");
     let mut app = app(root.clone());
     let candidate_count = 10_000usize;
-    app.entries = (0..candidate_count)
-        .map(|index| ScanEntry {
-            path: root.join(format!("candidate-{index:05}")),
-            kind: EntryKind::File,
-            size_bytes: u64::try_from(index).expect("candidate index fits in u64"),
-            modified_at: None,
-            rule_hits: vec![test_rule_hit("generated")],
-        })
-        .collect();
+    app.entries = Arc::new(
+        (0..candidate_count)
+            .map(|index| ScanEntry {
+                path: root.join(format!("candidate-{index:05}")),
+                kind: EntryKind::File,
+                size_bytes: u64::try_from(index).expect("candidate index fits in u64"),
+                modified_at: None,
+                rule_hits: vec![test_rule_hit("generated")],
+            })
+            .collect(),
+    );
     app.view = View::Scan;
     app.list_state.select(Some(candidate_count - 1));
 
@@ -1190,16 +1212,23 @@ fn scan_view_render_performance_keeps_large_candidate_sets_off_the_frame_path() 
         .max(50);
     let root = PathBuf::from("/cleanr-render-fixture");
     let mut app = app(root.clone());
-    app.entries = (0..candidate_count)
-        .map(|index| ScanEntry {
-            path: root.join(format!("candidate-{index:08}")),
-            kind: EntryKind::File,
-            size_bytes: u64::try_from(index).unwrap_or(u64::MAX),
-            modified_at: None,
-            rule_hits: vec![test_rule_hit("render-benchmark")],
-        })
-        .collect();
+    app.entries = Arc::new(
+        (0..candidate_count)
+            .map(|index| ScanEntry {
+                path: root.join(format!("candidate-{index:08}")),
+                kind: EntryKind::File,
+                size_bytes: u64::try_from(index).unwrap_or(u64::MAX),
+                modified_at: Some(app.scan_as_of - chrono::Duration::days(120)),
+                rule_hits: vec![test_rule_hit("render-benchmark")],
+            })
+            .collect(),
+    );
     app.build_plan();
+    assert_eq!(
+        app.plan().expect("benchmark plan").items.len(),
+        candidate_count
+    );
+    assert_eq!(app.scan_view.visible.len(), candidate_count);
     app.view = View::Scan;
     app.list_state.select(Some(candidate_count - 1));
 
@@ -1285,8 +1314,9 @@ fn cleanup_success_starts_background_refresh_scan() {
     app.state_dir = state_dir;
     app.config.recommendations.preselect_after_days = 0;
     let report = scan_paths(&app.roots, &ScanOptions::default()).expect("scan");
-    app.entries = report.entries;
-    app.registry.annotate_entries(&mut app.entries);
+    app.entries = Arc::new(report.entries);
+    app.registry
+        .annotate_entries(Arc::make_mut(&mut app.entries).as_mut_slice());
     app.build_plan();
     let executor = FakeTrashExecutor::default();
 
@@ -1376,8 +1406,9 @@ fn cleanup_failure_surfaces_item_error_without_starting_refresh_scan() {
     app.state_dir = state_dir;
     app.config.recommendations.preselect_after_days = 0;
     let report = scan_paths(&app.roots, &ScanOptions::default()).expect("scan");
-    app.entries = report.entries;
-    app.registry.annotate_entries(&mut app.entries);
+    app.entries = Arc::new(report.entries);
+    app.registry
+        .annotate_entries(Arc::make_mut(&mut app.entries).as_mut_slice());
     app.build_plan();
 
     app.clean_with_executor(
@@ -1507,7 +1538,7 @@ fn visible_list_window_preserves_visible_offset_and_clamps_selection() {
 fn usage_rebuild_caches_sorted_root_children_and_list_length() {
     let root = PathBuf::from("/workspace");
     let mut app = app(root.clone());
-    app.entries = vec![
+    app.entries = Arc::new(vec![
         ScanEntry {
             path: root.join("small"),
             kind: EntryKind::Directory,
@@ -1536,7 +1567,7 @@ fn usage_rebuild_caches_sorted_root_children_and_list_length() {
             modified_at: None,
             rule_hits: vec![],
         },
-    ];
+    ]);
 
     app.rebuild_usage_order();
     app.view = View::Usage;
@@ -1553,7 +1584,7 @@ fn usage_renders_at_small_and_large_terminal_sizes() {
     fs::write(temp.path().join("target").join("artifact"), vec![0; 4096]).expect("write");
     let mut app = app(temp.path().to_path_buf());
     let report = scan_paths(&[temp.path().to_path_buf()], &ScanOptions::default()).expect("scan");
-    app.entries = report.entries;
+    app.entries = Arc::new(report.entries);
     app.scan_summary = report.summary;
     app.show_usage();
 
@@ -1824,7 +1855,7 @@ fn rebuilding_a_plan_filters_recent_candidates_but_preserves_explicit_selection(
     let mut app = app(temp.path().to_path_buf());
     let old_cache = temp.path().join("old-cache");
     let recent_cache = temp.path().join("recent-cache");
-    app.entries = vec![
+    app.entries = Arc::new(vec![
         ScanEntry {
             path: old_cache.clone(),
             kind: EntryKind::Directory,
@@ -1839,7 +1870,7 @@ fn rebuilding_a_plan_filters_recent_candidates_but_preserves_explicit_selection(
             modified_at: Some(app.scan_as_of - chrono::Duration::days(1)),
             rule_hits: vec![test_rule_hit("generated")],
         },
-    ];
+    ]);
 
     app.build_plan();
     assert_eq!(
@@ -1931,19 +1962,17 @@ fn rebuilding_a_plan_filters_recent_candidates_but_preserves_explicit_selection(
 fn plan_build_errors_clear_stale_plan_and_surface_the_reason() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
-    app.entries = vec![ScanEntry {
+    app.entries = Arc::new(vec![ScanEntry {
         path: temp.path().join("old-cache"),
         kind: EntryKind::Directory,
         size_bytes: 1024,
         modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
         rule_hits: vec![test_rule_hit("generated")],
-    }];
+    }]);
     app.build_plan();
     assert!(app.plan().is_some());
 
-    app.analysis
-        .as_mut()
-        .expect("analysis")
+    Arc::make_mut(app.analysis.as_mut().expect("analysis"))
         .scan
         .budget_exceeded
         .push(ScanBudgetExceeded::EntryCount {
@@ -1954,7 +1983,7 @@ fn plan_build_errors_clear_stale_plan_and_surface_the_reason() {
     assert!(app.plan().is_none());
     assert!(app.status().contains("scan budget was exceeded"));
 
-    let analysis = app.analysis.as_mut().expect("analysis");
+    let analysis = Arc::make_mut(app.analysis.as_mut().expect("analysis"));
     analysis.scan.budget_exceeded.clear();
     analysis.schema_version = "cleanr.analysis.v999".to_string();
     app.build_plan();
@@ -1966,13 +1995,13 @@ fn plan_build_errors_clear_stale_plan_and_surface_the_reason() {
 fn budget_limited_scan_rejects_plan_export_and_cleanup_with_read_only_status() {
     let temp = tempfile::tempdir().expect("tempdir");
     let mut app = app(temp.path().to_path_buf());
-    app.entries = vec![ScanEntry {
+    app.entries = Arc::new(vec![ScanEntry {
         path: temp.path().join("old-cache"),
         kind: EntryKind::Directory,
         size_bytes: 1024,
         modified_at: Some(app.scan_as_of - chrono::Duration::days(100)),
         rule_hits: vec![test_rule_hit("generated")],
-    }];
+    }]);
     app.scan_budget_exceeded = vec![ScanBudgetExceeded::EntryCount {
         limit: 1,
         observed: 2,
@@ -1993,7 +2022,7 @@ fn budget_limited_scan_rejects_plan_export_and_cleanup_with_read_only_status() {
     app.toggle_all_scan_selection();
     assert!(app.status().contains("read-only"), "{}", app.status());
 
-    app.entries.clear();
+    Arc::make_mut(&mut app.entries).clear();
     app.build_plan();
     assert!(app.status().contains("read-only"), "{}", app.status());
 }
@@ -2188,13 +2217,13 @@ fn repeat_navigation_works_but_repeat_clean_and_quit_are_ignored() {
 
     let mut cleanup_app = app(temp.path().to_path_buf());
     cleanup_app.config.cleanup.require_confirm = true;
-    cleanup_app.entries = vec![ScanEntry {
+    cleanup_app.entries = Arc::new(vec![ScanEntry {
         path: temp.path().join("old-cache"),
         kind: EntryKind::Directory,
         size_bytes: 1024,
         modified_at: Some(cleanup_app.scan_as_of - chrono::Duration::days(100)),
         rule_hits: vec![test_rule_hit("generated")],
-    }];
+    }]);
     cleanup_app.build_plan();
     assert!(cleanup_app.plan().expect("plan").summary.selected_count > 0);
 

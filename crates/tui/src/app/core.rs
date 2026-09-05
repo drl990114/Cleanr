@@ -35,9 +35,13 @@ impl Workbench {
             view: View::Home,
             palette_open: false,
             help_open: false,
+            help_scroll: 0,
+            help_max_scroll: 0,
             status,
+            update_notice: None,
+            update_notice_rx: None,
             status_after_scan: None,
-            entries: Vec::new(),
+            entries: Arc::new(Vec::new()),
             scan_summary: ScanSummary::default(),
             scan_as_of: Utc::now(),
             scan_issues: Vec::new(),
@@ -45,6 +49,7 @@ impl Workbench {
             scan_explicit_roots: Vec::new(),
             scan_global_evidence: GlobalScanEvidence::default(),
             scan_view: ScanViewState::default(),
+            scan_data_revision: 0,
             candidate_count: 0,
             candidate_entry_indices: Vec::new(),
             candidate_projection_entries_len: 0,
@@ -70,8 +75,12 @@ impl Workbench {
             scan_diagnostics: None,
             frame_durations: DurationRecorder::default(),
             input_durations: DurationRecorder::default(),
+            input_to_frame_durations: DurationRecorder::default(),
+            task_commit_durations: DurationRecorder::default(),
             operation_rx: None,
             operation_kind: None,
+            operation_sample_rx: None,
+            operation_progress: None,
             usage_order: Vec::new(),
             usage_max_size: 0,
             usage_descendant_counts: Vec::new(),
@@ -80,8 +89,15 @@ impl Workbench {
             clean_waiting_for_confirmation: false,
             restore_waiting_for_confirmation: None,
             confirm_choice: ConfirmChoice::default(),
+            confirm_content_visible: true,
             should_quit: false,
             list_state: ListState::default(),
+            saved_list_states: HashMap::new(),
+            usage_ready: false,
+            usage_rx: None,
+            plan_rx: None,
+            plan_cancel: None,
+            history_rx: None,
             palette_state: ListState::default(),
             count_buffer: String::new(),
             pending_key: None,
@@ -123,12 +139,17 @@ impl Workbench {
 
     #[must_use]
     pub(crate) fn has_background_task(&self) -> bool {
-        self.is_scan_running() || self.is_operation_running()
+        self.is_scan_running()
+            || self.is_operation_running()
+            || self.usage_rx.is_some()
+            || self.plan_rx.is_some()
+            || self.history_rx.is_some()
+            || self.scan_projection_pending()
     }
 
     #[must_use]
     pub fn plan(&self) -> Option<&CleanupPlan> {
-        self.plan.as_ref()
+        self.plan.as_deref()
     }
 
     #[must_use]
@@ -142,5 +163,13 @@ impl Workbench {
 
     pub(crate) fn record_input_duration(&mut self, duration: Duration) {
         self.input_durations.record(duration);
+    }
+}
+
+impl Drop for Workbench {
+    fn drop(&mut self) {
+        for cancel in [&self.scan_cancel, &self.plan_cancel].into_iter().flatten() {
+            cancel.store(true, Ordering::Relaxed);
+        }
     }
 }

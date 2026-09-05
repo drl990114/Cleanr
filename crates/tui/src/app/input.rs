@@ -1,18 +1,99 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::*;
 
 impl Workbench {
     pub fn handle_key(&mut self, key: KeyEvent) {
+        self.handle_key_changed(key);
+    }
+
+    pub(crate) fn ui_stamp(&self) -> u64 {
+        let mut stamp = DefaultHasher::new();
+        self.view.hash(&mut stamp);
+        matches!(self.mode, Mode::Command).hash(&mut stamp);
+        self.input.hash(&mut stamp);
+        self.input_cursor.hash(&mut stamp);
+        self.status.hash(&mut stamp);
+        self.i18n.locale().hash(&mut stamp);
+        self.list_state.selected().hash(&mut stamp);
+        self.list_state.offset().hash(&mut stamp);
+        self.palette_state.selected().hash(&mut stamp);
+        self.palette_open.hash(&mut stamp);
+        self.help_open.hash(&mut stamp);
+        self.help_scroll.hash(&mut stamp);
+        self.scan_view.filter.hash(&mut stamp);
+        self.scan_view.filter_open.hash(&mut stamp);
+        self.scan_view.filter_state.selected().hash(&mut stamp);
+        self.scan_view.query.hash(&mut stamp);
+        self.scan_view.search_open.hash(&mut stamp);
+        self.scan_view.sort.hash(&mut stamp);
+        self.scan_view.sort_open.hash(&mut stamp);
+        self.scan_view.sort_state.selected().hash(&mut stamp);
+        self.scan_view.only_selected.hash(&mut stamp);
+        self.scan_view.details_focused.hash(&mut stamp);
+        self.scan_view.details_scroll.hash(&mut stamp);
+        self.has_background_task().hash(&mut stamp);
+        self.confirmation_pending().hash(&mut stamp);
+        (self.confirm_choice as u8).hash(&mut stamp);
+        self.scan_cancel_requested.hash(&mut stamp);
+        self.should_quit.hash(&mut stamp);
+        self.count_buffer.hash(&mut stamp);
+        self.pending_key.hash(&mut stamp);
+        self.scan_data_revision.hash(&mut stamp);
+        if let Some(plan) = &self.plan {
+            plan.summary.selected_count.hash(&mut stamp);
+            plan.summary.selected_size_bytes.hash(&mut stamp);
+        }
+        stamp.finish()
+    }
+
+    pub(crate) fn handle_key_changed(&mut self, key: KeyEvent) -> bool {
+        let before = self.ui_stamp();
+        let focus_before = self.list_state.selected();
+        self.handle_key_inner(key);
+        if focus_before != self.list_state.selected() && !self.scan_view.details_focused {
+            self.scan_view.details_scroll = 0;
+        }
+        let ime_input = key.kind == KeyEventKind::Press
+            && matches!(key.code, KeyCode::Char(ch) if !ch.is_ascii());
+        let changed = self.ui_stamp() != before || ime_input;
+        if changed {
+            self.ime_guard_phase = !self.ime_guard_phase;
+        }
+        changed
+    }
+
+    pub(crate) fn can_batch_navigation(&self, key: KeyEvent) -> bool {
+        matches!(self.mode, Mode::Normal)
+            && !self.help_open
+            && !self.confirmation_pending()
+            && !self.scan_view.filter_open
+            && !self.scan_view.sort_open
+            && matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+            && matches!(
+                key.code,
+                KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::PageDown
+                    | KeyCode::PageUp
+                    | KeyCode::Char('j' | 'k')
+            )
+    }
+
+    fn handle_key_inner(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press
             && (key.kind != KeyEventKind::Repeat || !self.is_repeatable_key(key))
         {
             return;
         }
-        self.ime_guard_phase = !self.ime_guard_phase;
 
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if self.scan_view.filter_open {
+            if self.scan_view.search_open {
+                self.close_scan_search(false);
+            } else if self.scan_view.sort_open {
+                self.scan_view.sort_open = false;
+            } else if self.scan_view.filter_open {
                 self.scan_view.filter_open = false;
                 self.clear_pending();
             } else if matches!(self.mode, Mode::Command) {
@@ -32,6 +113,21 @@ impl Workbench {
             if matches!(key.code, KeyCode::Esc | KeyCode::Char('?' | 'h' | 'H')) {
                 self.help_open = false;
             }
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.help_scroll = self.help_scroll.saturating_add(1).min(self.help_max_scroll)
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1)
+                }
+                KeyCode::PageDown => {
+                    self.help_scroll = self.help_scroll.saturating_add(8).min(self.help_max_scroll)
+                }
+                KeyCode::PageUp => self.help_scroll = self.help_scroll.saturating_sub(8),
+                KeyCode::Home => self.help_scroll = 0,
+                KeyCode::End => self.help_scroll = self.help_max_scroll,
+                _ => {}
+            }
             return;
         }
 
@@ -45,6 +141,9 @@ impl Workbench {
                 }
                 KeyCode::Enter | KeyCode::Char(' ') => self.submit_confirmation(),
                 KeyCode::Esc => self.cancel_confirmation(),
+                KeyCode::Char('v') if self.clean_waiting_for_confirmation => {
+                    self.review_all_selected()
+                }
                 _ => {}
             }
             return;
@@ -55,6 +154,17 @@ impl Workbench {
         }
         if self.scan_view.filter_open {
             self.handle_scan_filter_key(key);
+            return;
+        }
+        if self.scan_view.sort_open {
+            self.handle_scan_sort_key(key);
+            return;
+        }
+        if self.scan_view.search_open {
+            self.handle_scan_search_key(key);
+            return;
+        }
+        if self.handle_details_key(key) {
             return;
         }
 
@@ -83,6 +193,17 @@ impl Workbench {
         }
 
         match key.code {
+            KeyCode::Char('p') if key.modifiers.is_empty() => self.open_scan_search(),
+            KeyCode::Char('o') if key.modifiers.is_empty() => self.open_scan_sort(),
+            KeyCode::Char('v') if key.modifiers.is_empty() => self.toggle_selected_view(),
+            KeyCode::Tab | KeyCode::BackTab
+                if self.view == View::Scan
+                    && !self.is_scan_running()
+                    && !self.is_operation_running() =>
+            {
+                self.scan_view.details_focused = true;
+            }
+            KeyCode::Char('z') if self.last_cleanup_result.is_some() => self.show_restore(),
             KeyCode::Char('q') => {
                 if self.is_operation_running() {
                     self.status = self.i18n.t("status_operation_running");
@@ -140,7 +261,7 @@ impl Workbench {
             KeyCode::Char('u') | KeyCode::Char('U')
                 if !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                self.start_usage_scan(ScanRequest::default());
+                self.open_current_usage();
                 self.clear_pending();
             }
             KeyCode::Char('c') | KeyCode::Char('C') => {
@@ -320,8 +441,7 @@ impl Workbench {
     }
 
     pub(crate) fn go_home(&mut self) {
-        self.view = View::Home;
-        self.list_state.select(None);
+        self.switch_view(View::Home);
         self.status = self.i18n.t("status_home");
     }
 
@@ -410,6 +530,7 @@ impl Workbench {
         }
         if !sanitized.is_empty() {
             self.insert_command_text(&sanitized);
+            self.scan_search_changed();
         }
     }
 
@@ -500,9 +621,16 @@ impl Workbench {
 
     fn is_repeatable_key(&self, key: KeyEvent) -> bool {
         if self.help_open {
-            return false;
+            return matches!(
+                key.code,
+                KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::PageUp
+                    | KeyCode::PageDown
+                    | KeyCode::Char('j' | 'k')
+            );
         }
-        if self.scan_view.filter_open {
+        if self.scan_view.filter_open || self.scan_view.sort_open {
             return matches!(
                 key.code,
                 KeyCode::Up | KeyCode::Down | KeyCode::Char('j' | 'k')

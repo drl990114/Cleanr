@@ -5,7 +5,7 @@ impl Workbench {
         match action {
             ActionRequest::Scan(request) => self.start_scan(request),
             ActionRequest::Review => self.review(),
-            ActionRequest::Plan => self.build_plan(),
+            ActionRequest::Plan => self.request_plan(),
             ActionRequest::Clean { intent } => self.request_cleanup(intent),
             ActionRequest::Restore => self.show_restore(),
             ActionRequest::Rules => self.show_rules(),
@@ -29,7 +29,7 @@ impl Workbench {
     /// background worker. The generic synchronous variant below remains available for deterministic
     /// executor tests.
     pub(crate) fn request_cleanup(&mut self, intent: CleanupIntent) {
-        if self.is_operation_running() {
+        if self.has_background_task() {
             self.status = self.i18n.t("status_operation_running");
             return;
         }
@@ -73,6 +73,8 @@ impl Workbench {
                 self.clean_waiting_for_confirmation = false;
                 self.operation_kind = Some(effect.kind);
                 self.operation_rx = Some(effect.receiver);
+                self.operation_sample_rx = Some(effect.sample_receiver);
+                self.operation_progress = None;
                 self.status = self.i18n.format(
                     "status_cleaning",
                     &[("count", count.to_string()), ("size", size)],
@@ -209,6 +211,10 @@ impl Workbench {
     }
 
     pub(crate) fn submit_confirmation(&mut self) {
+        if !self.confirm_content_visible {
+            self.status = self.i18n.t("confirm_resize");
+            return;
+        }
         let confirmed = self.confirm_choice == ConfirmChoice::Yes;
         let restore_run = self.restore_waiting_for_confirmation.take();
         let was_restore = restore_run.is_some();
@@ -247,7 +253,7 @@ impl Workbench {
     }
 
     pub(crate) fn request_restore_selected(&mut self) {
-        if self.is_operation_running() {
+        if self.is_operation_running() || self.history_rx.is_some() {
             self.status = self.i18n.t("status_operation_running");
             return;
         }
@@ -291,6 +297,8 @@ impl Workbench {
             Ok(effect) => {
                 self.operation_kind = Some(effect.kind);
                 self.operation_rx = Some(effect.receiver);
+                self.operation_sample_rx = Some(effect.sample_receiver);
+                self.operation_progress = None;
                 self.status = self
                     .i18n
                     .format("status_restoring", &[("run_id", run_id.to_string())]);
@@ -305,15 +313,56 @@ impl Workbench {
             self.status = self.i18n.t("status_review_after_scan");
             return;
         }
-        self.build_plan();
+        if self.plan.is_some() {
+            self.switch_view(View::Scan);
+            self.ensure_scan_view_projection();
+            return;
+        }
+        self.request_plan();
     }
 
+    pub(crate) fn request_plan(&mut self) {
+        if self.has_background_task() {
+            return;
+        }
+        if self.scan_is_budget_limited() {
+            self.reject_budget_limited_action();
+            return;
+        }
+        let Some(analysis) = self.analysis.as_ref().map(Arc::clone) else {
+            self.status = self.i18n.t("status_no_scan_results");
+            return;
+        };
+        self.switch_view(View::Scan);
+        let input = crate::effects::PlanPreparation {
+            source_revision: self.scan_data_revision,
+            entries: Arc::clone(&self.entries),
+            analysis,
+            selection: self.selection.clone(),
+            roots: self.roots.clone(),
+            registry: Arc::clone(&self.registry),
+            safety: self.safety_policy(),
+            explicit_roots: self.scan_explicit_roots.clone(),
+            global_scan: self.scan_global_evidence.clone(),
+        };
+        match crate::effects::spawn_plan(input) {
+            Ok((receiver, cancel)) => {
+                self.plan_rx = Some(receiver);
+                self.plan_cancel = Some(cancel);
+                self.status = self.i18n.t("status_plan_preparing");
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn build_plan(&mut self) {
         self.build_plan_for_view(true);
     }
 
     /// Create exactly one evidence report for a completed scan. Its candidate IDs stay stable
     /// while the user toggles items and rebuilds the cleanup plan.
+    #[cfg(test)]
     pub(crate) fn ensure_analysis_report(
         &mut self,
     ) -> std::result::Result<(), RecommendationPolicyError> {
@@ -339,10 +388,11 @@ impl Workbench {
             .map(|candidate| (candidate.local_path.clone(), candidate.id.clone()))
             .collect();
         self.selection = UserSelection::from_recommendations(&analysis);
-        self.analysis = Some(analysis);
+        self.analysis = Some(Arc::new(analysis));
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn build_plan_for_view(&mut self, activate_scan: bool) {
         let entering_scan = activate_scan && self.view != View::Scan;
         if activate_scan {
@@ -386,7 +436,7 @@ impl Workbench {
             }
         };
         self.status = self.plan_ready_status(&plan, inactive_days);
-        self.plan = Some(plan);
+        self.plan = Some(Arc::new(plan));
         self.invalidate_scan_view_projection();
         self.ensure_scan_view_projection();
         if entering_scan {
@@ -431,7 +481,8 @@ impl Workbench {
             return;
         }
         if self.plan.is_none() {
-            self.build_plan();
+            self.status = self.i18n.t("scan_read_only");
+            return;
         }
         let Some(plan) = &self.plan else {
             return;
@@ -459,28 +510,21 @@ impl Workbench {
     }
 
     pub(crate) fn show_restore(&mut self) {
-        self.view = View::Restore;
-        self.refresh_history();
-        match self.execution_manifests.first() {
-            None => {
-                self.status = self.i18n.t("status_no_manifests");
-            }
-            Some(manifest) => {
-                self.status = self.i18n.format(
-                    "status_latest_run",
-                    &[
-                        ("run_id", manifest.run_id.clone()),
-                        ("count", manifest.summary.succeeded.to_string()),
-                        ("message", self.i18n.t("restore_select_hint")),
-                    ],
-                );
-            }
+        self.switch_view(View::Restore);
+        if self.history_rx.is_some() || self.is_operation_running() {
+            return;
         }
-        self.reset_list_selection();
+        match crate::effects::spawn_history(self.state_dir.clone()) {
+            Ok(receiver) => {
+                self.history_rx = Some(receiver);
+                self.status = self.i18n.t("status_history_loading");
+            }
+            Err(error) => self.status = error.to_string(),
+        }
     }
 
     pub(crate) fn show_rules(&mut self) {
-        self.view = View::Rules;
+        self.switch_view(View::Rules);
         let count = self
             .registry
             .packs()
@@ -498,7 +542,7 @@ impl Workbench {
     }
 
     pub(crate) fn show_plugins(&mut self) {
-        self.view = View::Plugins;
+        self.switch_view(View::Plugins);
         let packs = self
             .registry
             .packs()
@@ -511,7 +555,7 @@ impl Workbench {
     }
 
     pub(crate) fn show_languages(&mut self) {
-        self.view = View::Languages;
+        self.switch_view(View::Languages);
         let packs = self
             .i18n
             .packs()
@@ -527,7 +571,7 @@ impl Workbench {
     }
 
     pub(crate) fn show_tasks(&mut self) {
-        self.view = View::Tasks;
+        self.switch_view(View::Tasks);
         self.status = if self.task_log.is_empty() {
             self.i18n.t("status_no_tasks")
         } else {
@@ -537,10 +581,7 @@ impl Workbench {
     }
 
     pub(crate) fn show_usage(&mut self) {
-        if self.usage_order.is_empty() && !self.entries.is_empty() {
-            self.rebuild_usage_order();
-        }
-        self.view = View::Usage;
+        self.switch_view(View::Usage);
         let candidates = self.plan.as_ref().map_or_else(
             || self.candidate_count_cached(),
             |plan| plan.summary.candidate_count,
@@ -561,7 +602,29 @@ impl Workbench {
                 ("size", format_bytes(selected_size)),
             ],
         );
-        self.reset_list_selection();
+        if self.list_state.selected().is_none() && self.list_len() > 0 {
+            self.select_first();
+        }
+    }
+
+    pub(crate) fn open_current_usage(&mut self) {
+        if self.scan_rx.is_some() || self.is_operation_running() {
+            return;
+        }
+        if !self.has_scan_results() {
+            self.start_usage_scan(ScanRequest::default());
+            return;
+        }
+        self.show_usage();
+        if !self.usage_ready && self.usage_rx.is_none() {
+            match crate::effects::spawn_usage(Arc::clone(&self.entries), self.roots.clone()) {
+                Ok(receiver) => {
+                    self.usage_rx = Some(receiver);
+                    self.status = self.i18n.t("scan_phase_usage");
+                }
+                Err(error) => self.status = error.to_string(),
+            }
+        }
     }
 
     pub(crate) fn show_help(&mut self) {

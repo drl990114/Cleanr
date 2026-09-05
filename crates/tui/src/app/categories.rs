@@ -1,364 +1,351 @@
-use std::collections::BTreeMap;
-
-use cleanr_core::{CleanupItem, RuleHit, RuleMatchRole, RuleResolutionState, RuleTrust};
-
 use super::*;
-
-const BUILTIN_CATEGORIES: [&str; 9] = [
-    "developer-cache",
-    "build-cache",
-    "package-cache",
-    "browser-cache",
-    "application-cache",
-    "temporary-files",
-    "logs",
-    "diagnostics",
-    "downloads",
-];
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum CategoryKey {
-    Named(String),
-    Multiple,
-    Unknown,
-}
-
-impl CategoryKey {
-    pub(crate) fn label(&self, i18n: &I18n, short: bool) -> String {
-        let name = match self {
-            Self::Named(name) if BUILTIN_CATEGORIES.contains(&name.as_str()) => {
-                name.replace('-', "_")
-            }
-            Self::Named(name) => return name.clone(),
-            Self::Multiple => "multiple".to_string(),
-            Self::Unknown => "unknown".to_string(),
-        };
-        let suffix = if short { "_short" } else { "" };
-        i18n.t(&format!("category_{name}{suffix}"))
-    }
-
-    fn order(&self) -> usize {
-        match self {
-            Self::Named(name) => BUILTIN_CATEGORIES
-                .iter()
-                .position(|builtin| *builtin == name)
-                .unwrap_or(BUILTIN_CATEGORIES.len()),
-            Self::Multiple => BUILTIN_CATEGORIES.len() + 1,
-            Self::Unknown => BUILTIN_CATEGORIES.len() + 2,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct CandidateCategory {
-    pub(crate) key: CategoryKey,
-    pub(crate) categories: Vec<String>,
-    pub(crate) conflict: bool,
-    pub(crate) tentative: bool,
-}
-
-impl CandidateCategory {
-    fn new(categories: impl Iterator<Item = String>, conflict: bool, tentative: bool) -> Self {
-        let categories = categories
-            .filter(|category| !category.is_empty())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        let key = match categories.as_slice() {
-            [] => CategoryKey::Unknown,
-            [category] => CategoryKey::Named(category.clone()),
-            _ => CategoryKey::Multiple,
-        };
-        Self {
-            key,
-            categories,
-            conflict,
-            tentative,
-        }
-    }
-
-    fn from_plan_item(item: &CleanupItem) -> Self {
-        if let Some(evidence) = &item.evidence {
-            return Self::new(
-                evidence
-                    .matched_rules
-                    .iter()
-                    .filter(|rule| !evidence.shadowed_rules.contains(&rule.key))
-                    .map(|rule| rule.category.clone()),
-                evidence.rule_resolution_state == RuleResolutionState::UnresolvedConflict,
-                false,
-            );
-        }
-        Self::new(std::iter::once(item.category.clone()), false, false)
-    }
-
-    /// A failed or budget-limited scan can have rule hits without a usable plan. This display
-    /// projection mirrors only rule shadowing and never grants cleanup or selection authority.
-    fn from_rule_hits(hits: &[RuleHit]) -> Self {
-        let has_trusted_primary = hits.iter().any(|hit| {
-            hit.match_role == RuleMatchRole::Primary && hit.trust != RuleTrust::Untrusted
-        });
-        let effective = hits
-            .iter()
-            .filter(|hit| !(has_trusted_primary && hit.match_role == RuleMatchRole::Fallback))
-            .collect::<Vec<_>>();
-        let mut category = Self::new(
-            effective.iter().map(|hit| hit.category.clone()),
-            false,
-            true,
-        );
-        // Only plan evidence authoritatively resolves same-category safety conflicts. Raw rows
-        // can identify differing categories without duplicating the domain's risk semantics.
-        category.conflict = category.key == CategoryKey::Multiple;
-        category
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ScanCandidateRow {
-    pub(crate) source_index: usize,
-    pub(crate) category: CandidateCategory,
-    path: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct CategorySummary {
-    pub(crate) key: CategoryKey,
-    pub(crate) count: usize,
-    pub(crate) size_bytes: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ProjectionSource {
-    Plan {
-        address: usize,
-        len: usize,
-        created_at: DateTime<Utc>,
-    },
-    Entries {
-        address: usize,
-        len: usize,
-        as_of: DateTime<Utc>,
-    },
-}
+pub(crate) use crate::projection::{
+    CandidateCategory, CategoryKey, ScanIndex, ScanQuery, ScanSort,
+};
+use crate::projection::{ScanCandidateRow, prepare_scan_index, project_scan};
+#[cfg(test)]
+use cleanr_core::{RuleHit, RuleMatchRole, RuleTrust};
+#[cfg(test)]
+use std::collections::BTreeMap;
+use std::ops::Deref;
 
 #[derive(Debug, Default)]
 pub(crate) struct ScanViewState {
-    pub(crate) rows: Vec<ScanCandidateRow>,
-    pub(crate) visible: Vec<usize>,
-    pub(crate) groups: Vec<CategorySummary>,
-    pub(crate) total_size_bytes: u64,
+    pub(crate) index: Arc<ScanIndex>,
+    pub(crate) visible: Arc<Vec<usize>>,
     pub(crate) filter: Option<CategoryKey>,
     pub(crate) filter_open: bool,
     pub(crate) filter_state: ListState,
+    pub(crate) query: String,
+    pub(crate) only_selected: bool,
+    pub(crate) sort: ScanSort,
+    pub(crate) sort_open: bool,
+    pub(crate) sort_state: ListState,
+    pub(crate) search_open: bool,
+    pub(crate) search_before: String,
+    pub(crate) search_due: Option<Instant>,
+    pub(crate) details_focused: bool,
+    pub(crate) details_scroll: u16,
+    pub(crate) details_max_scroll: u16,
     pub(crate) hidden_selected_count: usize,
     pub(crate) hidden_selected_bytes: u64,
-    source: Option<ProjectionSource>,
-    projected_filter: Option<CategoryKey>,
+    pub(crate) selected_review_count: usize,
+    pub(crate) age_excluded_candidates: bool,
+    pub(crate) selection_flags: Arc<Vec<bool>>,
+    pub(crate) projection_rx: Option<Receiver<crate::effects::ProjectedScan>>,
+    pub(crate) projection_cancel: Option<Arc<AtomicBool>>,
+    query_revision: u64,
+    source: Option<(u64, bool, usize)>,
+    pub(super) projected_query: Option<ScanQuery>,
+    focused_path: Option<PathBuf>,
+    keep_row_position: bool,
     selected_summary: (usize, u64),
+    selection_revision: u64,
+    projected_selection_revision: u64,
+}
+
+impl Deref for ScanViewState {
+    type Target = ScanIndex;
+    fn deref(&self) -> &Self::Target {
+        &self.index
+    }
+}
+
+impl Drop for ScanViewState {
+    fn drop(&mut self) {
+        if let Some(cancel) = &self.projection_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Workbench {
-    fn scan_projection_source(&self) -> ProjectionSource {
-        if let Some(plan) = &self.plan {
-            ProjectionSource::Plan {
-                address: plan.items.as_ptr() as usize,
-                len: plan.items.len(),
-                created_at: plan.created_at,
-            }
+    fn scan_projection_source(&self) -> (u64, bool, usize) {
+        (
+            self.scan_data_revision,
+            self.plan.is_some(),
+            self.plan
+                .as_ref()
+                .map_or(self.entries.len(), |p| p.items.len()),
+        )
+    }
+
+    pub(crate) fn invalidate_scan_view_projection(&mut self) {
+        self.scan_data_revision = self.scan_data_revision.wrapping_add(1);
+        self.scan_view.source = None;
+    }
+
+    pub(crate) fn install_scan_index(&mut self, index: ScanIndex) {
+        let focused = self.selected_scan_row().map(|row| row.path.clone());
+        self.scan_view.index = Arc::new(index);
+        self.scan_view.selection_flags =
+            Arc::new(self.plan.as_ref().map_or_else(Vec::new, |plan| {
+                plan.items.iter().map(|item| item.selected).collect()
+            }));
+        self.scan_view.selected_review_count = self.plan.as_ref().map_or(0, |plan| {
+            plan.items
+                .iter()
+                .filter(|item| {
+                    item.selected
+                        && item
+                            .evidence
+                            .as_ref()
+                            .is_some_and(|e| e.recommendation_state == RecommendationState::Review)
+                })
+                .count()
+        });
+        self.scan_view.age_excluded_candidates = self.analysis.as_ref().is_some_and(|analysis| {
+            analysis.candidates.iter().any(|candidate| {
+                !matches!(
+                    candidate.recommendation.state,
+                    RecommendationState::Excluded | RecommendationState::Suppressed
+                ) && analysis.policy.filters_candidate_projection_by_inactivity()
+                    && !analysis
+                        .policy
+                        .activity_meets_inactivity_threshold(&candidate.activity)
+            })
+        });
+        self.scan_view.source = Some(self.scan_projection_source());
+        self.scan_view.projected_query = None;
+        self.scan_view.focused_path = focused;
+        self.ensure_scan_view_projection();
+    }
+
+    fn scan_query(&self) -> ScanQuery {
+        ScanQuery {
+            category: self.scan_view.filter.clone(),
+            text: self.scan_view.query.replace('\\', "/").to_lowercase(),
+            only_selected: self.scan_view.only_selected,
+            sort: self.scan_view.sort,
+        }
+    }
+
+    pub(crate) fn scan_projection_pending(&self) -> bool {
+        self.scan_view.projection_rx.is_some() || self.scan_view.search_due.is_some()
+    }
+
+    pub(crate) fn ensure_scan_view_projection(&mut self) {
+        if self.scan_view.source != Some(self.scan_projection_source()) {
+            // Normal worker results carry their index. This fallback serves explicit in-process
+            // callers replacing a plan or constructing read-only evidence.
+            let index = prepare_scan_index(self.plan.as_deref(), &self.entries);
+            self.install_scan_index(index);
+            return;
+        }
+        if self.scan_view.search_due.is_some() {
+            return;
+        }
+        let query = self.scan_query();
+        if self.scan_view.projected_query.as_ref() == Some(&query)
+            && (!query.only_selected
+                || self.scan_view.projected_selection_revision == self.scan_view.selection_revision)
+        {
+            return;
+        }
+        let focus = self
+            .scan_view
+            .focused_path
+            .take()
+            .or_else(|| self.selected_scan_row().map(|r| r.path.clone()));
+        self.scan_view.focused_path = focus;
+        self.scan_view.query_revision = self.scan_view.query_revision.wrapping_add(1);
+        if let Some(cancel) = self.scan_view.projection_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.scan_view.projection_rx = None;
+        self.scan_view.projected_query = Some(query.clone());
+        self.scan_view.projected_selection_revision = self.scan_view.selection_revision;
+        let all_rows = query.category.is_none() && query.text.is_empty() && !query.only_selected;
+        if all_rows || self.scan_view.rows.len() <= 2048 {
+            let visible = project_scan(
+                &self.scan_view.index,
+                &query,
+                &self.scan_view.selection_flags,
+                &AtomicBool::new(false),
+            )
+            .unwrap_or_default();
+            self.commit_scan_projection(visible);
         } else {
-            ProjectionSource::Entries {
-                address: self.entries.as_ptr() as usize,
-                len: self.entries.len(),
-                as_of: self.scan_as_of,
+            match crate::effects::spawn_projection(
+                Arc::clone(&self.scan_view.index),
+                query,
+                Arc::clone(&self.scan_view.selection_flags),
+                self.scan_data_revision,
+                self.scan_view.query_revision,
+            ) {
+                Ok((receiver, cancel)) => {
+                    self.scan_view.projection_rx = Some(receiver);
+                    self.scan_view.projection_cancel = Some(cancel);
+                }
+                Err(error) => {
+                    self.scan_view.projected_query = None;
+                    self.scan_view.visible = Arc::new(Vec::new());
+                    self.clear_scan_focus();
+                    self.status = error.to_string();
+                }
             }
         }
     }
 
-    /// Call when replacing a plan or changing its candidate metadata in place. Selection changes
-    /// have a separate cache refresh, so moving the cursor never walks all candidates.
-    pub(crate) fn invalidate_scan_view_projection(&mut self) {
-        self.scan_view.source = None;
+    fn commit_scan_projection(&mut self, visible: Arc<Vec<usize>>) {
+        let focus = self.scan_view.focused_path.take();
+        let focused = focus.as_ref().and_then(|path| {
+            visible
+                .iter()
+                .position(|i| self.scan_view.rows[*i].path == *path)
+        });
+        let state = if self.view == View::Scan {
+            &mut self.list_state
+        } else {
+            self.saved_list_states.entry(View::Scan).or_default()
+        };
+        // Selected-only removal keeps the next row (or the last remaining row).
+        let initial = state
+            .selected()
+            .filter(|_| {
+                !visible.is_empty() && (focus.is_none() || self.scan_view.keep_row_position)
+            })
+            .map(|i| i.min(visible.len() - 1));
+        self.scan_view.keep_row_position = false;
+        self.scan_view.visible = visible;
+        state.select(
+            focused
+                .or(initial)
+                .or_else(|| (!self.scan_view.visible.is_empty()).then_some(0)),
+        );
+        self.scan_view.details_scroll = 0;
+        self.refresh_hidden_scan_selection();
     }
 
-    pub(crate) fn ensure_scan_view_projection(&mut self) {
-        let source = self.scan_projection_source();
-        let source_changed = self.scan_view.source.as_ref() != Some(&source);
-        let filter_changed = self.scan_view.projected_filter != self.scan_view.filter;
-        if source_changed || filter_changed {
-            let focused_path = self.selected_scan_row().map(|row| row.path.clone());
-            if source_changed {
-                let mut groups: BTreeMap<CategoryKey, (usize, u64)> = BTreeMap::new();
-                let mut total_size_bytes = 0u64;
-                let rows = if let Some(plan) = &self.plan {
-                    plan.items
-                        .iter()
-                        .enumerate()
-                        .map(|(source_index, item)| {
-                            let category = CandidateCategory::from_plan_item(item);
-                            let group = groups.entry(category.key.clone()).or_default();
-                            group.0 += 1;
-                            group.1 = group.1.saturating_add(item.size_bytes);
-                            total_size_bytes = total_size_bytes.saturating_add(item.size_bytes);
-                            ScanCandidateRow {
-                                source_index,
-                                category,
-                                path: item.path.clone(),
-                            }
-                        })
-                        .collect()
-                } else {
-                    self.entries
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, entry)| !entry.rule_hits.is_empty())
-                        .map(|(source_index, entry)| {
-                            let category = CandidateCategory::from_rule_hits(&entry.rule_hits);
-                            let group = groups.entry(category.key.clone()).or_default();
-                            group.0 += 1;
-                            group.1 = group.1.saturating_add(entry.size_bytes);
-                            total_size_bytes = total_size_bytes.saturating_add(entry.size_bytes);
-                            ScanCandidateRow {
-                                source_index,
-                                category,
-                                path: entry.path.clone(),
-                            }
-                        })
-                        .collect()
-                };
-                self.scan_view.rows = rows;
-                if self.plan.is_none() {
-                    self.candidate_entry_indices = self
-                        .scan_view
-                        .rows
-                        .iter()
-                        .map(|row| row.source_index)
-                        .collect();
-                    self.candidate_count = self.scan_view.rows.len();
-                    self.candidate_projection_entries_len = self.entries.len();
-                }
-                self.scan_view.total_size_bytes = total_size_bytes;
-                self.scan_view.groups = groups
-                    .into_iter()
-                    .map(|(key, (count, size_bytes))| CategorySummary {
-                        key,
-                        count,
-                        size_bytes,
-                    })
-                    .collect();
-                self.scan_view.groups.sort_by(|left, right| {
-                    left.key
-                        .order()
-                        .cmp(&right.key.order())
-                        .then(left.key.cmp(&right.key))
-                });
-                self.scan_view.source = Some(source);
-            }
-            self.scan_view.visible = self
-                .scan_view
-                .rows
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| {
-                    self.scan_view
-                        .filter
-                        .as_ref()
-                        .is_none_or(|filter| filter == &row.category.key)
-                })
-                .map(|(index, _)| index)
-                .collect();
-            self.scan_view.projected_filter = self.scan_view.filter.clone();
-            if self.view == View::Scan {
-                let focused = focused_path.and_then(|path| {
-                    self.scan_view
-                        .visible
-                        .iter()
-                        .position(|index| self.scan_view.rows[*index].path == path)
-                });
-                // On the first projection, preserve a valid caller-provided focus (e.g. a restored
-                // list state); changing an existing filter instead falls back to the first row.
-                let initial = (!filter_changed && focused.is_none())
-                    .then(|| self.list_state.selected())
-                    .flatten();
-                let selected = focused
-                    .or(initial.filter(|index| *index < self.scan_view.visible.len()))
-                    .or_else(|| (!self.scan_view.visible.is_empty()).then_some(0));
-                self.list_state.select(selected);
-                if filter_changed {
-                    *self.list_state.offset_mut() = 0;
-                }
-            }
-            self.refresh_hidden_scan_selection();
-        } else if self.plan.as_ref().map_or((0, 0), |plan| {
-            (
-                plan.summary.selected_count,
-                plan.summary.selected_size_bytes,
-            )
-        }) != self.scan_view.selected_summary
+    fn clear_scan_focus(&mut self) {
+        if self.view == View::Scan {
+            self.list_state.select(None);
+        } else {
+            self.saved_list_states
+                .entry(View::Scan)
+                .or_default()
+                .select(None);
+        }
+    }
+
+    pub(crate) fn poll_scan_projection(&mut self) -> bool {
+        let mut changed = false;
+        if self
+            .scan_view
+            .search_due
+            .is_some_and(|due| Instant::now() >= due)
         {
-            self.refresh_hidden_scan_selection();
+            self.scan_view.search_due = None;
+            self.ensure_scan_view_projection();
+            changed = true;
+        }
+        let Some(receiver) = self.scan_view.projection_rx.take() else {
+            return changed;
+        };
+        match receiver.try_recv() {
+            Ok(result) => {
+                self.scan_view.projection_cancel = None;
+                if result.data_revision == self.scan_data_revision
+                    && result.query_revision == self.scan_view.query_revision
+                {
+                    self.commit_scan_projection(result.visible);
+                }
+                true
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.scan_view.projection_rx = Some(receiver);
+                changed
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.scan_view.projection_cancel = None;
+                self.scan_view.projected_query = None;
+                self.scan_view.visible = Arc::new(Vec::new());
+                self.clear_scan_focus();
+                self.status = self.i18n.t("status_operation_disconnected");
+                true
+            }
         }
     }
 
     pub(crate) fn selected_scan_row(&self) -> Option<&ScanCandidateRow> {
-        let visible_index = self.list_state.selected()?;
-        let row_index = *self.scan_view.visible.get(visible_index)?;
-        self.scan_view.rows.get(row_index)
+        let state = if self.view == View::Scan {
+            &self.list_state
+        } else {
+            self.saved_list_states.get(&View::Scan)?
+        };
+        let visible = state.selected()?;
+        self.scan_view
+            .rows
+            .get(*self.scan_view.visible.get(visible)?)
     }
-
     pub(crate) fn scan_total_count(&self) -> usize {
         self.scan_view.rows.len()
     }
-
     pub(crate) fn scan_visible_count(&self) -> usize {
-        if self.scan_view.source.as_ref() == Some(&self.scan_projection_source())
-            && self.scan_view.projected_filter == self.scan_view.filter
-        {
-            self.scan_view.visible.len()
-        } else if self.scan_view.filter.is_none() {
-            self.plan
-                .as_ref()
-                .map_or_else(|| self.candidate_count_cached(), |plan| plan.items.len())
-        } else {
-            0
-        }
+        self.scan_view.visible.len()
     }
 
-    /// A visible-only selection change cannot affect hidden selections.
     pub(crate) fn cache_scan_selection_summary(&mut self) {
-        self.scan_view.selected_summary = self.plan.as_ref().map_or((0, 0), |plan| {
-            (
-                plan.summary.selected_count,
-                plan.summary.selected_size_bytes,
-            )
+        self.scan_view.selected_summary = self.plan.as_ref().map_or((0, 0), |p| {
+            (p.summary.selected_count, p.summary.selected_size_bytes)
         });
     }
 
     pub(crate) fn refresh_hidden_scan_selection(&mut self) {
-        self.scan_view.hidden_selected_count = 0;
-        self.scan_view.hidden_selected_bytes = 0;
-        let Some(plan) = &self.plan else {
-            self.scan_view.selected_summary = (0, 0);
-            return;
-        };
-        self.scan_view.selected_summary = (
-            plan.summary.selected_count,
-            plan.summary.selected_size_bytes,
-        );
-        let Some(filter) = &self.scan_view.filter else {
-            return;
-        };
-        for row in &self.scan_view.rows {
-            if row.category.key != *filter
-                && let Some(item) = plan.items.get(row.source_index)
-                && item.selected
-            {
-                self.scan_view.hidden_selected_count += 1;
-                self.scan_view.hidden_selected_bytes = self
-                    .scan_view
-                    .hidden_selected_bytes
-                    .saturating_add(item.size_bytes);
+        self.cache_scan_selection_summary();
+        let mut visible_count = 0usize;
+        let mut visible_bytes = 0u64;
+        if let Some(plan) = &self.plan {
+            for index in self.scan_view.visible.iter() {
+                if let Some(item) = plan.items.get(self.scan_view.rows[*index].source_index)
+                    && item.selected
+                {
+                    visible_count += 1;
+                    visible_bytes = visible_bytes.saturating_add(item.size_bytes);
+                }
             }
+        }
+        self.scan_view.hidden_selected_count = self
+            .scan_view
+            .selected_summary
+            .0
+            .saturating_sub(visible_count);
+        self.scan_view.hidden_selected_bytes = self
+            .scan_view
+            .selected_summary
+            .1
+            .saturating_sub(visible_bytes);
+    }
+
+    pub(crate) fn update_scan_selection_flag(
+        &mut self,
+        index: usize,
+        selected: bool,
+        review: bool,
+    ) {
+        self.scan_view.selection_revision = self.scan_view.selection_revision.wrapping_add(1);
+        if let Some(flag) = Arc::make_mut(&mut self.scan_view.selection_flags).get_mut(index) {
+            *flag = selected;
+        }
+        if review {
+            if selected {
+                self.scan_view.selected_review_count += 1;
+            } else {
+                self.scan_view.selected_review_count =
+                    self.scan_view.selected_review_count.saturating_sub(1);
+            }
+        }
+    }
+
+    pub(crate) fn finish_scan_selection_change(&mut self, global: bool) {
+        if self.scan_view.only_selected {
+            self.scan_view.keep_row_position = true;
+            self.scan_view.projected_query = None;
+            self.ensure_scan_view_projection();
+        } else if global {
+            self.refresh_hidden_scan_selection();
+        } else {
+            self.cache_scan_selection_summary();
         }
     }
 
@@ -375,8 +362,8 @@ impl Workbench {
                 self.scan_view
                     .groups
                     .iter()
-                    .position(|group| &group.key == filter)
-                    .map(|index| index + 1)
+                    .position(|g| &g.key == filter)
+                    .map(|i| i + 1)
             })
             .unwrap_or(0);
         self.scan_view.filter_state.select(Some(selected));
@@ -387,25 +374,25 @@ impl Workbench {
     pub(crate) fn handle_scan_filter_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
-                let selected = self.scan_view.filter_state.selected().unwrap_or(0);
+                let index = self.scan_view.filter_state.selected().unwrap_or(0);
                 self.scan_view
                     .filter_state
-                    .select(Some((selected + 1).min(self.scan_view.groups.len())));
+                    .select(Some((index + 1).min(self.scan_view.groups.len())));
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                let selected = self.scan_view.filter_state.selected().unwrap_or(0);
+                let index = self.scan_view.filter_state.selected().unwrap_or(0);
                 self.scan_view
                     .filter_state
-                    .select(Some(selected.saturating_sub(1)));
+                    .select(Some(index.saturating_sub(1)));
             }
             KeyCode::Enter => {
                 self.scan_view.filter = self
                     .scan_view
                     .filter_state
                     .selected()
-                    .and_then(|index| index.checked_sub(1))
-                    .and_then(|index| self.scan_view.groups.get(index))
-                    .map(|group| group.key.clone());
+                    .and_then(|i| i.checked_sub(1))
+                    .and_then(|i| self.scan_view.groups.get(i))
+                    .map(|g| g.key.clone());
                 self.scan_view.filter_open = false;
                 self.ensure_scan_view_projection();
             }
@@ -467,11 +454,11 @@ mod tests {
 
     fn mixed_plan() -> (tempfile::TempDir, Workbench) {
         let (root, mut app) = fixture();
-        app.entries = vec![
+        app.entries = Arc::new(vec![
             entry(&app, "alpha", 100, vec![hit("build-cache", "build")]),
             entry(&app, "beta", 200, vec![hit("logs", "logs")]),
             entry(&app, "gamma", 300, vec![hit("build-cache", "build")]),
-        ];
+        ]);
         app.build_plan();
         app.ensure_scan_view_projection();
         assert_eq!(app.scan_view.rows.len(), 3);
@@ -485,7 +472,7 @@ mod tests {
         fallback.match_role = RuleMatchRole::Fallback;
         let mut different_reason = hit("build-cache", "build-other");
         different_reason.reason = "another reason".to_string();
-        app.entries = vec![
+        app.entries = Arc::new(vec![
             entry(
                 &app,
                 "shadowed",
@@ -504,7 +491,7 @@ mod tests {
                 300,
                 vec![hit("build-cache", "build"), different_reason],
             ),
-        ];
+        ]);
         app.build_plan();
         let rows = &app.scan_view.rows;
         let shadowed = rows
@@ -554,8 +541,9 @@ mod tests {
         app.list_state.select(Some(1));
         let focused = app.selected_scan_row().unwrap().path.clone();
         let mut replacement = app.plan.clone().unwrap();
-        replacement.items.reverse();
+        Arc::make_mut(&mut replacement).items.reverse();
         app.plan = Some(replacement);
+        app.invalidate_scan_view_projection();
         app.ensure_scan_view_projection();
         assert_eq!(app.selected_scan_row().unwrap().path, focused);
         for row in &app.scan_view.rows {
@@ -579,7 +567,7 @@ mod tests {
             focused_before_review,
             "review preserves scan focus"
         );
-        let item = &mut app.plan.as_mut().unwrap().items[0];
+        let item = &mut Arc::make_mut(app.plan.as_mut().unwrap()).items[0];
         item.category = "custom-data".to_string();
         item.evidence.as_mut().unwrap().matched_rules[0].category = "custom-data".to_string();
         app.invalidate_scan_view_projection();
@@ -617,7 +605,7 @@ mod tests {
         let (_root, mut app) = fixture();
         let mut fallback = hit("temporary-files", "fallback");
         fallback.match_role = RuleMatchRole::Fallback;
-        app.entries = vec![
+        app.entries = Arc::new(vec![
             entry(&app, "plain", 50, vec![]),
             entry(
                 &app,
@@ -625,7 +613,7 @@ mod tests {
                 100,
                 vec![fallback, hit("build-cache", "primary")],
             ),
-        ];
+        ]);
         app.view = View::Scan;
         app.ensure_scan_view_projection();
         assert_eq!(app.scan_view.rows[0].source_index, 1);
@@ -634,10 +622,11 @@ mod tests {
             CategoryKey::Named("build-cache".into())
         );
         assert!(app.scan_view.rows[0].category.tentative);
-        app.entries = vec![
+        app.entries = Arc::new(vec![
             entry(&app, "logs", 75, vec![hit("logs", "logs")]),
             entry(&app, "plain", 50, vec![]),
-        ];
+        ]);
+        app.invalidate_scan_view_projection();
         app.ensure_scan_view_projection();
         assert_eq!(app.scan_view.rows[0].source_index, 0);
         assert_eq!(

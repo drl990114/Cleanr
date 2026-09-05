@@ -5,7 +5,17 @@ impl Workbench {
     /// coalesced so a fast filesystem walk causes one status allocation per UI poll, not one per
     /// channel message.
     pub fn poll_tasks(&mut self) -> bool {
-        let operation_changed = self.poll_operation();
+        let notice_changed = self.poll_update_notice();
+        let usage_changed = self.poll_usage();
+        let projection_changed = self.poll_scan_projection();
+        let plan_changed = self.poll_plan();
+        let history_changed = self.poll_history();
+        let operation_changed = self.poll_operation()
+            || plan_changed
+            || history_changed
+            || projection_changed
+            || usage_changed
+            || notice_changed;
         let Some(rx) = self.scan_rx.take() else {
             return operation_changed;
         };
@@ -96,22 +106,160 @@ impl Workbench {
         operation_changed
     }
 
-    fn poll_operation(&mut self) -> bool {
-        let Some(receiver) = self.operation_rx.take() else {
+    fn poll_update_notice(&mut self) -> bool {
+        let Some(receiver) = self.update_notice_rx.take() else {
             return false;
+        };
+        match receiver.try_recv() {
+            Ok(notice) => {
+                self.update_notice = Some(notice);
+                self.view == View::Home
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.update_notice_rx = Some(receiver);
+                false
+            }
+            Err(mpsc::TryRecvError::Disconnected) => false,
+        }
+    }
+
+    fn poll_usage(&mut self) -> bool {
+        let Some(receiver) = self.usage_rx.take() else {
+            return false;
+        };
+        match receiver.try_recv() {
+            Ok(usage) => {
+                self.usage_order = usage.order;
+                self.usage_max_size = usage.max_size;
+                self.usage_descendant_counts = usage.descendant_counts;
+                self.usage_ready = true;
+                if self.view == View::Usage {
+                    self.show_usage();
+                }
+                true
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.usage_rx = Some(receiver);
+                false
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.status = self.i18n.t("status_operation_disconnected");
+                true
+            }
+        }
+    }
+
+    fn poll_plan(&mut self) -> bool {
+        let Some(receiver) = self.plan_rx.take() else {
+            return false;
+        };
+        match receiver.try_recv() {
+            Ok(prepared) => {
+                self.plan_cancel = None;
+                if prepared.source_revision != self.scan_data_revision {
+                    return false;
+                }
+                match prepared.result {
+                    Ok((plan, index)) => {
+                        let days = self
+                            .analysis
+                            .as_ref()
+                            .map_or(0, |a| a.policy.preselect_after_days);
+                        if self.view == View::Scan {
+                            self.status = self.plan_ready_status(&plan, days);
+                        }
+                        self.plan = Some(Arc::new(plan));
+                        self.scan_data_revision = self.scan_data_revision.wrapping_add(1);
+                        self.install_scan_index(index);
+                    }
+                    Err(error) => {
+                        self.plan = None;
+                        self.invalidate_scan_view_projection();
+                        self.status = error;
+                    }
+                }
+                true
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.plan_rx = Some(receiver);
+                false
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.plan = None;
+                self.invalidate_scan_view_projection();
+                self.status = self.i18n.t("status_operation_disconnected");
+                true
+            }
+        }
+    }
+
+    fn poll_history(&mut self) -> bool {
+        let Some(receiver) = self.history_rx.take() else {
+            return false;
+        };
+        match receiver.try_recv() {
+            Ok(Ok((executions, restores))) => {
+                self.execution_manifests = executions;
+                self.restore_manifests = restores;
+                if self.view == View::Restore {
+                    self.status = self.i18n.t(if self.execution_manifests.is_empty() {
+                        "status_no_manifests"
+                    } else {
+                        "restore_select_hint"
+                    });
+                    let count = self.execution_manifests.len();
+                    self.list_state.select(
+                        (count > 0).then(|| self.list_state.selected().unwrap_or(0).min(count - 1)),
+                    );
+                }
+                true
+            }
+            Ok(Err(error)) => {
+                self.execution_manifests.clear();
+                self.restore_manifests.clear();
+                self.status = error;
+                true
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                self.history_rx = Some(receiver);
+                false
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.execution_manifests.clear();
+                self.restore_manifests.clear();
+                self.status = self.i18n.t("status_operation_disconnected");
+                true
+            }
+        }
+    }
+
+    fn poll_operation(&mut self) -> bool {
+        let mut progress_changed = false;
+        if let Some(receiver) = &self.operation_sample_rx {
+            while let Ok(progress) = receiver.try_recv() {
+                self.operation_progress = Some(progress);
+                progress_changed = true;
+            }
+        }
+        let Some(receiver) = self.operation_rx.take() else {
+            return progress_changed;
         };
         match receiver.try_recv() {
             Ok(event) => {
                 self.operation_kind = None;
+                self.operation_sample_rx = None;
+                self.operation_progress = None;
                 self.finish_operation(event);
                 true
             }
             Err(mpsc::TryRecvError::Empty) => {
                 self.operation_rx = Some(receiver);
-                false
+                progress_changed
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.operation_kind = None;
+                self.operation_sample_rx = None;
+                self.operation_progress = None;
                 self.status = self.i18n.t("status_operation_disconnected");
                 true
             }
@@ -197,6 +345,7 @@ impl Workbench {
             candidate_entry_indices,
             usage,
             planning,
+            index,
         } = prepared;
         let workers_used = report.workers_used;
         self.scan_as_of = report.as_of;
@@ -208,7 +357,7 @@ impl Workbench {
         self.scan_global_evidence = global_scan;
         self.candidate_count = candidate_count;
         self.candidate_entry_indices = candidate_entry_indices;
-        self.entries = report.entries;
+        self.entries = Arc::new(report.entries);
         self.scan_view = ScanViewState::default();
         self.candidate_projection_entries_len = self.entries.len();
         self.analysis = None;
@@ -220,6 +369,7 @@ impl Workbench {
             self.usage_order = usage.order;
             self.usage_max_size = usage.max_size;
             self.usage_descendant_counts = usage.descendant_counts;
+            self.usage_ready = true;
         }
         self.task_log.push(self.i18n.format(
             "status_scan_log",
@@ -255,19 +405,17 @@ impl Workbench {
                 plan,
             })) => {
                 let inactive_days = analysis.policy.preselect_after_days;
-                self.analysis = Some(analysis);
+                self.analysis = Some(Arc::new(analysis));
                 self.candidate_ids_by_path = candidate_ids_by_path;
                 self.selection = selection;
                 self.status = self.plan_ready_status(&plan, inactive_days);
-                self.plan = Some(plan);
-                self.invalidate_scan_view_projection();
-                if self.view == View::Scan {
-                    self.select_first();
-                }
+                self.plan = Some(Arc::new(plan));
             }
             Ok(None) => {}
             Err(error) => self.status = error,
         }
+        self.scan_data_revision = self.scan_data_revision.wrapping_add(1);
+        self.install_scan_index(index);
         if usage_after_scan {
             self.show_usage();
         } else if self.view == View::Scan {
@@ -364,7 +512,16 @@ impl Workbench {
         self.scan_diagnostics = None;
         self.frame_durations.clear();
         self.input_durations.clear();
-        self.entries.clear();
+        self.input_to_frame_durations.clear();
+        self.task_commit_durations.clear();
+        self.entries = Arc::new(Vec::new());
+        self.saved_list_states.clear();
+        self.usage_rx = None;
+        self.plan_rx = None;
+        if let Some(cancel) = self.plan_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.usage_ready = false;
         self.scan_view = ScanViewState::default();
         self.scan_budget_exceeded.clear();
         self.candidate_count = 0;
@@ -575,20 +732,6 @@ impl Workbench {
                 ("input_max", format_duration(input.max)),
             ],
         ));
-    }
-
-    pub(crate) fn refresh_history(&mut self) {
-        match load_history(&self.state_dir) {
-            Ok((execution_manifests, restore_manifests)) => {
-                self.execution_manifests = execution_manifests;
-                self.restore_manifests = restore_manifests;
-            }
-            Err(error) => {
-                self.execution_manifests.clear();
-                self.restore_manifests.clear();
-                self.status = error.to_string();
-            }
-        }
     }
 }
 
