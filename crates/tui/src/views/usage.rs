@@ -5,174 +5,140 @@ pub(crate) fn render_usage(frame: &mut Frame<'_>, area: Rect, app: &mut Workbenc
         render_scan_progress(frame, area, app);
         return;
     }
-
-    let item_count = app.usage_order.len();
-    let bar_width = usage_bar_width(area.width);
-
-    let details = app
-        .list_state
-        .selected()
-        .and_then(|index| {
-            app.usage_order
-                .get(index)
-                .and_then(|entry_index| app.entries.get(*entry_index))
-                .map(|entry| (index, entry))
-        })
-        .map_or_else(
-            || {
-                vec![
-                    detail_line(
-                        &app.i18n.t("home_detail_scope"),
-                        join_paths(&app.roots),
-                        app.theme.fg_dim,
-                        app.theme,
-                    ),
-                    detail_line(
-                        &app.i18n.t("usage_metric_total"),
-                        format_bytes(app.scan_summary.total_size_bytes),
-                        app.theme.cyan,
-                        app.theme,
-                    ),
-                    detail_line(
-                        &app.i18n.t("usage_metric_entries"),
-                        app.scan_summary.entries_seen.to_string(),
-                        app.theme.fg,
-                        app.theme,
-                    ),
-                    Line::from(vec![Span::styled(
-                        app.i18n.t("usage_context_hint"),
-                        Style::default().fg(app.theme.fg_dim),
-                    )]),
-                ]
-            },
-            |(index, entry)| {
-                vec![
-                    detail_line(
-                        &app.i18n.t("detail_path"),
-                        entry.path.display().to_string(),
-                        app.theme.fg_dim,
-                        app.theme,
-                    ),
-                    detail_line(
-                        &app.i18n.t("detail_size"),
-                        format_bytes(entry.size_bytes),
-                        app.theme.cyan,
-                        app.theme,
-                    ),
-                    detail_line(
-                        &app.i18n.t("detail_kind"),
-                        kind_label(entry.kind).to_string(),
-                        app.theme.fg,
-                        app.theme,
-                    ),
-                    detail_line(
-                        &app.i18n.t("detail_contained"),
-                        app.usage_descendant_counts
-                            .get(index)
-                            .copied()
-                            .unwrap_or(0)
-                            .to_string(),
-                        app.theme.ok,
-                        app.theme,
-                    ),
-                    detail_line(
-                        &app.i18n.t("detail_matched_rules"),
-                        entry.rule_hits.len().to_string(),
-                        app.theme.warn,
-                        app.theme,
-                    ),
-                ]
-            },
-        );
-
-    let title = app.i18n.t("label_usage");
-    let detail_title = app.i18n.t("label_details");
-
-    let candidates = app.plan.as_ref().map_or_else(
-        || app.candidate_count_cached(),
-        |plan| plan.summary.candidate_count,
+    let rows = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).split(area);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!("{}  ", app.i18n.t("usage_metric_total")),
+                Style::default().fg(app.theme.fg_dim),
+            ),
+            Span::styled(
+                format_bytes(app.scan_summary.total_size_bytes),
+                Style::default()
+                    .fg(app.theme.fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])),
+        rows[0],
     );
-    let selected = app
-        .plan
-        .as_ref()
-        .map_or(0, |plan| plan.summary.selected_count);
-    let overview = Paragraph::new(Line::from(vec![
-        Span::raw("  "),
-        Span::styled(
-            app.i18n.t("usage_overview"),
-            Style::default()
-                .fg(app.theme.accent)
-                .add_modifier(Modifier::BOLD),
+    let mut details = Vec::new();
+    let mut more = vec![
+        detail_line(
+            &app.i18n.t("home_detail_scope"),
+            join_paths(&app.roots),
+            app.theme.fg_dim,
+            app.theme,
         ),
-        Span::styled("  ·  ", Style::default().fg(app.theme.border)),
-        metric_span(
-            app.i18n.t("usage_metric_total"),
-            format_bytes(app.scan_summary.total_size_bytes),
-            app.theme.cyan,
-        ),
-        Span::styled("  ·  ", Style::default().fg(app.theme.border)),
-        metric_span(
-            app.i18n.t("usage_metric_entries"),
+        detail_line(
+            &app.i18n.t("usage_metric_entries"),
             app.scan_summary.entries_seen.to_string(),
+            app.theme.fg_dim,
+            app.theme,
+        ),
+    ];
+    if let Some((index, entry)) = app.list_state.selected().and_then(|index| {
+        app.usage_order
+            .get(index)
+            .and_then(|entry_index| app.entries.get(*entry_index))
+            .map(|entry| (index, entry))
+    }) {
+        details.push(home_title(
+            entry.path.file_name().map_or_else(
+                || entry.path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+            app.theme,
+        ));
+        details.push(Line::from(format_bytes(entry.size_bytes)));
+        detail_section(
+            &mut details,
+            app.i18n.t("detail_path"),
+            entry.path.display().to_string(),
             app.theme.fg,
-        ),
-        Span::styled("  ·  ", Style::default().fg(app.theme.border)),
-        metric_span(
-            app.i18n.t("usage_metric_candidates"),
-            candidates.to_string(),
-            app.theme.warn,
-        ),
-        Span::styled("  ·  ", Style::default().fg(app.theme.border)),
-        metric_span(
-            app.i18n.t("usage_metric_selected"),
-            selected.to_string(),
-            app.theme.ok,
-        ),
-    ]))
-    .wrap(Wrap { trim: true })
-    .style(Style::default().bg(app.theme.surface));
-    let summary_area = fluid_content_rect(area, 220, 1);
-    frame.render_widget(overview, summary_area);
-
-    let content_area = Rect::new(
-        area.x,
-        summary_area.y.saturating_add(summary_area.height),
-        area.width,
-        area.bottom()
-            .saturating_sub(summary_area.y.saturating_add(summary_area.height)),
-    );
-    let empty_message = app.i18n.t(if app.usage_rx.is_some() {
-        "scan_phase_usage"
+            app.theme,
+        );
+        more.extend([
+            detail_line(
+                &app.i18n.t("detail_kind"),
+                app.i18n.t(&format!("kind_{}", kind_label(entry.kind))),
+                app.theme.fg_dim,
+                app.theme,
+            ),
+            detail_line(
+                &app.i18n.t("detail_contained"),
+                app.usage_descendant_counts
+                    .get(index)
+                    .copied()
+                    .unwrap_or(0)
+                    .to_string(),
+                app.theme.fg_dim,
+                app.theme,
+            ),
+            detail_line(
+                &app.i18n.t("detail_matched_rules"),
+                entry.rule_hits.len().to_string(),
+                app.theme.fg_dim,
+                app.theme,
+            ),
+        ]);
     } else {
-        "status_no_scan_results"
-    });
-    let entries = &app.entries;
-    let usage_order = &app.usage_order;
-    let max_size = app.usage_max_size;
-    let theme = app.theme;
-    app.viewport_height = render_context_workspace_virtualized(
-        frame,
-        content_area,
-        &mut app.list_state,
-        theme,
-        title,
-        item_count,
-        move |window| {
-            if item_count == 0 {
-                return vec![ListItem::new(Line::from(vec![Span::styled(
-                    empty_message,
-                    Style::default().fg(theme.fg_dim),
-                )]))];
-            }
-            usage_order[window]
-                .iter()
-                .filter_map(|entry_index| entries.get(*entry_index))
-                .map(|entry| ListItem::new(usage_bar_line(entry, max_size, bar_width, theme)))
-                .collect()
-        },
-        detail_title,
+        details.push(Line::from(app.i18n.t("status_no_scan_results")));
+    }
+    let list_width = responsive_workspace(area, frame.area().width >= 88)[0].width;
+    let bar_width = match list_width {
+        0..=42 => 4,
+        43..=64 => 8,
+        _ => 12,
+    };
+    let size_width = display_width(&format_bytes(app.scan_summary.total_size_bytes)).max(10) as u16;
+    let content = ContextContent {
+        title: app.i18n.t("label_usage"),
+        count: app.usage_order.len(),
+        columns: vec![
+            Constraint::Fill(1),
+            Constraint::Length(bar_width),
+            Constraint::Length(size_width),
+        ],
+        empty: app.i18n.t(if app.usage_rx.is_some() {
+            "scan_phase_usage"
+        } else {
+            "status_no_scan_results"
+        }),
         details,
-    );
+        more,
+    };
+    render_context_workspace(frame, rows[1], app, content, |app, window, widths| {
+        app.usage_order[window]
+            .iter()
+            .filter_map(|index| app.entries.get(*index))
+            .map(|entry| {
+                let name = compact_path(&entry.path, &app.roots);
+                let name = if entry.kind == EntryKind::Directory {
+                    format!("{name}/")
+                } else {
+                    name
+                };
+                let filled = if app.usage_max_size == 0 {
+                    0
+                } else {
+                    ((u128::from(entry.size_bytes) * u128::from(widths[1]))
+                        .div_ceil(u128::from(app.usage_max_size)) as usize)
+                        .min(widths[1] as usize)
+                };
+                Row::new(vec![
+                    text_cell(name, widths[0], app.theme.fg),
+                    Cell::from(Line::from(vec![
+                        Span::styled("━".repeat(filled), Style::default().fg(app.theme.accent)),
+                        Span::styled(
+                            "─".repeat(widths[1] as usize - filled),
+                            Style::default().fg(app.theme.border),
+                        ),
+                    ])),
+                    right_cell(format_bytes(entry.size_bytes), app.theme.fg),
+                ])
+            })
+            .collect()
+    });
 }
 
 #[cfg(test)]
@@ -184,56 +150,4 @@ pub(crate) fn usage_descendant_count(entries: &[ScanEntry], parent: &ScanEntry) 
         .iter()
         .filter(|entry| entry.path != parent.path && entry.path.starts_with(&parent.path))
         .count()
-}
-
-pub(crate) fn usage_bar_line(
-    entry: &ScanEntry,
-    max_size: u64,
-    bar_width: usize,
-    theme: Theme,
-) -> Line<'static> {
-    let size_str = format_bytes(entry.size_bytes);
-    let filled = if max_size == 0 {
-        0
-    } else {
-        usize::try_from(
-            (u128::from(entry.size_bytes) * bar_width as u128).div_ceil(u128::from(max_size)),
-        )
-        .unwrap_or(bar_width)
-        .min(bar_width)
-    };
-    let empty = bar_width.saturating_sub(filled);
-
-    let name = entry
-        .path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| entry.path.display().to_string());
-    let icon = kind_icon(entry.kind);
-    let suffix = if entry.kind == EntryKind::Directory {
-        "/"
-    } else {
-        ""
-    };
-
-    Line::from(vec![
-        Span::styled(format!("{size_str:>10}"), Style::default().fg(theme.cyan)),
-        Span::raw("  "),
-        Span::styled("━".repeat(filled), Style::default().fg(theme.accent)),
-        Span::styled("─".repeat(empty), Style::default().fg(theme.border)),
-        Span::raw("  "),
-        Span::styled(
-            format!("{icon}{name}{suffix}"),
-            Style::default().fg(theme.fg),
-        ),
-    ])
-}
-
-pub(crate) fn usage_bar_width(area_width: u16) -> usize {
-    match area_width {
-        0..=54 => 4,
-        55..=84 => 8,
-        85..=124 => 12,
-        _ => 18,
-    }
 }

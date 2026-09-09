@@ -7,6 +7,43 @@ later source or CI fixes.
 
 ## Unreleased
 
+- Refresh the terminal interface with aligned columns, responsive spacing, and
+  consistent details across Scan, Usage, Restore, Languages, Rules, Plugins, and
+  Tasks. Wide terminals keep details beside the list; narrow terminals use an
+  overlay. `Tab` moves focus without reflow, and `i` reveals technical metadata.
+- Add inline path search with `p`, sorting with `o`, and a selected-only view with
+  `v`. Search handles case and slash differences, preserves Unicode text, and
+  restores the previous query on `Esc`. Filters retain selections and keep
+  hidden selections visible in the totals.
+- Reuse scan snapshots and remember each page's list position. Prepare large
+  result projections, plans, usage data, and restore history in the background;
+  discard stale results and draw only when visible state changes or tasks animate.
+- Clarify cleanup and restore confirmations with Cancel selected by default.
+  Cleanup confirmation counts items needing review and lets `v` open all
+  selections. Submission stays disabled when the full confirmation cannot fit.
+- Show cleanup and restore stages and processed counts while keeping selections
+  fixed. Counts advance after outcomes are recorded; cleanup results link to
+  restore history with `z`.
+- Check for updates in the background with a bounded timeout, keeping notices
+  separate from task status and errors.
+- Synchronize English and Simplified Chinese usage guidance, fix documentation
+  heading anchors, and validate Markdown/MDX syntax in CI.
+
+### 简体中文
+
+- 统一扫描、空间占用、恢复、语言、规则、插件和任务页面的列对齐、间距与详情布局。
+  宽屏保留右侧详情，窄屏使用浮层；`Tab` 切换焦点时保持布局，`i` 展开技术信息。
+- 新增 `p` 行内路径搜索、`o` 排序和 `v` 仅看已选项。搜索忽略大小写与路径分隔符
+  差异，保留中文等 Unicode 文本，`Esc` 恢复原查询；筛选保留选择并显示隐藏选择汇总。
+- 复用扫描快照并记住各页面的列表位置。大结果集筛选、计划生成、空间统计与恢复
+  历史读取在后台完成，丢弃过期结果，仅在界面变化或任务动画期间重绘。
+- 清理与恢复确认默认选中“取消”。清理确认显示需审查条目数，按 `v` 可检查全部
+  已选项；窗口无法完整显示确认内容时禁止提交。
+- 清理与恢复期间固定选择，显示阶段和处理进度；结果写入记录后才推进计数，清理
+  结果可通过 `z` 打开恢复历史。
+- 更新检查移到后台并设置超时，更新提示与任务状态、错误分别显示。
+- 同步中英文使用文档，修复标题锚点，并在 CI 中检查 Markdown/MDX 语法。
+
 ## 0.15.0
 
 - Show cleanup categories, filter candidates with `f`, retain selections across

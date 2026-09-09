@@ -120,6 +120,16 @@ impl DurationRecorder {
     }
 }
 
+/// Per-view presentation state; never persisted to configuration or cleanup evidence.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DetailsState {
+    pub(crate) focused: bool,
+    pub(crate) scroll: u16,
+    pub(crate) max_scroll: u16,
+    pub(crate) viewport_height: u16,
+    pub(crate) expanded: bool,
+}
+
 pub struct Workbench {
     pub(crate) roots: Vec<PathBuf>,
     pub(crate) config: Config,
@@ -141,6 +151,8 @@ pub struct Workbench {
     pub(crate) help_scroll: u16,
     pub(crate) help_max_scroll: u16,
     pub(crate) status: String,
+    /// Last routine summary already shown by the active page. New errors and notices still render.
+    pub(crate) quiet_status: String,
     pub(crate) update_notice: Option<crate::UpdateNotice>,
     pub(crate) update_notice_rx: Option<Receiver<crate::UpdateNotice>>,
     /// Operation result restored after an automatic post-mutation refresh scan finishes.
@@ -203,6 +215,8 @@ pub struct Workbench {
     pub(crate) should_quit: bool,
     pub(crate) list_state: ListState,
     pub(crate) saved_list_states: HashMap<View, ListState>,
+    pub(crate) details: DetailsState,
+    pub(crate) saved_details: HashMap<View, DetailsState>,
     pub(crate) usage_ready: bool,
     pub(crate) usage_rx: Option<Receiver<crate::effects::UsageProjection>>,
     pub(crate) plan_cancel: Option<Arc<AtomicBool>>,

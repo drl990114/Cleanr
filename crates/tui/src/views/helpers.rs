@@ -74,7 +74,7 @@ pub(crate) fn truncate_text(text: &str, max_width: usize) -> String {
     }
 
     let budget = max_width.saturating_sub(marker_width);
-    let head_width = budget / 2;
+    let head_width = budget.div_ceil(2);
     let tail_width = budget.saturating_sub(head_width);
     format!(
         "{}{marker}{}",
@@ -123,48 +123,203 @@ pub(crate) fn join_paths(paths: &[PathBuf]) -> String {
         .join(", ")
 }
 
-pub(crate) fn kind_icon(kind: EntryKind) -> &'static str {
-    match kind {
-        EntryKind::Directory => "▣ ",
-        EntryKind::Symlink => "↗ ",
-        EntryKind::File => "· ",
-        EntryKind::Other => "? ",
+/// The breakpoint is measured once against the terminal, never against an already inset pane.
+pub(crate) fn responsive_workspace(area: Rect, wide: bool) -> [Rect; 2] {
+    if !wide {
+        return [area, area];
     }
+    let detail_width = ((u32::from(area.width) * 38 / 100) as u16)
+        .clamp(32, 56)
+        .min(area.width);
+    let columns = Layout::horizontal([Constraint::Fill(1), Constraint::Length(detail_width)])
+        .spacing(1)
+        .split(area);
+    [columns[0], columns[1]]
 }
 
-pub(crate) fn confidence_color(confidence: cleanr_core::Confidence, theme: Theme) -> Color {
-    match confidence {
-        cleanr_core::Confidence::High => theme.ok,
-        cleanr_core::Confidence::Medium => theme.warn,
-        cleanr_core::Confidence::Low => theme.danger,
+pub(crate) fn panel_block(title: String, theme: Theme) -> Block<'static> {
+    Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme.border))
+        .title(format!("{title} "))
+        .title_style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD))
+        // Keep a stable gutter even when the scrollbar disappears.
+        .padding(Padding::new(0, 1, 0, 0))
+}
+
+pub(crate) fn popup_block(title: String, theme: Theme) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme.border))
+        .padding(Padding::horizontal(1))
+        .style(Style::default().bg(theme.bg).fg(theme.fg))
+        .title(format!(" {title} "))
+        .title_style(Style::default().fg(theme.fg).add_modifier(Modifier::BOLD))
+}
+
+/// Render only the visible slice; application navigation keeps its existing absolute ListState.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_table_list<F>(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    app: &mut Workbench,
+    title: String,
+    item_count: usize,
+    constraints: &[Constraint],
+    empty_message: String,
+    rows_for_window: F,
+) where
+    F: FnOnce(&Workbench, Range<usize>, &[u16]) -> Vec<Row<'static>>,
+{
+    let block = panel_block(title, app.theme);
+    let inner = block.inner(area);
+    let viewport_height = usize::from(inner.height.max(1));
+    app.viewport_height = inner.height.max(1);
+    let window = visible_list_window(&mut app.list_state, item_count, viewport_height);
+    let widths = Layout::horizontal(constraints.iter().copied())
+        .spacing(1)
+        .split(Rect::new(0, 0, inner.width.saturating_sub(2), 1))
+        .iter()
+        .map(|column| column.width)
+        .collect::<Vec<_>>();
+    if item_count == 0 {
+        frame.render_widget(
+            Paragraph::new(empty_message)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(app.theme.fg_dim))
+                .block(block),
+            area,
+        );
+        return;
     }
+    let rows = rows_for_window(app, window.clone(), &widths);
+    let local = local_list_state(&app.list_state, &window);
+    let mut state = TableState::default().with_selected(local.selected());
+    let table = Table::new(rows, widths.iter().copied().map(Constraint::Length))
+        .block(block)
+        .column_spacing(1)
+        .highlight_spacing(HighlightSpacing::Always)
+        .highlight_symbol("› ")
+        .row_highlight_style(Style::default().add_modifier(Modifier::BOLD));
+    frame.render_stateful_widget(table, area, &mut state);
+    render_list_scrollbar(
+        frame,
+        area,
+        item_count,
+        viewport_height,
+        app.list_state.selected().unwrap_or(window.start),
+        app.theme,
+    );
 }
 
-pub(crate) fn metric_span(label: String, value: String, value_color: Color) -> Span<'static> {
-    Span::styled(
-        format!("{label} {value}"),
-        Style::default()
-            .fg(value_color)
-            .add_modifier(Modifier::BOLD),
-    )
+pub(crate) fn text_cell(text: impl AsRef<str>, width: u16, color: Color) -> Cell<'static> {
+    Cell::from(truncate_text(text.as_ref(), width as usize)).style(Style::default().fg(color))
 }
 
-pub(crate) fn responsive_workspace(area: Rect, list_percent: u16) -> [Rect; 2] {
-    let chunks = if area.width >= 88 {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(list_percent),
-                Constraint::Percentage(100u16.saturating_sub(list_percent)),
-            ])
-            .split(area)
+pub(crate) fn right_cell(text: impl Into<String>, color: Color) -> Cell<'static> {
+    Cell::from(Line::from(text.into()).alignment(ratatui::layout::Alignment::Right))
+        .style(Style::default().fg(color))
+}
+
+pub(crate) fn detail_section(
+    lines: &mut Vec<Line<'static>>,
+    label: String,
+    value: String,
+    color: Color,
+    theme: Theme,
+) {
+    if value.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        label,
+        Style::default().fg(theme.fg_dim),
+    )));
+    lines.push(Line::from(Span::styled(value, Style::default().fg(color))));
+}
+
+pub(crate) fn render_details(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    app: &mut Workbench,
+    mut lines: Vec<Line<'static>>,
+    more: Vec<Line<'static>>,
+) {
+    let wide = frame.area().width >= 88;
+    if !wide && !app.details.focused {
+        return;
+    }
+    let area = if wide {
+        area
     } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
-            .split(area)
+        // Cover the full terminal width so underlying CJK continuation cells cannot damage the border.
+        Rect::new(frame.area().x, area.y, frame.area().width, area.height)
     };
-    [chunks[0], chunks[1]]
+    if !wide {
+        frame.render_widget(Clear, area);
+    }
+    let title = format!("{} [Tab]", app.i18n.t("label_details"));
+    let block = if wide {
+        Block::default()
+            .borders(Borders::TOP | Borders::LEFT)
+            .padding(Padding::horizontal(1))
+            .title(format!(" {title} "))
+    } else {
+        popup_block(title, app.theme)
+    }
+    .style(Style::default().bg(app.theme.bg).fg(app.theme.fg))
+    .border_style(Style::default().fg(if app.details.focused {
+        app.theme.accent
+    } else {
+        app.theme.border
+    }))
+    .title_style(
+        Style::default()
+            .fg(if app.details.focused {
+                app.theme.accent
+            } else {
+                app.theme.fg
+            })
+            .add_modifier(Modifier::BOLD),
+    );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if !more.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{} {} [i]",
+                if app.details.expanded { "▾" } else { "▸" },
+                app.i18n.t("detail_more")
+            ),
+            Style::default().fg(app.theme.fg_dim),
+        )));
+        if app.details.expanded {
+            lines.extend(more);
+        }
+    }
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+    app.details.viewport_height = inner.height;
+    app.details.max_scroll = u16::try_from(
+        paragraph
+            .line_count(inner.width)
+            .saturating_sub(inner.height as usize),
+    )
+    .unwrap_or(u16::MAX);
+    app.details.scroll = app.details.scroll.min(app.details.max_scroll);
+    frame.render_widget(paragraph.scroll((app.details.scroll, 0)), inner);
+    if app.details.max_scroll > 0 && !inner.is_empty() {
+        render_scrollbar(
+            frame,
+            Rect::new(inner.right(), inner.y, 1, inner.height),
+            usize::from(app.details.max_scroll) + usize::from(inner.height),
+            usize::from(inner.height),
+            usize::from(app.details.scroll),
+            app.theme,
+        );
+    }
 }
 
 /// Keep the absolute selection visible and return only the rows needed for this frame.
@@ -227,6 +382,24 @@ pub(crate) fn render_list_scrollbar(
         1,
         area.height.saturating_sub(1),
     );
+    render_scrollbar(
+        frame,
+        scrollbar_area,
+        content_len,
+        viewport_len,
+        position,
+        theme,
+    );
+}
+
+fn render_scrollbar(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    content_len: usize,
+    viewport_len: usize,
+    position: usize,
+    theme: Theme,
+) {
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
         .end_symbol(None)
@@ -237,14 +410,14 @@ pub(crate) fn render_list_scrollbar(
     let mut scrollbar_state = ScrollbarState::new(content_len)
         .position(position)
         .viewport_content_length(viewport_len);
-    frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
 }
 
 pub(crate) fn fluid_content_rect(area: Rect, max_width: u16, desired_height: u16) -> Rect {
     let side_margin: u16 = match area.width {
-        0..=95 => 0,
-        96..=159 => 2,
-        _ => 4,
+        0..=31 => 0,
+        32..=63 => 1,
+        _ => 2,
     };
     let available_width = area.width.saturating_sub(side_margin.saturating_mul(2));
     let width = available_width.min(max_width);
@@ -258,10 +431,7 @@ pub(crate) fn fluid_content_rect(area: Rect, max_width: u16, desired_height: u16
 }
 
 pub(crate) fn ime_guard_position(area: Rect) -> Position {
-    Position::new(
-        area.right().saturating_sub(2),
-        area.bottom().saturating_sub(2),
-    )
+    Position::new(area.right().saturating_sub(1).max(area.x), area.y)
 }
 
 #[cfg(test)]

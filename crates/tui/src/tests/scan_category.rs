@@ -225,7 +225,7 @@ fn scan_category_bulk_selection_covers_all_filtered_pages_in_ten_thousand_items(
         .into_owned();
     let screen = render_text(&mut app, 120, 24);
     assert!(screen.contains(&expected_name), "{screen}");
-    assert!(screen.contains("[Logs]"), "{screen}");
+    assert!(screen.contains("Logs"), "{screen}");
     assert!(app.list_state.offset() > 0);
     app.handle_key(key(KeyCode::Char('a')));
     assert_selection_summary(&app, 5_000);
@@ -251,7 +251,7 @@ fn scan_category_read_only_results_show_categories_without_enabling_cleanup() {
     app.ensure_scan_view_projection();
     filter_category(&mut app, Some("logs"));
     let screen = render_text(&mut app, 100, 28);
-    assert!(screen.contains("[Logs]"), "{screen}");
+    assert!(screen.contains("Logs"), "{screen}");
     for code in [
         KeyCode::Char(' '),
         KeyCode::Enter,
@@ -297,18 +297,21 @@ fn scan_category_nine_labels_remain_visible_with_size_in_both_languages_and_them
                     .collect::<String>();
                 let short = if locale == "en-US" { english } else { chinese };
                 assert!(
-                    compact.contains(&format!("[{short}]")),
+                    compact.contains(short),
                     "missing {category} / {locale}:\n{screen}"
                 );
                 assert!(screen.contains("1.00 KiB"), "{screen}");
                 assert!(screen.contains("[ ]"), "{screen}");
                 app.handle_key(key(KeyCode::Tab));
+                app.handle_key(key(KeyCode::Char('i')));
+                render_text(&mut app, 72, 26);
+                app.handle_key(key(KeyCode::End));
                 let screen = render_text(&mut app, 72, 26);
                 let compact = screen
                     .chars()
                     .filter(|ch| !ch.is_whitespace())
                     .collect::<String>();
-                assert!(app.scan_view.details_focused);
+                assert!(app.details.focused);
                 assert!(
                     compact.contains(category),
                     "raw category is absent from details:\n{screen}"
@@ -464,8 +467,13 @@ fn scan_category_plugin_names_and_conflicting_categories_are_explained_in_detail
     app.plan = None;
     app.build_plan();
     let screen = render_text(&mut app, 120, 36);
-    assert!(screen.contains("[Multiple]"), "{screen}");
+    assert!(screen.contains("Multiple"), "{screen}");
     assert!(screen.contains("Conflicting rules"), "{screen}");
+    app.handle_key(key(KeyCode::Tab));
+    app.handle_key(key(KeyCode::Char('i')));
+    render_text(&mut app, 120, 36);
+    app.handle_key(key(KeyCode::End));
+    let screen = render_text(&mut app, 120, 36);
     assert!(screen.contains("build-cache"), "{screen}");
     assert!(screen.contains("logs"), "{screen}");
     assert!(screen.contains("Cache rule 0"), "{screen}");

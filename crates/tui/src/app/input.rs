@@ -15,6 +15,7 @@ impl Workbench {
         self.input.hash(&mut stamp);
         self.input_cursor.hash(&mut stamp);
         self.status.hash(&mut stamp);
+        self.quiet_status.hash(&mut stamp);
         self.i18n.locale().hash(&mut stamp);
         self.list_state.selected().hash(&mut stamp);
         self.list_state.offset().hash(&mut stamp);
@@ -31,8 +32,9 @@ impl Workbench {
         self.scan_view.sort_open.hash(&mut stamp);
         self.scan_view.sort_state.selected().hash(&mut stamp);
         self.scan_view.only_selected.hash(&mut stamp);
-        self.scan_view.details_focused.hash(&mut stamp);
-        self.scan_view.details_scroll.hash(&mut stamp);
+        self.details.focused.hash(&mut stamp);
+        self.details.scroll.hash(&mut stamp);
+        self.details.expanded.hash(&mut stamp);
         self.has_background_task().hash(&mut stamp);
         self.confirmation_pending().hash(&mut stamp);
         (self.confirm_choice as u8).hash(&mut stamp);
@@ -50,10 +52,11 @@ impl Workbench {
 
     pub(crate) fn handle_key_changed(&mut self, key: KeyEvent) -> bool {
         let before = self.ui_stamp();
+        let view_before = self.view;
         let focus_before = self.list_state.selected();
         self.handle_key_inner(key);
-        if focus_before != self.list_state.selected() && !self.scan_view.details_focused {
-            self.scan_view.details_scroll = 0;
+        if view_before == self.view && focus_before != self.list_state.selected() {
+            self.details.scroll = 0;
         }
         let ime_input = key.kind == KeyEventKind::Press
             && matches!(key.code, KeyCode::Char(ch) if !ch.is_ascii());
@@ -197,11 +200,11 @@ impl Workbench {
             KeyCode::Char('o') if key.modifiers.is_empty() => self.open_scan_sort(),
             KeyCode::Char('v') if key.modifiers.is_empty() => self.toggle_selected_view(),
             KeyCode::Tab | KeyCode::BackTab
-                if self.view == View::Scan
+                if self.view != View::Home
                     && !self.is_scan_running()
                     && !self.is_operation_running() =>
             {
-                self.scan_view.details_focused = true;
+                self.details.focused = true;
             }
             KeyCode::Char('z') if self.last_cleanup_result.is_some() => self.show_restore(),
             KeyCode::Char('q') => {

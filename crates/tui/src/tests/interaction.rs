@@ -206,18 +206,20 @@ fn interaction_confirm_review_and_detail_focus_do_not_authorize_cleanup() {
                 render_text(&mut app, width, height);
                 app.handle_key(key(KeyCode::Tab));
                 let details = render_text(&mut app, width, height);
-                assert!(
-                    details.contains('└') && details.contains('┘'),
-                    "the complete details border must remain visible: {details}"
-                );
-                assert!(app.scan_view.details_focused);
+                if width < 88 {
+                    assert!(
+                        details.contains('╰') && details.contains('╯'),
+                        "the overlay border must remain visible: {details}"
+                    );
+                }
+                assert!(app.details.focused);
                 app.handle_key(key(KeyCode::End));
-                assert!(app.scan_view.details_scroll > 0);
+                assert!(app.details.scroll > 0);
                 app.handle_key(key(KeyCode::Enter));
                 app.handle_key(key(KeyCode::Char(' ')));
                 assert_eq!(app.plan().unwrap().summary.selected_count, 2);
                 app.handle_key(key(KeyCode::Esc));
-                assert!(!app.scan_view.details_focused);
+                assert!(!app.details.focused);
                 app.handle_key(key(KeyCode::Char('?')));
                 render_text(&mut app, width, height);
                 app.handle_key(key(KeyCode::End));

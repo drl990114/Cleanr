@@ -10,9 +10,10 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut Workbench) {
         area,
     );
 
+    let content = fluid_content_rect(area, 220, area.height);
     let header_height = area.height.min(1);
     let status_height = u16::from(area.height >= 3);
-    let command_height = if matches!(app.mode, Mode::Command) {
+    let command_height = if matches!(app.mode, Mode::Command) && !app.scan_view.search_open {
         area.height
             .saturating_sub(header_height + status_height)
             .min(3)
@@ -27,7 +28,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut Workbench) {
             Constraint::Length(command_height),
             Constraint::Length(status_height),
         ])
-        .split(area);
+        .split(content);
 
     render_header(frame, layout[0], app);
     render_body(frame, layout[1], app);
@@ -46,9 +47,6 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut Workbench) {
         );
         render_palette(frame, popup, app);
     }
-    if app.help_open {
-        render_help(frame, centered_bounded_rect(area, 72, 18, 88), app);
-    }
     if app.scan_view.filter_open {
         let height = u16::try_from(app.scan_view.groups.len())
             .unwrap_or(u16::MAX)
@@ -61,6 +59,9 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut Workbench) {
     }
     if app.confirmation_pending() {
         render_confirm(frame, centered_bounded_rect(area, 68, 14, 84), app);
+    }
+    if app.help_open {
+        render_help(frame, centered_bounded_rect(area, 72, 18, 88), app);
     }
     if matches!(app.mode, Mode::Normal) {
         render_ime_guard(frame, area, app);
@@ -81,29 +82,20 @@ pub(crate) fn render_header(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
         } else {
             String::new()
         }
-    } else if app.last_cleanup_result.is_some() {
+    } else if app.status == app.quiet_status {
         String::new()
     } else {
         app.status.clone()
     };
-    let top = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(if area.width >= 72 {
-            [Constraint::Percentage(40), Constraint::Percentage(60)]
-        } else {
-            [Constraint::Percentage(62), Constraint::Percentage(38)]
-        })
+    let brand_width = (display_width(&view_title(app)) + 11).min(area.width as usize);
+    let top = Layout::horizontal([Constraint::Length(brand_width as u16), Constraint::Fill(1)])
         .split(area);
     let brand = Line::from(vec![
         Span::styled(
-            "  cleanr",
+            "cleanr",
             Style::default()
-                .fg(app.theme.magenta)
+                .fg(app.theme.fg)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" {}", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(app.theme.fg_dim),
         ),
         Span::styled("  /  ", Style::default().fg(app.theme.border)),
         Span::styled(view_title(app), Style::default().fg(app.theme.fg)),

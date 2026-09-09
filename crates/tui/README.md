@@ -24,14 +24,25 @@ needed: normalized substring matching and the existing Ratatui/Crossterm APIs
 cover the interaction. Ratatui's locked rendered-line-info feature supplies
 exact wrapping bounds for details and fail-closed confirmation visibility.
 
+All list pages share a visible-window Ratatui `Table` adapter and a per-view
+detail state. A single root gutter aligns the header, body, and footer. At 88
+terminal columns the content splits into a list and 32–56-column detail pane;
+narrower terminals open details as a modal overlay. `Tab`/`Shift+Tab` moves
+focus without changing geometry, and `i` discloses technical metadata for this
+session. Focused details consume list action keys. Path search uses an inline
+input above the candidate rows while retaining the existing query cancellation.
+
 `terminal.rs` draws only after visible state changes or active-task animation.
 It batches navigation for at most 32 events or 4 ms, preserving action-key and
-resize boundaries. `/tasks` shows bounded handler, draw, task-commit, and
-input-read-to-frame duration samples. These are local diagnostics, not telemetry.
+resize boundaries. `/tasks` exposes bounded handler, draw, task-commit, and
+input-read-to-frame duration samples under details' More info. These are local
+diagnostics, not telemetry.
 `run_with_services` optionally accepts an asynchronous update notice receiver;
 existing `TuiOptions` and entry points remain compatible.
 
 Run focused interaction tests with `cargo test -p cleanr-tui interaction_ --lib`.
+Run the bilingual cell geometry and modal input matrix with
+`cargo test -p cleanr-tui ui_ --lib`.
 For a manual PTY using temporary fixture data, run
 `cargo test -p cleanr-tui interactive_terminal_fixture -- --ignored --nocapture`.
 The fixture requires a terminal and exits with `q`.

@@ -6,7 +6,7 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
     } else {
         area.height
     };
-    let mut content = fluid_content_rect(area, 120, height);
+    let mut content = Rect::new(area.x, area.y, area.width.min(100), height);
     if area.height > content.height {
         content.y = content.y.saturating_add(1);
     }
@@ -36,30 +36,21 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
                 app.i18n.t("cleanup_result_title"),
                 summary,
                 home_action_line(app.theme, "s", app.i18n.t("home_action_rescan"), true),
-                home_secondary_actions(
-                    app.theme,
-                    "z",
-                    app.i18n.t("hint_restore_result"),
-                    "u",
-                    app.i18n.t("home_action_usage"),
-                ),
-                cleanup_result_path_line(app, 76),
+                home_action_line(app.theme, "z", app.i18n.t("hint_restore_result"), false),
+                cleanup_result_path_line(app, content.width as usize),
             )
         } else if !app.has_scan_results() {
             (
                 app.i18n.t("home_welcome"),
                 app.i18n.t("home_subtitle"),
                 home_action_line(app.theme, "s", app.i18n.t("home_action_scan"), true),
-                home_secondary_actions(
-                    app.theme,
-                    "u",
-                    app.i18n.t("home_action_usage"),
-                    "/",
-                    app.i18n.t("home_action_more"),
-                ),
+                home_action_line(app.theme, "u", app.i18n.t("home_action_usage"), false),
                 home_detail_line(
                     app.i18n.t("home_detail_scope"),
-                    truncate_text(&join_paths(&app.roots), 76),
+                    truncate_text(
+                        &join_paths(&app.roots),
+                        content.width.saturating_sub(8) as usize,
+                    ),
                     app.theme.fg_dim,
                     app.theme,
                 ),
@@ -69,16 +60,13 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
                 app.i18n.t("home_result_title"),
                 scan_empty_text(app),
                 home_action_line(app.theme, "s", app.i18n.t("home_action_rescan"), true),
-                home_secondary_actions(
-                    app.theme,
-                    "u",
-                    app.i18n.t("home_action_usage"),
-                    "/",
-                    app.i18n.t("home_action_more"),
-                ),
+                home_action_line(app.theme, "u", app.i18n.t("home_action_usage"), false),
                 home_detail_line(
-                    app.i18n.t("home_detail_scanned"),
-                    format_bytes(app.scan_summary.total_size_bytes),
+                    app.i18n.t("home_detail_scope"),
+                    truncate_text(
+                        &join_paths(&app.roots),
+                        content.width.saturating_sub(8) as usize,
+                    ),
                     app.theme.fg_dim,
                     app.theme,
                 ),
@@ -98,22 +86,12 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
                     ],
                 ),
                 home_action_line(app.theme, "r", app.i18n.t("home_action_review"), true),
-                home_secondary_actions(
-                    app.theme,
-                    "s",
-                    app.i18n.t("home_action_rescan"),
-                    "/",
-                    app.i18n.t("home_action_more"),
-                ),
+                home_action_line(app.theme, "s", app.i18n.t("home_action_rescan"), false),
                 home_detail_line(
-                    app.i18n.t("home_detail_scanned"),
-                    app.i18n.format(
-                        "home_last_scan",
-                        &[
-                            ("entries", app.scan_summary.entries_seen.to_string()),
-                            ("candidates", candidate_count.to_string()),
-                            ("size", format_bytes(app.scan_summary.total_size_bytes)),
-                        ],
+                    app.i18n.t("home_detail_scope"),
+                    truncate_text(
+                        &join_paths(&app.roots),
+                        content.width.saturating_sub(8) as usize,
                     ),
                     app.theme.fg_dim,
                     app.theme,
@@ -143,12 +121,7 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
             Style::default().fg(app.theme.fg_dim),
         )));
     }
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
-            .block(Block::default().padding(Padding::horizontal(2))),
-        content,
-    );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), content);
 }
 
 pub(crate) fn home_title(title: String, theme: Theme) -> Line<'static> {
@@ -194,32 +167,6 @@ pub(crate) fn home_action_line(
     Line::from(vec![
         Span::styled(format!("[{key}]  "), key_style),
         Span::styled(description, description_style),
-    ])
-}
-
-fn home_secondary_actions(
-    theme: Theme,
-    first_key: &'static str,
-    first_label: String,
-    second_key: &'static str,
-    second_label: String,
-) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(
-            format!("[{first_key}]  "),
-            Style::default()
-                .fg(theme.fg_dim)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(first_label, Style::default().fg(theme.fg_dim)),
-        Span::raw("    "),
-        Span::styled(
-            format!("[{second_key}]  "),
-            Style::default()
-                .fg(theme.fg_dim)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(second_label, Style::default().fg(theme.fg_dim)),
     ])
 }
 

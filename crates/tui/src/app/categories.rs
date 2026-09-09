@@ -24,9 +24,6 @@ pub(crate) struct ScanViewState {
     pub(crate) search_open: bool,
     pub(crate) search_before: String,
     pub(crate) search_due: Option<Instant>,
-    pub(crate) details_focused: bool,
-    pub(crate) details_scroll: u16,
-    pub(crate) details_max_scroll: u16,
     pub(crate) hidden_selected_count: usize,
     pub(crate) hidden_selected_bytes: u64,
     pub(crate) selected_review_count: usize,
@@ -213,7 +210,7 @@ impl Workbench {
                 .or(initial)
                 .or_else(|| (!self.scan_view.visible.is_empty()).then_some(0)),
         );
-        self.scan_view.details_scroll = 0;
+        self.reset_details_scroll(View::Scan);
         self.refresh_hidden_scan_selection();
     }
 

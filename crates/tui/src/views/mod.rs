@@ -1,6 +1,8 @@
 use std::{collections::BTreeSet, ops::Range, path::PathBuf};
 
-use cleanr_core::{CleanupItem, Confidence, EntryKind, ScanEntry};
+#[cfg(test)]
+use cleanr_core::ScanEntry;
+use cleanr_core::{CleanupItem, Confidence, EntryKind};
 use cleanr_i18n::LanguagePackSource;
 use cleanr_tasks::restored_run_ids;
 use ratatui::{
@@ -9,8 +11,9 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, List, ListItem, ListState, Padding, Paragraph,
-        Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+        Block, BorderType, Borders, Cell, Clear, HighlightSpacing, List, ListItem, ListState,
+        Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState, Wrap,
     },
 };
 use unicode_truncate::UnicodeTruncateStr;

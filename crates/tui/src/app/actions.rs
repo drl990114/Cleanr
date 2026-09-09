@@ -55,13 +55,13 @@ impl Workbench {
             self.clean_waiting_for_confirmation = true;
             self.restore_waiting_for_confirmation = None;
             self.confirm_choice = ConfirmChoice::No;
-            self.status = self.i18n.format(
+            self.set_quiet_status(self.i18n.format(
                 "status_clean_confirm",
                 &[
                     ("count", plan.summary.selected_count.to_string()),
                     ("size", format_bytes(plan.summary.selected_size_bytes)),
                 ],
-            );
+            ));
             return;
         }
 
@@ -107,13 +107,13 @@ impl Workbench {
             self.clean_waiting_for_confirmation = true;
             self.restore_waiting_for_confirmation = None;
             self.confirm_choice = ConfirmChoice::No;
-            self.status = self.i18n.format(
+            self.set_quiet_status(self.i18n.format(
                 "status_clean_confirm",
                 &[
                     ("count", plan.summary.selected_count.to_string()),
                     ("size", format_bytes(plan.summary.selected_size_bytes)),
                 ],
-            );
+            ));
             return;
         }
 
@@ -270,13 +270,13 @@ impl Workbench {
         self.clean_waiting_for_confirmation = false;
         self.restore_waiting_for_confirmation = Some(manifest.run_id.clone());
         self.confirm_choice = ConfirmChoice::No;
-        self.status = self.i18n.format(
+        self.set_quiet_status(self.i18n.format(
             "status_restore_confirm",
             &[
                 ("run_id", manifest.run_id.clone()),
                 ("count", manifest.summary.succeeded.to_string()),
             ],
-        );
+        ));
     }
 
     pub(crate) fn restore_run(&mut self, run_id: &str) {
@@ -435,7 +435,7 @@ impl Workbench {
                 return;
             }
         };
-        self.status = self.plan_ready_status(&plan, inactive_days);
+        self.set_quiet_status(self.plan_ready_status(&plan, inactive_days));
         self.plan = Some(Arc::new(plan));
         self.invalidate_scan_view_projection();
         self.ensure_scan_view_projection();
@@ -531,14 +531,14 @@ impl Workbench {
             .iter()
             .map(|pack| pack.definition.rules.len())
             .sum::<usize>();
-        self.status = self.i18n.format(
+        self.set_quiet_status(self.i18n.format(
             "status_rules",
             &[
                 ("packs", self.registry.packs().len().to_string()),
                 ("rules", count.to_string()),
             ],
-        );
-        self.reset_list_selection();
+        ));
+        self.clamp_list_selection();
     }
 
     pub(crate) fn show_plugins(&mut self) {
@@ -550,8 +550,8 @@ impl Workbench {
             .map(|pack| format!("{}@{}", pack.definition.id, pack.definition.version))
             .collect::<Vec<_>>()
             .join(", ");
-        self.status = self.i18n.format("status_plugins", &[("packs", packs)]);
-        self.reset_list_selection();
+        self.set_quiet_status(self.i18n.format("status_plugins", &[("packs", packs)]));
+        self.clamp_list_selection();
     }
 
     pub(crate) fn show_languages(&mut self) {
@@ -563,21 +563,21 @@ impl Workbench {
             .map(|pack| format!("{}@{} ({})", pack.id, pack.version, pack.locale))
             .collect::<Vec<_>>()
             .join(", ");
-        self.status = self.i18n.format(
+        self.set_quiet_status(self.i18n.format(
             "status_languages",
             &[("packs", packs), ("locale", self.i18n.locale().to_string())],
-        );
-        self.reset_list_selection();
+        ));
+        self.clamp_list_selection();
     }
 
     pub(crate) fn show_tasks(&mut self) {
         self.switch_view(View::Tasks);
-        self.status = if self.task_log.is_empty() {
+        self.set_quiet_status(if self.task_log.is_empty() {
             self.i18n.t("status_no_tasks")
         } else {
             self.task_log.join(" | ")
-        };
-        self.reset_list_selection();
+        });
+        self.clamp_list_selection();
     }
 
     pub(crate) fn show_usage(&mut self) {
@@ -592,7 +592,7 @@ impl Workbench {
                 plan.summary.selected_size_bytes,
             )
         });
-        self.status = self.i18n.format(
+        self.set_quiet_status(self.i18n.format(
             "status_usage",
             &[
                 ("entries", self.scan_summary.entries_seen.to_string()),
@@ -601,7 +601,7 @@ impl Workbench {
                 ("selected", selected.to_string()),
                 ("size", format_bytes(selected_size)),
             ],
-        );
+        ));
         if self.list_state.selected().is_none() && self.list_len() > 0 {
             self.select_first();
         }

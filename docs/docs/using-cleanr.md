@@ -11,8 +11,8 @@ Category labels, `f` filtering, cumulative filtered selection, and `Shift+A`
 global selection below apply to **0.15.0 and later**. Check
 `cleanr --version` and the [changelog](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md).
 For an older installed version, its `?` help is authoritative for shortcuts.
-The `p`/`o`/`v`/`Tab` controls, reusable view snapshots, and progress details
-described below are implemented in the current development checkout and await release.
+The shared layout, inline `p` search, `o`/`v`/`Tab`/`i` controls, reusable view
+snapshots, and progress details described below apply to **0.16.0 and later**.
 
 :::
 
@@ -88,9 +88,12 @@ pass the quoted path when launching Cleanr instead.
 
 ## Review and select candidates
 
-After a scan, press `r` or run `/review`. Each candidate row shows its size,
-category, and path; details show the full category, matched rules, confidence,
-reason, and risk note. By default, the view includes only
+After a scan, press `r` or run `/review`. Candidate columns show selection,
+risk markers, path, category, and right-aligned size. Narrow lists hide the
+category column first; the category remains in details. Details show the current
+item, size, recommendation, risk, reason, and full path. Focus details with `Tab`
+and press `i` to expand category IDs, confidence, and matched rules under
+**More info**. The underlying evidence is unchanged. By default, the view includes only
 candidates whose newest observed modification time across the candidate tree
 meets the configured threshold, which is 90 days by default.
 
@@ -118,7 +121,7 @@ starting a new scan, including the automatic scan after cleanup, resets it
 to **All**. Partial results without a cleanup plan show tentative categories
 and remain read-only.
 
-Press `p` to find a path. Matching ignores letter case, accepts either slash
+Press `p` to find a path using an inline input above the list. Matching ignores letter case, accepts either slash
 separator, and preserves Chinese text. Input is debounced for 100 ms; `Enter`
 applies it and `Esc` restores the previous query. `o` selects the original plan
 order, size descending, or path ascending. `v` shows only selected items. These
@@ -127,10 +130,16 @@ or selection. Large projections run in the background; selection is paused
 until the current projection is ready. Empty projections make current-item and
 filtered bulk selection a no-op; `Shift+A` still addresses the global plan.
 
-Press `Tab` to focus details and use arrows, Page Up/Down, or Home/End to read
-long evidence and full paths. Below 88 terminal columns, details open as a
-separate overlay. `Space` scrolls details and `Enter` leaves selection unchanged;
-`Tab` or `Esc` returns to the list. Keyboard help is also scrollable.
+Press `Tab` or `Shift+Tab` to focus details and use arrows, Page Up/Down, or
+Home/End to read long evidence and full paths. At 88 terminal columns and above,
+details stay beside the list; below 88 columns, the full-width list opens details
+in an overlay. Switching focus keeps column widths and wrapping stable.
+`Space` pages through details and `Enter` leaves selection unchanged. List
+actions are inactive while details have focus. `Tab`, `Shift+Tab`, or `Esc`
+returns to the same list position; choosing another item resets detail scrolling.
+**More info** starts collapsed and remembers its state per page for this session.
+`Esc` closes the current layer before returning home; during a scan it still
+cancels the scan. Keyboard help is also scrollable.
 The scope and effective age threshold stay above the candidate list. Empty
 states distinguish no candidates, age exclusion, filter mismatch, and read-only
 partial results.
@@ -145,7 +154,8 @@ Useful keys while reviewing:
 | `space` or `Enter` | Select or deselect the current item |
 | `f` | Open the category filter |
 | `p` / `o` / `v` | Find a path / sort / show selected items only |
-| `Tab` | Focus or leave scrollable details |
+| `Tab` / `Shift+Tab` | Focus or leave scrollable details |
+| `i` in details | Expand or collapse More info |
 | `a` or `%` | Select all items in the current filter, across all pages; deselect them if all are selected |
 | `Shift+A` | Select all candidates globally; deselect them if all are selected |
 | `c` | Confirm cleanup of all selected items, including those outside the filter |
@@ -160,7 +170,7 @@ items and `12G` jumps to item 12.
 
 Press `c` or run `/clean` to review the selected count and size. With the
 default configuration, Cleanr asks for confirmation and initially selects
-**No**. Cleanup uses the global selection. When a category filter hides selected
+**Cancel**. Cleanup uses the global selection. When a category filter hides selected
 items, the confirmation also states their count and size. It separately counts
 selected items that need review. Press `v` in this dialog to inspect all selected
 items with other filters cleared, then press `c` to confirm again. A terminal
@@ -179,8 +189,10 @@ plan.
 
 ## Restore a cleanup run
 
-Run `/restore`, select a cleanup run, and press `Enter`. Confirm the restore to
-move available items back to their original paths.
+Run `/restore`. Each row shows local time, item count, and restore status.
+Select a cleanup run and press `Enter` to open its confirmation, initially set to
+**Cancel**. Confirm the restore to move available items back to their original
+paths. The complete run ID is available in details under **More info**.
 
 Restore can fail when:
 
@@ -190,6 +202,19 @@ Restore can fail when:
 - the platform does not support programmatic restore.
 
 Cleanr never overwrites an existing restore target.
+
+## Browse other pages
+
+Usage emphasizes total disk usage, names, proportion bars, and sizes. Candidate
+and selection counts stay on the review page. Languages, rules, plugins, and
+tasks show readable names, current state, and any errors. `Tab` opens scrollable
+details on every list page; `i` reveals technical information such as internal
+IDs, versions, source directories, and local performance diagnostics.
+
+The header, content, and footer share the same margins, with less padding in
+narrow terminals and a maximum content width of 220 columns. The footer shows
+the keys relevant to the current mode. Press `?` for complete keyboard help and
+the application version; `/` continues to open the command palette.
 
 ## Non-interactive commands
 

@@ -129,6 +129,7 @@ impl Workbench {
         };
         match receiver.try_recv() {
             Ok(usage) => {
+                self.reset_details_scroll(View::Usage);
                 self.usage_order = usage.order;
                 self.usage_max_size = usage.max_size;
                 self.usage_descendant_counts = usage.descendant_counts;
@@ -166,7 +167,7 @@ impl Workbench {
                             .as_ref()
                             .map_or(0, |a| a.policy.preselect_after_days);
                         if self.view == View::Scan {
-                            self.status = self.plan_ready_status(&plan, days);
+                            self.set_quiet_status(self.plan_ready_status(&plan, days));
                         }
                         self.plan = Some(Arc::new(plan));
                         self.scan_data_revision = self.scan_data_revision.wrapping_add(1);
@@ -199,14 +200,15 @@ impl Workbench {
         };
         match receiver.try_recv() {
             Ok(Ok((executions, restores))) => {
+                self.reset_details_scroll(View::Restore);
                 self.execution_manifests = executions;
                 self.restore_manifests = restores;
                 if self.view == View::Restore {
-                    self.status = self.i18n.t(if self.execution_manifests.is_empty() {
+                    self.set_quiet_status(self.i18n.t(if self.execution_manifests.is_empty() {
                         "status_no_manifests"
                     } else {
                         "restore_select_hint"
-                    });
+                    }));
                     let count = self.execution_manifests.len();
                     self.list_state.select(
                         (count > 0).then(|| self.list_state.selected().unwrap_or(0).min(count - 1)),
@@ -359,6 +361,7 @@ impl Workbench {
         self.candidate_entry_indices = candidate_entry_indices;
         self.entries = Arc::new(report.entries);
         self.scan_view = ScanViewState::default();
+        self.reset_details_scroll(View::Scan);
         self.candidate_projection_entries_len = self.entries.len();
         self.analysis = None;
         self.candidate_ids_by_path.clear();
@@ -394,9 +397,6 @@ impl Workbench {
         self.review_after_scan = false;
         let usage_after_scan = self.usage_after_scan;
         self.usage_after_scan = false;
-        if activate_scan && !self.entries.is_empty() {
-            self.view = View::Scan;
-        }
         match planning {
             Ok(Some(PreparedPlanning {
                 analysis,
@@ -408,7 +408,7 @@ impl Workbench {
                 self.analysis = Some(Arc::new(analysis));
                 self.candidate_ids_by_path = candidate_ids_by_path;
                 self.selection = selection;
-                self.status = self.plan_ready_status(&plan, inactive_days);
+                self.set_quiet_status(self.plan_ready_status(&plan, inactive_days));
                 self.plan = Some(Arc::new(plan));
             }
             Ok(None) => {}
@@ -416,6 +416,9 @@ impl Workbench {
         }
         self.scan_data_revision = self.scan_data_revision.wrapping_add(1);
         self.install_scan_index(index);
+        if activate_scan && !self.entries.is_empty() {
+            self.switch_view(View::Scan);
+        }
         if usage_after_scan {
             self.show_usage();
         } else if self.view == View::Scan {
@@ -516,6 +519,16 @@ impl Workbench {
         self.task_commit_durations.clear();
         self.entries = Arc::new(Vec::new());
         self.saved_list_states.clear();
+        for details in self
+            .saved_details
+            .values_mut()
+            .chain(std::iter::once(&mut self.details))
+        {
+            *details = DetailsState {
+                expanded: details.expanded,
+                ..DetailsState::default()
+            };
+        }
         self.usage_rx = None;
         self.plan_rx = None;
         if let Some(cancel) = self.plan_cancel.take() {
@@ -523,6 +536,7 @@ impl Workbench {
         }
         self.usage_ready = false;
         self.scan_view = ScanViewState::default();
+        self.reset_details_scroll(View::Scan);
         self.scan_budget_exceeded.clear();
         self.candidate_count = 0;
         self.candidate_entry_indices.clear();
@@ -537,8 +551,8 @@ impl Workbench {
         self.candidate_ids_by_path.clear();
         self.selection = UserSelection::default();
         self.plan = None;
-        self.view = view;
         self.list_state.select(None);
+        self.switch_view(view);
         self.status = self.i18n.t("status_scan_resolving");
         self.task_log.push(self.i18n.t("status_scan_started"));
     }

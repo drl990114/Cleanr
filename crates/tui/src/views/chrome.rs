@@ -1,18 +1,8 @@
 use super::*;
 
 pub(crate) fn render_command(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
-    let content_area = fluid_content_rect(area, 220, area.height);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(app.theme.border))
-        .padding(Padding::horizontal(1));
-    let block = if app.scan_view.search_open {
-        block.title(app.i18n.t("scan_search_title"))
-    } else {
-        block
-    };
-    let inner = block.inner(content_area);
+    let block = popup_block(String::new(), app.theme);
+    let inner = block.inner(area);
     let mut cursor_column = None;
     let content = match app.mode {
         Mode::Command => {
@@ -39,7 +29,7 @@ pub(crate) fn render_command(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
         ]),
     };
 
-    frame.render_widget(Paragraph::new(content).block(block), content_area);
+    frame.render_widget(Paragraph::new(content).block(block), area);
 
     if let Some(column) = cursor_column
         && !inner.is_empty()
@@ -56,162 +46,96 @@ pub(crate) fn render_command(frame: &mut Frame<'_>, area: Rect, app: &Workbench)
 }
 
 pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
-    frame.render_widget(
-        Block::default().style(Style::default().bg(app.theme.surface)),
-        area,
-    );
-    let list_len = app.list_len();
-    let mut right = Vec::new();
-    if let Some(plan) = &app.plan
-        && !app.is_scan_running()
-        && app.view == View::Home
-    {
-        right.extend([
-            Span::styled(
-                plan.summary.selected_count.to_string(),
-                Style::default()
-                    .fg(app.theme.ok)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                app.i18n.format(
-                    "selection_progress_total",
-                    &[("total", plan.summary.candidate_count.to_string())],
-                ),
-                Style::default().fg(app.theme.fg_dim),
-            ),
-        ]);
-    } else if list_len > 0 && !app.is_scan_running() {
-        let current = app.list_state.selected().map_or(0, |index| index + 1);
-        right.push(Span::styled(
-            format!("{current} / {list_len} "),
-            Style::default().fg(app.theme.fg_dim),
-        ));
-    }
-
-    let right_width = spans_width(&right).min(area.width as usize);
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(u16::try_from(right_width).unwrap_or(area.width)),
-        ])
-        .split(area);
-    let hint_budget = chunks[0].width as usize;
-    let mut hints = Vec::new();
-    match app.mode {
-        Mode::Command => {
-            hints.extend([
-                Span::styled(
-                    format!("  {}", app.i18n.t("label_mode_command")),
-                    Style::default()
-                        .fg(app.theme.magenta)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  ·  ", Style::default().fg(app.theme.border)),
-            ]);
-            push_hint_if_fits(
-                &mut hints,
-                key_hint("↑↓", app.i18n.t("hint_choose"), app.theme),
-                hint_budget,
-            );
-            push_hint_if_fits(
-                &mut hints,
-                key_hint("enter", app.i18n.t("hint_run"), app.theme),
-                hint_budget,
-            );
-            push_hint_if_fits(
-                &mut hints,
-                key_hint("esc", app.i18n.t("hint_close"), app.theme),
-                hint_budget,
-            );
-        }
-        Mode::Normal => {
-            if app.is_scan_running() {
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("esc/x", app.i18n.t("hint_cancel"), app.theme),
-                    hint_budget,
-                );
-            } else if app.view == View::Home {
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("/", app.i18n.t("hint_commands"), app.theme),
-                    hint_budget,
-                );
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("?", app.i18n.t("hint_help"), app.theme),
-                    hint_budget,
-                );
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("q", app.i18n.t("hint_quit"), app.theme),
-                    hint_budget,
-                );
-            } else if app.view == View::Scan {
-                let hints_for_scan = if app.scan_view.details_focused {
-                    vec![("↑↓", "hint_move"), ("Tab/Esc", "hint_close")]
-                } else {
-                    let mut keys = Vec::new();
-                    if app.plan.is_some() && !app.has_background_task() {
-                        if list_len > 0 {
-                            keys.push(("space", "hint_select"));
-                        }
-                        keys.push(("c", "hint_clean"));
-                    }
-                    keys.extend([
-                        ("Tab", "label_details"),
-                        ("?", "hint_help"),
-                        ("p", "hint_find_path"),
-                        ("f", "hint_filter"),
-                        ("o", "hint_sort"),
-                        ("v", "scan_selected_only"),
-                    ]);
-                    if app.plan.is_some() && !app.has_background_task() {
-                        keys.extend([("a", "hint_all_filtered"), ("A", "hint_all_global")]);
-                    }
-                    keys
-                };
-                for (key, label) in hints_for_scan {
-                    push_hint_if_fits(
-                        &mut hints,
-                        key_hint(key, app.i18n.t(label), app.theme),
-                        hint_budget,
-                    );
-                }
-            } else if list_len > 0 {
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("j/k", app.i18n.t("hint_move"), app.theme),
-                    hint_budget,
-                );
-                if matches!(app.view, View::Languages | View::Restore) {
-                    push_hint_if_fits(
-                        &mut hints,
-                        key_hint("enter", app.i18n.t("hint_select"), app.theme),
-                        hint_budget,
-                    );
-                }
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("/", app.i18n.t("hint_commands"), app.theme),
-                    hint_budget,
-                );
-            } else {
-                push_hint_if_fits(
-                    &mut hints,
-                    key_hint("/", app.i18n.t("hint_commands"), app.theme),
-                    hint_budget,
-                );
+    let keys = if app.help_open {
+        vec![("↑↓", "hint_scroll"), ("Esc", "hint_close")]
+    } else if app.confirmation_pending() {
+        vec![
+            ("←→", "hint_choose"),
+            ("Enter", "hint_apply"),
+            ("Esc", "hint_cancel"),
+        ]
+    } else if app.scan_view.filter_open || app.scan_view.sort_open {
+        vec![
+            ("↑↓", "hint_choose"),
+            ("Enter", "hint_apply"),
+            ("Esc", "hint_close"),
+        ]
+    } else if app.scan_view.search_open {
+        vec![("Enter", "hint_apply"), ("Esc", "hint_revert")]
+    } else if matches!(app.mode, Mode::Command) {
+        vec![
+            ("↑↓", "hint_choose"),
+            ("Enter", "hint_run"),
+            ("Esc", "hint_close"),
+        ]
+    } else if app.is_scan_running() {
+        vec![("Esc/x", "hint_cancel")]
+    } else if app.is_operation_running() {
+        Vec::new()
+    } else if app.details.focused {
+        vec![
+            ("Tab", "hint_back"),
+            ("i", "detail_more"),
+            ("↑↓", "hint_scroll"),
+            ("?", "hint_help"),
+        ]
+    } else if app.view == View::Home {
+        vec![
+            ("/", "hint_commands"),
+            ("?", "hint_help"),
+            ("q", "hint_quit"),
+        ]
+    } else if app.view == View::Scan {
+        let mut keys = Vec::new();
+        if app.plan.is_some() && !app.has_background_task() {
+            if app.list_len() > 0 {
+                keys.push(("space", "hint_select"));
+            }
+            if app
+                .plan
+                .as_ref()
+                .is_some_and(|plan| plan.summary.selected_count > 0)
+            {
+                keys.push(("c", "hint_clean"));
             }
         }
+        keys.extend([
+            ("Tab", "label_details"),
+            ("p", "hint_find_path"),
+            ("?", "hint_help"),
+        ]);
+        keys
+    } else {
+        let mut keys = vec![("↑↓", "hint_move")];
+        if matches!(app.view, View::Languages | View::Restore) && app.list_len() > 0 {
+            keys.push(("Enter", "hint_select"));
+        }
+        keys.extend([
+            ("Tab", "label_details"),
+            ("/", "hint_commands"),
+            ("?", "hint_help"),
+        ]);
+        keys
+    };
+    let mut hints = Vec::new();
+    let help_width = if keys.iter().any(|(key, _)| *key == "?") {
+        spans_width(&key_hint("?", app.i18n.t("hint_help"), app.theme))
+    } else {
+        0
+    };
+    for (key, label) in keys {
+        let budget = if key == "?" {
+            area.width as usize
+        } else {
+            (area.width as usize).saturating_sub(help_width)
+        };
+        push_hint_if_fits(
+            &mut hints,
+            key_hint(key, app.i18n.t(label), app.theme),
+            budget,
+        );
     }
-    frame.render_widget(Paragraph::new(Line::from(hints)), chunks[0]);
-    frame.render_widget(
-        Paragraph::new(Line::from(right)).alignment(ratatui::layout::Alignment::Right),
-        chunks[1],
-    );
+    frame.render_widget(Paragraph::new(Line::from(hints)), area);
 }
 
 fn spans_width(spans: &[Span<'_>]) -> usize {
@@ -236,7 +160,23 @@ pub(crate) fn render_palette(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
         .to_lowercase();
 
     let commands = app.filtered_palette_commands();
-    let available_width = (area.width as usize).saturating_sub(6);
+    let block = popup_block(app.i18n.t("label_slash_commands"), app.theme);
+    let inner = block.inner(area);
+    let window = visible_list_window(
+        &mut app.palette_state,
+        commands.len(),
+        inner.height.max(1) as usize,
+    );
+    if commands.is_empty() {
+        frame.render_widget(
+            Paragraph::new(app.i18n.t("palette_no_matches"))
+                .style(Style::default().fg(app.theme.fg_dim))
+                .block(block),
+            area,
+        );
+        return;
+    }
+    let available_width = (inner.width as usize).saturating_sub(2);
     let command_width = commands
         .iter()
         .map(|command| display_width(command.name))
@@ -245,96 +185,78 @@ pub(crate) fn render_palette(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
         .min(28)
         .min(available_width);
     let description_width = available_width.saturating_sub(command_width.saturating_add(2));
-    let items = if commands.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
-            app.i18n.t("palette_no_matches"),
-            Style::default().fg(app.theme.fg_dim),
-        )))]
-    } else {
-        commands
-            .iter()
-            .map(|command| {
-                let translated = app.i18n.t(command.description_key);
-                let description = if translated == command.description_key {
-                    command.description.to_string()
-                } else {
-                    translated
-                };
-                let description = truncate_text(&description, description_width);
-                let command_name = truncate_text(command.name, command_width);
+    let items = commands[window.clone()]
+        .iter()
+        .map(|command| {
+            let translated = app.i18n.t(command.description_key);
+            let description = if translated == command.description_key {
+                command.description.to_string()
+            } else {
+                translated
+            };
+            let description = truncate_text(&description, description_width);
+            let command_name = truncate_text(command.name, command_width);
 
-                let command_padding = " ".repeat(
-                    command_width
-                        .saturating_add(2)
-                        .saturating_sub(display_width(&command_name)),
-                );
-                let mut spans = vec![
-                    Span::styled(command_name.clone(), Style::default().fg(app.theme.accent)),
-                    Span::raw(command_padding.clone()),
-                    Span::styled(description.clone(), Style::default().fg(app.theme.fg_dim)),
-                ];
+            let mut spans = vec![Span::styled(
+                command_name.clone(),
+                Style::default().fg(app.theme.fg),
+            )];
 
-                // Highlight matching characters in the command name.
-                if !filter.is_empty() {
-                    let name_lower = command_name.to_lowercase();
-                    if let Some(start) = name_lower.find(&filter) {
-                        let end = start + filter.len();
-                        let before = &command_name[..start];
-                        let matched = &command_name[start..end];
-                        let after = &command_name[end..];
-                        spans = vec![
-                            Span::raw(before.to_string()),
-                            Span::styled(
-                                matched.to_string(),
-                                Style::default()
-                                    .fg(app.theme.warn)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw(after.to_string()),
-                            Span::raw(command_padding),
-                            Span::styled(
-                                description.clone(),
-                                Style::default().fg(app.theme.fg_dim),
-                            ),
-                        ];
-                    }
+            // Highlight matching characters in the command name.
+            if !filter.is_empty() {
+                let name_lower = command_name.to_lowercase();
+                if let Some(start) = name_lower.find(&filter) {
+                    let end = start + filter.len();
+                    let before = &command_name[..start];
+                    let matched = &command_name[start..end];
+                    let after = &command_name[end..];
+                    spans = vec![
+                        Span::raw(before.to_string()),
+                        Span::styled(
+                            matched.to_string(),
+                            Style::default()
+                                .fg(app.theme.accent)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(after.to_string()),
+                    ];
                 }
+            }
 
-                ListItem::new(Line::from(spans))
-            })
-            .collect::<Vec<_>>()
-    };
+            Row::new(vec![
+                Cell::from(Line::from(spans)),
+                Cell::from(description).style(Style::default().fg(app.theme.fg_dim)),
+            ])
+        })
+        .collect::<Vec<_>>();
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(app.theme.border))
-                .padding(Padding::horizontal(1))
-                .style(Style::default().bg(app.theme.surface))
-                .title(format!(" {} ", app.i18n.t("label_slash_commands")))
-                .title_style(
-                    Style::default()
-                        .fg(app.theme.accent)
-                        .add_modifier(Modifier::BOLD),
-                ),
-        )
-        .highlight_style(
-            Style::default()
-                .fg(app.theme.highlight_fg)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("› ");
+    let local = local_list_state(&app.palette_state, &window);
+    let mut state = TableState::default().with_selected(local.selected());
+    let table = Table::new(
+        items,
+        [
+            Constraint::Length(command_width as u16),
+            Constraint::Fill(1),
+        ],
+    )
+    .block(block)
+    .column_spacing(2)
+    .highlight_spacing(HighlightSpacing::Always)
+    .row_highlight_style(
+        Style::default()
+            .fg(app.theme.highlight_fg)
+            .add_modifier(Modifier::BOLD),
+    )
+    .highlight_symbol("› ");
 
-    frame.render_stateful_widget(list, area, &mut app.palette_state);
+    frame.render_stateful_widget(table, area, &mut state);
 }
 
 pub(crate) fn render_help(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench) {
     frame.render_widget(Clear, area);
     let lines = vec![
         Line::from(vec![Span::styled(
-            app.i18n.t("help_title"),
+            format!("cleanr {}", env!("CARGO_PKG_VERSION")),
             Style::default()
                 .fg(app.theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -346,6 +268,7 @@ pub(crate) fn render_help(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench
         Line::from(app.i18n.t("help_categories")),
         Line::from(app.i18n.t("help_query_sort")),
         Line::from(app.i18n.t("help_details")),
+        Line::from(app.i18n.t("help_more")),
         Line::from(app.i18n.t("help_restore_result")),
         Line::from(app.i18n.t("help_toggle")),
         Line::from(app.i18n.t("help_actions")),
@@ -358,32 +281,21 @@ pub(crate) fn render_help(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench
         Line::from(app.i18n.t("help_confirm_no")),
         Line::from(app.i18n.t("help_quit")),
     ];
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true }).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(app.theme.border))
-            .padding(Padding::horizontal(2))
-            .style(Style::default().bg(app.theme.surface))
-            .title(format!(" {} ", app.i18n.t("label_help")))
-            .title_style(
-                Style::default()
-                    .fg(app.theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-    );
+    let block = popup_block(app.i18n.t("label_help"), app.theme);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
     app.help_max_scroll = u16::try_from(
         paragraph
-            .line_count(area.width)
-            .saturating_sub(area.height as usize),
+            .line_count(inner.width)
+            .saturating_sub(inner.height as usize),
     )
     .unwrap_or(u16::MAX);
     app.help_scroll = app.help_scroll.min(app.help_max_scroll);
-    frame.render_widget(paragraph.scroll((app.help_scroll, 0)), area);
+    frame.render_widget(paragraph.scroll((app.help_scroll, 0)), inner);
 }
 
 pub(crate) fn render_confirm(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench) {
-    frame.render_widget(Clear, area);
     let restoring = app.restore_waiting_for_confirmation.is_some();
     let (title, body, action_color) = if restoring {
         let run_id = app
@@ -420,28 +332,13 @@ pub(crate) fn render_confirm(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
         )
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(app.theme.border))
-        .padding(Padding::horizontal(1))
-        .style(Style::default().bg(app.theme.surface))
-        .title(format!(" {title} "))
-        .title_style(
-            Style::default()
-                .fg(action_color)
-                .add_modifier(Modifier::BOLD),
-        );
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    let hint_height = if inner.width < 54 { 2 } else { 1 };
-    // Reserve buttons independently so wrapped scope information never pushes them off screen.
-    let rows = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(1),
-        Constraint::Length(hint_height),
-    ])
-    .split(inner);
+    let block = popup_block(title, app.theme).title_style(
+        Style::default()
+            .fg(action_color)
+            .add_modifier(Modifier::BOLD),
+    );
+    let inner_width = block.inner(area).width;
+    let hint_height = if inner_width < 54 { 2 } else { 1 };
     let mut body_lines = vec![Line::from(body)];
     if !restoring {
         if app.scan_view.selected_review_count > 0 {
@@ -466,20 +363,22 @@ pub(crate) fn render_confirm(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
     }
     let body_paragraph = Paragraph::new(body_lines)
         .wrap(Wrap { trim: true })
-        .alignment(ratatui::layout::Alignment::Center);
-    app.confirm_content_visible = rows[0].width >= 20
-        && rows[1].height == 1
-        && body_paragraph.line_count(rows[0].width) <= rows[0].height as usize;
-    if app.confirm_content_visible {
-        frame.render_widget(body_paragraph, rows[0]);
-    } else {
-        frame.render_widget(
-            Paragraph::new(app.i18n.t("confirm_resize"))
-                .wrap(Wrap { trim: true })
-                .style(Style::default().fg(app.theme.warn)),
-            rows[0],
-        );
-    }
+        .alignment(ratatui::layout::Alignment::Left);
+    let desired_height = body_paragraph
+        .line_count(inner_width)
+        .saturating_add(4 + hint_height as usize)
+        .min(u16::MAX as usize) as u16;
+    let area = centered_bounded_rect(area, area.width, desired_height, area.width);
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    // Reserve buttons independently so wrapped scope information never pushes them off screen.
+    let rows = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(1),
+        Constraint::Length(hint_height),
+    ])
+    .split(inner);
     let buttons = Line::from(vec![
         confirm_button(
             "Y",
@@ -497,6 +396,20 @@ pub(crate) fn render_confirm(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
             app.theme,
         ),
     ]);
+    app.confirm_content_visible = rows[0].width >= 20
+        && rows[1].height == 1
+        && buttons.width() <= rows[1].width as usize
+        && body_paragraph.line_count(rows[0].width) <= rows[0].height as usize;
+    if app.confirm_content_visible {
+        frame.render_widget(body_paragraph, rows[0]);
+    } else {
+        frame.render_widget(
+            Paragraph::new(app.i18n.t("confirm_resize"))
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(app.theme.warn)),
+            rows[0],
+        );
+    }
     frame.render_widget(
         Paragraph::new(buttons).alignment(ratatui::layout::Alignment::Center),
         rows[1],
@@ -519,18 +432,13 @@ pub(crate) fn confirm_button(
 ) -> Span<'static> {
     let style = if selected {
         Style::default()
-            .bg(selected_color)
-            .fg(theme.highlight_fg)
+            .fg(selected_color)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.fg_dim)
     };
-    let shortcut = if selected {
-        format!("[{shortcut}]")
-    } else {
-        format!("({shortcut})")
-    };
-    Span::styled(format!("  {shortcut} {label}  "), style)
+    let marker = if selected { "›" } else { " " };
+    Span::styled(format!("{marker} [{shortcut}] {label}"), style)
 }
 
 pub(crate) fn render_ime_guard(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
@@ -538,6 +446,9 @@ pub(crate) fn render_ime_guard(frame: &mut Frame<'_>, area: Rect, app: &Workbenc
         return;
     }
     let position = ime_guard_position(area);
+    if frame.buffer_mut()[(position.x, position.y)].symbol() != " " {
+        return;
+    }
     let style = if app.ime_guard_phase {
         Style::default().bg(app.theme.bg)
     } else {

@@ -6,6 +6,7 @@ impl Workbench {
         if self.view != View::Scan || self.is_scan_running() || self.is_operation_running() {
             return;
         }
+        self.details.focused = false;
         self.scan_view.search_before = self.scan_view.query.clone();
         self.open_command('>');
         self.input.push_str(&self.scan_view.query);
@@ -99,30 +100,57 @@ impl Workbench {
         self.ensure_scan_view_projection();
     }
 
+    pub(crate) fn reset_details_scroll(&mut self, view: View) {
+        let details = if self.view == view {
+            &mut self.details
+        } else {
+            self.saved_details.entry(view).or_default()
+        };
+        details.scroll = 0;
+        details.max_scroll = 0;
+    }
+
     pub(crate) fn handle_details_key(&mut self, key: KeyEvent) -> bool {
-        if self.view != View::Scan
-            || !self.scan_view.details_focused
+        if self.view == View::Home
+            || self.is_scan_running()
+            || self.is_operation_running()
+            || !self.details.focused
             || !matches!(self.mode, Mode::Normal)
         {
             return false;
         }
         let amount = match key.code {
+            KeyCode::Char('d' | 'f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                i32::from(self.details.viewport_height.max(1))
+            }
+            KeyCode::Char('u' | 'b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                -i32::from(self.details.viewport_height.max(1))
+            }
             KeyCode::Down | KeyCode::Char('j') => 1i32,
             KeyCode::Up | KeyCode::Char('k') => -1,
-            KeyCode::PageDown | KeyCode::Char(' ') => i32::from(self.viewport_height.max(1)),
-            KeyCode::PageUp => -i32::from(self.viewport_height.max(1)),
+            KeyCode::PageDown | KeyCode::Char(' ') => {
+                i32::from(self.details.viewport_height.max(1))
+            }
+            KeyCode::PageUp => -i32::from(self.details.viewport_height.max(1)),
             KeyCode::Home => -i32::from(u16::MAX),
             KeyCode::End => i32::from(u16::MAX),
             KeyCode::Enter => return true,
-            KeyCode::Tab | KeyCode::BackTab | KeyCode::Esc => {
-                self.scan_view.details_focused = false;
+            KeyCode::Char('i') if key.modifiers.is_empty() => {
+                self.details.expanded = !self.details.expanded;
+                self.details.scroll = 0;
                 return true;
             }
-            _ => return false,
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Esc => {
+                self.details.focused = false;
+                return true;
+            }
+            // Global help, commands and navigation remain available. List actions must not
+            // pass through the focused detail pane, including its narrow-screen overlay.
+            KeyCode::Char('/' | '?' | 'q' | 'h' | 'H') => return false,
+            _ => return true,
         };
-        self.scan_view.details_scroll = (i32::from(self.scan_view.details_scroll) + amount)
-            .clamp(0, i32::from(self.scan_view.details_max_scroll))
-            as u16;
+        self.details.scroll = (i32::from(self.details.scroll) + amount)
+            .clamp(0, i32::from(self.details.max_scroll)) as u16;
         true
     }
 }

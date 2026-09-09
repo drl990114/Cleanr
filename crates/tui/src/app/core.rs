@@ -37,6 +37,7 @@ impl Workbench {
             help_open: false,
             help_scroll: 0,
             help_max_scroll: 0,
+            quiet_status: status.clone(),
             status,
             update_notice: None,
             update_notice_rx: None,
@@ -93,6 +94,8 @@ impl Workbench {
             should_quit: false,
             list_state: ListState::default(),
             saved_list_states: HashMap::new(),
+            details: DetailsState::default(),
+            saved_details: HashMap::new(),
             usage_ready: false,
             usage_rx: None,
             plan_rx: None,
@@ -105,6 +108,11 @@ impl Workbench {
             animation_tick: 0,
             ime_guard_phase: false,
         }
+    }
+
+    pub(crate) fn set_quiet_status(&mut self, status: String) {
+        self.quiet_status = status.clone();
+        self.status = status;
     }
 
     #[must_use]

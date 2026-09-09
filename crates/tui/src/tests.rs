@@ -42,8 +42,11 @@ use std::{
 
 #[path = "tests/interaction.rs"]
 mod interaction;
+
 #[path = "tests/scan_category.rs"]
 mod scan_category;
+#[path = "tests/ui.rs"]
+mod ui;
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent {
@@ -207,9 +210,9 @@ fn home_layout_has_one_clear_primary_action() {
     let screen = render_text(&mut app, 100, 28);
     println!("{screen}");
 
-    assert!(screen.contains("Safe intelligent disk organization"));
+    assert!(screen.contains("Review disk cleanup"));
     assert!(screen.contains("[s]  Scan & analyze"));
-    assert!(screen.contains("Every item is reviewed first"));
+    assert!(screen.contains("Review first. Cleanup uses system Trash."));
     assert!(!screen.contains("command menu"));
     assert!(!screen.contains('›'));
     assert!(!screen.contains("Recent activity"));
@@ -223,7 +226,7 @@ fn home_layout_starts_near_the_top_on_tall_terminals() {
     let screen = render_text(&mut app, 111, 58);
     let title_line = screen
         .lines()
-        .position(|line| line.contains("Safe intelligent disk organization"))
+        .position(|line| line.contains("Review disk cleanup"))
         .expect("home title should render");
 
     assert!(
@@ -277,9 +280,9 @@ fn chinese_home_matches_the_primary_terminal_layout() {
         .filter(|ch| !ch.is_whitespace())
         .collect::<String>();
 
-    assert!(compact.contains("安全智能磁盘整理"));
+    assert!(compact.contains("查找可清理的缓存"));
     assert!(compact.contains("[s]扫描分析"));
-    assert!(compact.contains("所有清理项都会先审阅"));
+    assert!(compact.contains("先审阅，再移入系统回收站。"));
     assert!(!compact.contains('›'));
     assert!(!compact.contains("最近活动"));
     assert!(!compact.contains("尚未扫描"));
@@ -320,8 +323,16 @@ fn scan_layout_keeps_selection_and_details_distinct() {
     assert!(screen.contains("[✓]"));
     assert!(screen.contains("Details"));
     assert!(screen.contains("space select"));
-    assert!(screen.contains("Category:"));
-    assert!(screen.contains("Rule: Node dependency directory"));
+    assert!(screen.contains("Developer caches"));
+    assert!(!screen.contains("developer-cache"));
+    assert!(!screen.contains("Rule: Node dependency directory"));
+    app.handle_key(key(KeyCode::Tab));
+    app.handle_key(key(KeyCode::Char('i')));
+    render_text(&mut app, 120, 30);
+    app.handle_key(key(KeyCode::End));
+    let expanded = render_text(&mut app, 120, 30);
+    assert!(expanded.contains("Rule: Node dependency directory"));
+    assert!(expanded.contains("developer-cache"));
     assert!(screen.contains("Reason"));
     assert!(screen.contains("Risk"));
     assert!(!screen.contains("Matched rules"));
@@ -462,7 +473,12 @@ fn scan_layout_truncates_long_paths_without_hiding_size_or_confidence() {
     assert!(screen.contains("…"));
     app.handle_key(key(KeyCode::Tab));
     let details = render_text(&mut app, 76, 22);
-    assert!(details.contains("high confidence"), "{details}");
+    assert!(!details.contains("high confidence"), "{details}");
+    app.handle_key(key(KeyCode::Char('i')));
+    render_text(&mut app, 76, 22);
+    app.handle_key(key(KeyCode::End));
+    let expanded = render_text(&mut app, 76, 22);
+    assert!(expanded.contains("high confidence"), "{expanded}");
     assert!(details.contains("12.00 GiB"), "{details}");
 }
 
@@ -494,9 +510,19 @@ fn chinese_scan_layout_uses_translations_for_details_labels() {
         .collect::<String>();
 
     assert!(compact.contains("详情"));
-    assert!(compact.contains("分类"));
-    assert!(compact.contains("规则"));
+    assert!(compact.contains("构建缓存"));
     assert!(compact.contains("路径"));
+    assert!(!compact.contains("build-cache"));
+    app.handle_key(key(KeyCode::Tab));
+    app.handle_key(key(KeyCode::Char('i')));
+    render_text(&mut app, 120, 24);
+    app.handle_key(key(KeyCode::End));
+    let expanded = render_text(&mut app, 120, 24)
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    assert!(expanded.contains("分类"));
+    assert!(expanded.contains("规则"));
 }
 
 #[test]
@@ -1297,7 +1323,11 @@ fn restore_view_can_render_selection_beyond_old_history_cap() {
 
     let screen = render_text(&mut app, 120, 24);
 
-    assert!(screen.contains("run-20"), "{screen}");
+    assert!(!screen.contains("run-20"), "{screen}");
+    app.handle_key(key(KeyCode::Tab));
+    app.handle_key(key(KeyCode::Char('i')));
+    let expanded = render_text(&mut app, 120, 24);
+    assert!(expanded.contains("run-20"), "{expanded}");
 }
 
 #[test]

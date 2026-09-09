@@ -5,11 +5,13 @@ impl Workbench {
         if self.view != view {
             self.saved_list_states
                 .insert(self.view, self.list_state.clone());
+            self.details.focused = false;
+            self.saved_details
+                .insert(self.view, std::mem::take(&mut self.details));
+            self.details = self.saved_details.remove(&view).unwrap_or_default();
             self.view = view;
             self.list_state = self.saved_list_states.remove(&view).unwrap_or_default();
-            if self.list_state.selected().is_none() && self.list_len() > 0 {
-                self.list_state.select(Some(0));
-            }
+            self.clamp_list_selection();
         }
     }
     pub(crate) fn list_len(&self) -> usize {
@@ -65,15 +67,16 @@ impl Workbench {
         self.candidate_projection_entries_len = self.entries.len();
     }
 
-    pub(crate) fn reset_list_selection(&mut self) {
+    pub(crate) fn clamp_list_selection(&mut self) {
         if self.view == View::Scan {
             self.ensure_scan_view_projection();
         }
-        if self.list_len() > 0 {
-            self.list_state.select(Some(0));
-        } else {
-            self.list_state.select(None);
+        let count = self.list_len();
+        let selected = (count > 0).then(|| self.list_state.selected().unwrap_or(0).min(count - 1));
+        if selected != self.list_state.selected() {
+            self.details.scroll = 0;
         }
+        self.list_state.select(selected);
     }
 
     pub(crate) fn plugin_diagnostics(&self) -> Vec<&PluginDiagnostic> {
