@@ -200,7 +200,7 @@ impl Workbench {
             KeyCode::Char('o') if key.modifiers.is_empty() => self.open_scan_sort(),
             KeyCode::Char('v') if key.modifiers.is_empty() => self.toggle_selected_view(),
             KeyCode::Tab | KeyCode::BackTab
-                if self.view != View::Home
+                if !matches!(self.view, View::Home | View::CleanupResult)
                     && !self.is_scan_running()
                     && !self.is_operation_running() =>
             {

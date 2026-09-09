@@ -125,6 +125,7 @@ pub(crate) fn render_body(frame: &mut Frame<'_>, area: Rect, app: &mut Workbench
     match app.view {
         View::Home => render_home(frame, area, app),
         View::Scan => render_scan_workspace(frame, area, app),
+        View::CleanupResult => render_cleanup_result(frame, area, app),
         View::Languages => render_languages(frame, area, app),
         View::Rules => render_rules(frame, area, app),
         View::Plugins => render_plugins(frame, area, app),

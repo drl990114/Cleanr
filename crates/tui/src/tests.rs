@@ -43,6 +43,9 @@ use std::{
 #[path = "tests/interaction.rs"]
 mod interaction;
 
+#[path = "tests/cleanup.rs"]
+mod cleanup;
+
 #[path = "tests/scan_category.rs"]
 mod scan_category;
 #[path = "tests/ui.rs"]
@@ -146,6 +149,19 @@ fn render_text(app: &mut Workbench, width: u16, height: u16) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn wait_for_scan(app: &mut Workbench) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.is_scan_running() && Instant::now() < deadline {
+        app.poll_tasks();
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        !app.is_scan_running(),
+        "scan did not finish: {}",
+        app.status()
+    );
 }
 
 fn theme_has_extended_color(theme: Theme) -> bool {
@@ -1331,7 +1347,7 @@ fn restore_view_can_render_selection_beyond_old_history_cap() {
 }
 
 #[test]
-fn cleanup_success_starts_background_refresh_scan() {
+fn cleanup_success_keeps_result_until_user_requests_rescan() {
     let temp = tempfile::tempdir().expect("tempdir");
     let state_dir = temp.path().join("state");
     fs::create_dir(temp.path().join("node_modules")).expect("mkdir");
@@ -1352,17 +1368,17 @@ fn cleanup_success_starts_background_refresh_scan() {
 
     app.clean_with_executor(CleanupIntent::ExplicitUserConfirmation, &executor);
 
-    assert!(app.is_scan_running());
-    assert!(app.status_after_scan.is_some());
-    assert!(
-        app.status_after_scan
-            .as_deref()
-            .is_some_and(|status| status.contains("2.00 MiB"))
-    );
+    assert!(!app.has_background_task());
+    assert!(app.status_after_scan.is_none());
+    assert!(app.status().contains("2.00 MiB"));
+    assert_eq!(app.view, View::CleanupResult);
+    assert!(app.plan().is_none());
+    assert!(app.analysis.is_none());
+    assert!(!app.has_scan_results());
     let result = app
         .last_cleanup_result
         .as_ref()
-        .expect("cleanup result should be retained while the refresh runs");
+        .expect("cleanup result remains visible without a refresh");
     assert_eq!(result.succeeded, 1);
     assert_eq!(result.failed, 0);
     assert_eq!(result.cleaned_size_bytes, 2 * 1024 * 1024);
@@ -1372,10 +1388,16 @@ fn cleanup_success_starts_background_refresh_scan() {
             .as_ref()
             .is_some_and(|path| path.ends_with("node_modules"))
     );
+
+    app.handle_key(key(KeyCode::Char('s')));
+    assert!(app.is_scan_running());
+    assert_eq!(app.view, View::Scan);
+    assert!(app.last_cleanup_result.is_none());
+    wait_for_scan(&mut app);
 }
 
 #[test]
-fn cleanup_result_highlights_count_size_and_path_on_scan_and_home() {
+fn cleanup_result_highlights_count_size_and_path_on_result_and_home() {
     let temp = tempfile::tempdir().expect("tempdir");
     let relative_path = PathBuf::from("target").join("artifact-cache");
     let expected_path = relative_path.display().to_string();
@@ -1386,8 +1408,9 @@ fn cleanup_result_highlights_count_size_and_path_on_scan_and_home() {
         failed: 0,
         cleaned_size_bytes: 414 * 1024 * 1024,
         first_path: Some(cleaned_path),
+        ..CleanupResult::default()
     });
-    app.view = View::Scan;
+    app.view = View::CleanupResult;
 
     let scan = render_text(&mut app, 120, 24);
     println!("{scan}");
@@ -1460,6 +1483,11 @@ fn cleanup_failure_surfaces_item_error_without_starting_refresh_scan() {
     assert_eq!(result.failed, 1);
     assert_eq!(result.cleaned_size_bytes, 0);
     assert!(result.first_path.is_none());
+    assert_eq!(app.view, View::CleanupResult);
+    let screen = render_text(&mut app, 120, 24);
+    assert!(screen.contains("Cleanup failed"), "{screen}");
+    assert!(screen.contains("simulated trash failure"), "{screen}");
+    assert!(!screen.contains("Cleanup complete"), "{screen}");
 }
 
 #[test]

@@ -24,6 +24,14 @@ needed: normalized substring matching and the existing Ratatui/Crossterm APIs
 cover the interaction. Ratatui's locked rendered-line-info feature supplies
 exact wrapping bounds for details and fail-closed confirmation visibility.
 
+Cleanup finishes on a persistent result page showing the outcome, successful
+item count, reviewed size moved to Trash, and the first item error when present.
+Interrupted operations keep totals unconfirmed. The consumed scan snapshot and
+plan are invalidated; no automatic scan starts. `s` scans again, `z` opens restore
+history, and `q` exits. Long error details scroll while the result summary stays
+visible. The page reuses Ratatui `Paragraph` wrapping and the existing detail
+scroll state, without another UI dependency.
+
 All list pages share a visible-window Ratatui `Table` adapter and a per-view
 detail state. A single root gutter aligns the header, body, and footer. At 88
 terminal columns the content splits into a list and 32–56-column detail pane;

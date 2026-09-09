@@ -9,11 +9,6 @@ pub(crate) fn render_scan_workspace(frame: &mut Frame<'_>, area: Rect, app: &mut
 
     let wide = frame.area().width >= 88;
     let workspace = area;
-    let result_height = if app.last_cleanup_result.is_some() {
-        if workspace.width >= 72 { 3 } else { 4 }
-    } else {
-        0
-    };
     let selection_height = Paragraph::new(scan_selection_lines(app))
         .wrap(Wrap { trim: true })
         .line_count(workspace.width)
@@ -51,36 +46,20 @@ pub(crate) fn render_scan_workspace(frame: &mut Frame<'_>, area: Rect, app: &mut
         .wrap(Wrap { trim: true });
     let scope_height = scope.line_count(workspace.width).min(u16::MAX as usize) as u16;
     let rows = Layout::vertical([
-        Constraint::Length(result_height),
         Constraint::Length(scope_height),
         Constraint::Fill(1),
         Constraint::Length(selection_height),
     ])
     .split(workspace);
-    if result_height > 0 {
-        render_cleanup_result(frame, rows[0], app);
-    }
-    frame.render_widget(scope, rows[1]);
-    let has_candidates = app.plan.as_ref().map_or_else(
-        || app.candidate_count_cached() > 0,
-        |plan| plan.summary.candidate_count > 0,
-    );
-    if app
-        .last_cleanup_result
-        .as_ref()
-        .is_some_and(|result| result.succeeded > 0 && result.failed == 0 && !has_candidates)
-    {
-        app.viewport_height = 1;
-        return;
-    }
+    frame.render_widget(scope, rows[0]);
     // The details overlay must cover the selection footer in narrow terminals.
-    render_scan_selection(frame, rows[3], app);
+    render_scan_selection(frame, rows[2], app);
     if wide {
-        let columns = responsive_workspace(rows[2], true);
+        let columns = responsive_workspace(rows[1], true);
         render_candidates(frame, columns[0], app, true);
         render_preview(frame, columns[1], app);
     } else {
-        render_candidates(frame, rows[2], app, false);
+        render_candidates(frame, rows[1], app, false);
         if app.details.focused {
             render_preview(frame, area, app);
         }
@@ -130,105 +109,6 @@ fn scan_selection_lines(app: &Workbench) -> Vec<Line<'static>> {
 fn render_scan_selection(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
     frame.render_widget(
         Paragraph::new(scan_selection_lines(app)).wrap(Wrap { trim: true }),
-        area,
-    );
-}
-
-fn render_cleanup_result(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
-    let Some(result) = &app.last_cleanup_result else {
-        return;
-    };
-    let (marker, result_color) = if result.failed == 0 {
-        ("✓ ", app.theme.ok)
-    } else if result.succeeded == 0 {
-        ("× ", app.theme.danger)
-    } else {
-        ("! ", app.theme.warn)
-    };
-    let mut summary = app.i18n.format(
-        "cleanup_result_summary",
-        &[
-            ("count", result.succeeded.to_string()),
-            ("size", format_bytes(result.cleaned_size_bytes)),
-        ],
-    );
-    if result.failed > 0 {
-        summary.push_str("  ·  ");
-        summary.push_str(&app.i18n.format(
-            "cleanup_result_failed",
-            &[("count", result.failed.to_string())],
-        ));
-    }
-    let path = result.first_path.as_ref().map_or_else(
-        || app.i18n.t("cleanup_result_no_items"),
-        |path| {
-            let first = compact_path(path, &app.roots);
-            if result.succeeded == 1 {
-                first
-            } else {
-                app.i18n.format(
-                    "cleanup_result_paths_more",
-                    &[
-                        ("path", first),
-                        ("count", result.succeeded.saturating_sub(1).to_string()),
-                    ],
-                )
-            }
-        },
-    );
-    let path_width = area.width.saturating_sub(4) as usize;
-    let title = Line::from(vec![
-        Span::styled(
-            marker,
-            Style::default()
-                .fg(result_color)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            app.i18n.t("cleanup_result_title"),
-            Style::default()
-                .fg(app.theme.fg)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]);
-    let path = Line::from(Span::styled(
-        truncate_text(&path, path_width),
-        Style::default().fg(app.theme.fg_dim),
-    ));
-    let lines = if area.width >= 72 {
-        vec![
-            Line::from(vec![
-                Span::styled(
-                    marker,
-                    Style::default()
-                        .fg(result_color)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    app.i18n.t("cleanup_result_title"),
-                    Style::default()
-                        .fg(app.theme.fg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  ·  ", Style::default().fg(app.theme.border)),
-                Span::styled(summary, Style::default().fg(app.theme.fg)),
-            ]),
-            path,
-        ]
-    } else {
-        vec![
-            title,
-            Line::from(Span::styled(summary, Style::default().fg(app.theme.fg))),
-            path,
-        ]
-    };
-    frame.render_widget(
-        Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(app.theme.border))
-                .padding(Padding::horizontal(0)),
-        ),
         area,
     );
 }

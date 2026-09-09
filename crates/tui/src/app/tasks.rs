@@ -259,10 +259,15 @@ impl Workbench {
                 progress_changed
             }
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.operation_kind = None;
+                let kind = self.operation_kind.take();
                 self.operation_sample_rx = None;
                 self.operation_progress = None;
-                self.status = self.i18n.t("status_operation_disconnected");
+                let error = self.i18n.t("status_operation_disconnected");
+                if kind == Some(OperationKind::Cleanup) {
+                    self.finish_cleanup_error(error);
+                } else {
+                    self.status = error;
+                }
                 true
             }
         }
@@ -298,8 +303,8 @@ impl Workbench {
                     self.status = status;
                 }
             }
-            OperationEvent::CleanupFinished(Err(error))
-            | OperationEvent::RestoreFinished(Err(error)) => self.status = error,
+            OperationEvent::CleanupFinished(Err(error)) => self.finish_cleanup_error(error),
+            OperationEvent::RestoreFinished(Err(error)) => self.status = error,
         }
     }
 
@@ -435,11 +440,7 @@ impl Workbench {
     }
 
     pub(crate) fn start_scan(&mut self, request: ScanRequest) {
-        let previous_job_id = self.next_scan_job_id;
         self.start_scan_for_view(request, View::Scan);
-        if self.next_scan_job_id != previous_job_id {
-            self.last_cleanup_result = None;
-        }
     }
 
     pub(crate) fn start_scan_for_view(&mut self, mut request: ScanRequest, view: View) {
@@ -517,6 +518,16 @@ impl Workbench {
         self.input_durations.clear();
         self.input_to_frame_durations.clear();
         self.task_commit_durations.clear();
+        self.clear_scan_snapshot();
+        self.last_cleanup_result = None;
+        self.switch_view(view);
+        self.status = self.i18n.t("status_scan_resolving");
+        self.task_log.push(self.i18n.t("status_scan_started"));
+    }
+
+    /// Invalidate projections and evidence while retaining the user's scan scope for a rescan.
+    pub(crate) fn clear_scan_snapshot(&mut self) {
+        self.scan_data_revision = self.scan_data_revision.wrapping_add(1);
         self.entries = Arc::new(Vec::new());
         self.saved_list_states.clear();
         for details in self
@@ -535,6 +546,9 @@ impl Workbench {
             cancel.store(true, Ordering::Relaxed);
         }
         self.usage_ready = false;
+        if let Some(cancel) = self.scan_view.projection_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
         self.scan_view = ScanViewState::default();
         self.reset_details_scroll(View::Scan);
         self.scan_budget_exceeded.clear();
@@ -552,9 +566,6 @@ impl Workbench {
         self.selection = UserSelection::default();
         self.plan = None;
         self.list_state.select(None);
-        self.switch_view(view);
-        self.status = self.i18n.t("status_scan_resolving");
-        self.task_log.push(self.i18n.t("status_scan_started"));
     }
 
     pub(crate) fn reuse_scan_scope_if_unspecified(&self, request: &mut ScanRequest) {
@@ -591,11 +602,7 @@ impl Workbench {
             return;
         }
         self.usage_after_scan = true;
-        let previous_job_id = self.next_scan_job_id;
         self.start_scan_for_view(request, View::Usage);
-        if self.next_scan_job_id != previous_job_id {
-            self.last_cleanup_result = None;
-        }
     }
 
     pub(crate) fn scan_progress_status(&self, progress: &ScanTaskProgress) -> String {

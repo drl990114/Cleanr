@@ -28,6 +28,7 @@ use crate::{
 // -------------------------------------------------------------------------
 
 mod chrome;
+mod cleanup;
 mod context;
 mod helpers;
 mod home;
@@ -37,6 +38,7 @@ mod scan;
 mod usage;
 
 use chrome::*;
+use cleanup::*;
 use context::*;
 pub(crate) use helpers::*;
 use home::*;

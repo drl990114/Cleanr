@@ -19,6 +19,7 @@ pub(crate) fn view_title(app: &Workbench) -> String {
     let key = match app.view {
         View::Home => "label_home",
         View::Scan => "label_scan_tree",
+        View::CleanupResult => "label_cleanup_result",
         View::Languages => "label_languages",
         View::Rules => "label_rules",
         View::Plugins => "label_plugins",

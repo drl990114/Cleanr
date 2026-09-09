@@ -117,9 +117,8 @@ and size. Choose with `↑` / `↓` or `j` / `k`, then press `Enter` to apply or
 `Esc` to cancel. Filtering preserves selections across categories. The list
 shows the filtered count and the global selection total, including the count
 and size selected outside the filter. Switching views keeps the filter;
-starting a new scan, including the automatic scan after cleanup, resets it
-to **All**. Partial results without a cleanup plan show tentative categories
-and remain read-only.
+starting a new scan resets it to **All**. Partial results without a cleanup plan
+show tentative categories and remain read-only.
 
 Press `p` to find a path using an inline input above the list. Matching ignores letter case, accepts either slash
 separator, and preserves Chinese text. Input is debounced for 100 ms; `Enter`
@@ -180,8 +179,18 @@ After confirmation, each selected item is validated again and moved to the
 system trash. Failures are recorded per item; one failed item does not hide
 the result of the others. The selection stays fixed while cleanup or restore
 runs. Progress shows the stage and processed count, advancing only after the
-corresponding outcome is recorded. The final result reports count, size, and
-path context; `z` opens restore history after a cleanup.
+corresponding outcome is recorded. Cleanr then stays on the cleanup result page
+without starting another scan. It distinguishes success, partial completion,
+and failure, showing the successful count, size moved to Trash, and the first
+failed path and reason when present. The size uses the reviewed estimates for
+successfully moved items; it is not a measurement of newly available disk space.
+If an operation is interrupted before its final result can be confirmed, counts
+and size remain unconfirmed and the error stays visible.
+
+Press `s` to scan again, `z` to open restore history, or `q` to exit. Use arrows
+or Page Up/Down to read long error details. The old scan snapshot and cleanup
+plan are invalidated after execution, so further cleanup requires a fresh scan
+and review.
 
 `/clean --confirm` skips the confirmation dialog and executes the current
 selection as an explicit local user action. Use it only after reviewing the

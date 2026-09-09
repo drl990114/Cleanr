@@ -65,6 +65,7 @@ pub(crate) enum ConfirmChoice {
 pub(crate) enum View {
     Home,
     Scan,
+    CleanupResult,
     Languages,
     Rules,
     Plugins,
@@ -92,6 +93,23 @@ pub(crate) struct CleanupResult {
     pub(crate) failed: usize,
     pub(crate) cleaned_size_bytes: u64,
     pub(crate) first_path: Option<PathBuf>,
+    pub(crate) first_failure: Option<(PathBuf, String)>,
+    /// A worker or journal error leaves the final counts unconfirmed.
+    pub(crate) interruption: Option<String>,
+}
+
+impl CleanupResult {
+    pub(crate) fn title_key(&self) -> &'static str {
+        if self.interruption.is_some() {
+            "cleanup_result_interrupted_title"
+        } else if self.failed == 0 {
+            "cleanup_result_title"
+        } else if self.succeeded == 0 {
+            "cleanup_result_failed_title"
+        } else {
+            "cleanup_result_partial_title"
+        }
+    }
 }
 
 impl DurationRecorder {

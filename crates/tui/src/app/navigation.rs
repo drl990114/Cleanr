@@ -16,7 +16,7 @@ impl Workbench {
     }
     pub(crate) fn list_len(&self) -> usize {
         match self.view {
-            View::Home => 0,
+            View::Home | View::CleanupResult => 0,
             View::Scan => self.scan_visible_count(),
             View::Languages => self.i18n.packs().len(),
             View::Rules => self

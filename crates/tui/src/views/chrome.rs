@@ -72,6 +72,16 @@ pub(crate) fn render_status(frame: &mut Frame<'_>, area: Rect, app: &Workbench) 
         vec![("Esc/x", "hint_cancel")]
     } else if app.is_operation_running() {
         Vec::new()
+    } else if app.view == View::CleanupResult {
+        let mut keys = vec![
+            ("s", "home_action_rescan"),
+            ("z", "hint_restore_result"),
+            ("q", "hint_quit"),
+        ];
+        if app.details.max_scroll > 0 {
+            keys.push(("↑↓", "hint_scroll"));
+        }
+        keys
     } else if app.details.focused {
         vec![
             ("Tab", "hint_back"),

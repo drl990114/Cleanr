@@ -120,17 +120,13 @@ impl Workbench {
         self.last_cleanup_result = None;
         match execute_cleanup(&plan, executor, &self.state_dir, true) {
             Ok(manifest) => self.finish_cleanup_manifest(manifest),
-            Err(err) => self.status = err.to_string(),
+            Err(err) => self.finish_cleanup_error(err.to_string()),
         }
     }
 
     pub(crate) fn finish_cleanup_manifest(&mut self, manifest: ExecutionManifest) {
-        self.clean_waiting_for_confirmation = false;
         let result = self.cleanup_result(&manifest);
         let status = self.cleanup_manifest_status(&manifest, result.cleaned_size_bytes);
-        let succeeded = manifest.summary.succeeded;
-        self.last_cleanup_result = Some(result);
-        self.task_log.push(status.clone());
         if !self
             .execution_manifests
             .iter()
@@ -138,11 +134,34 @@ impl Workbench {
         {
             self.execution_manifests.insert(0, manifest);
         }
-        if succeeded > 0 {
-            self.refresh_roots_after_mutation(status);
-        } else {
-            self.status = status;
-        }
+        self.show_cleanup_result(result, status);
+    }
+
+    pub(crate) fn finish_cleanup_error(&mut self, error: String) {
+        self.show_cleanup_result(
+            CleanupResult {
+                interruption: Some(error.clone()),
+                ..CleanupResult::default()
+            },
+            error,
+        );
+    }
+
+    fn show_cleanup_result(&mut self, result: CleanupResult, status: String) {
+        // Even failed validation can mean the filesystem has changed. Discard the old evidence
+        // and plan; a new user-requested scan must precede any further cleanup.
+        self.clear_scan_snapshot();
+        self.clean_waiting_for_confirmation = false;
+        self.restore_waiting_for_confirmation = None;
+        self.status_after_scan = None;
+        self.review_after_scan = false;
+        self.usage_after_scan = false;
+        self.last_cleanup_result = Some(result);
+        self.task_log.push(status.clone());
+        self.close_command();
+        self.help_open = false;
+        self.switch_view(View::CleanupResult);
+        self.set_quiet_status(status);
     }
 
     fn cleanup_result(&self, manifest: &ExecutionManifest) -> CleanupResult {
@@ -170,6 +189,17 @@ impl Workbench {
             failed: manifest.summary.failed,
             cleaned_size_bytes,
             first_path,
+            first_failure: manifest.items.iter().find_map(|item| {
+                (item.status == ExecutionStatus::Failed).then(|| {
+                    (
+                        item.path.clone(),
+                        item.error
+                            .clone()
+                            .unwrap_or_else(|| self.i18n.t("status_cleanup_unknown_error")),
+                    )
+                })
+            }),
+            interruption: None,
         }
     }
 
@@ -308,6 +338,10 @@ impl Workbench {
     }
 
     pub(crate) fn review(&mut self) {
+        if self.last_cleanup_result.is_some() && !self.has_scan_results() {
+            self.switch_view(View::CleanupResult);
+            return;
+        }
         if self.scan_rx.is_some() {
             self.review_after_scan = true;
             self.status = self.i18n.t("status_review_after_scan");

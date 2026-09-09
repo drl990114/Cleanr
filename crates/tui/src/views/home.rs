@@ -18,23 +18,9 @@ pub(crate) fn render_home(frame: &mut Frame<'_>, area: Rect, app: &Workbench) {
 
     let (title, summary, primary, secondary, detail) =
         if let Some(result) = &app.last_cleanup_result {
-            let mut summary = app.i18n.format(
-                "cleanup_result_summary",
-                &[
-                    ("count", result.succeeded.to_string()),
-                    ("size", format_bytes(result.cleaned_size_bytes)),
-                ],
-            );
-            if result.failed > 0 {
-                summary.push_str("  ·  ");
-                summary.push_str(&app.i18n.format(
-                    "cleanup_result_failed",
-                    &[("count", result.failed.to_string())],
-                ));
-            }
             (
-                app.i18n.t("cleanup_result_title"),
-                summary,
+                app.i18n.t(result.title_key()),
+                cleanup_result_summary(app, result),
                 home_action_line(app.theme, "s", app.i18n.t("home_action_rescan"), true),
                 home_action_line(app.theme, "z", app.i18n.t("hint_restore_result"), false),
                 cleanup_result_path_line(app, content.width as usize),
@@ -174,6 +160,14 @@ fn cleanup_result_path_line(app: &Workbench, max_width: usize) -> Line<'static> 
     let Some(result) = &app.last_cleanup_result else {
         return Line::from("");
     };
+    if let Some(error) = &result.interruption {
+        return home_detail_line(
+            app.i18n.t("home_detail_state"),
+            truncate_text(error, max_width),
+            app.theme.warn,
+            app.theme,
+        );
+    }
     let Some(first) = result.first_path.as_ref() else {
         return home_detail_line(
             app.i18n.t("home_detail_state"),

@@ -114,8 +114,13 @@ impl Workbench {
         if self.view == View::Home
             || self.is_scan_running()
             || self.is_operation_running()
-            || !self.details.focused
+            || (!self.details.focused && self.view != View::CleanupResult)
             || !matches!(self.mode, Mode::Normal)
+        {
+            return false;
+        }
+        if self.view == View::CleanupResult
+            && matches!(key.code, KeyCode::Char('s' | 'S' | 'z') | KeyCode::Esc)
         {
             return false;
         }
