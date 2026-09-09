@@ -102,7 +102,7 @@ and preserve Cleanr's state directory and manifests while investigating.
 Cleanr checks for a new release at most once every 24 hours. Disable the
 non-blocking startup check with:
 
-The current development version checks in a background worker with a 10-second
+Cleanr 0.16.0 and later check in a background worker with a 10-second
 HTTP timeout. The first screen does not wait for the network. A new-version
 notice appears separately on Home and does not replace task errors.
 
