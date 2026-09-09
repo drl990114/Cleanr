@@ -7,6 +7,8 @@ later source or CI fixes.
 
 ## Unreleased
 
+## 0.16.0
+
 - Refresh the terminal interface with aligned columns, responsive spacing, and
   consistent details across Scan, Usage, Restore, Languages, Rules, Plugins, and
   Tasks. Wide terminals keep details beside the list; narrow terminals use an
