@@ -1668,8 +1668,14 @@ mod tests {
 
         let registry = RuleRegistry::load(&config).expect("load registry");
 
-        assert_eq!(registry.packs().len(), 1);
-        assert_eq!(registry.packs()[0].definition.name, "A");
+        // Disabled built-in packs can still contribute mandatory inspection rules.
+        let duplicate_packs = registry
+            .packs()
+            .iter()
+            .filter(|pack| pack.definition.id == "duplicate")
+            .collect::<Vec<_>>();
+        assert_eq!(duplicate_packs.len(), 1);
+        assert_eq!(duplicate_packs[0].definition.name, "A");
         assert!(
             registry
                 .diagnostics()
