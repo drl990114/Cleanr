@@ -33,6 +33,22 @@ it is not a backup guarantee. Routine installation and rule questions belong in
 报告、计划、清单、凭证或真实个人路径。目前没有响应时限或长期支持承诺；旧版本修复
 逐案评估。普通安装和规则问题请查看[支持与反馈](SUPPORT.md)。
 
+## TLS dependency fix in 0.17.0
+
+The 0.17.0 lockfile updates `rustls` from 0.23.40 to 0.23.45 to address
+[RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285), published on
+2026-09-14. The advisory concerns TLS 1.3 handshake messages accepted across
+encryption-level boundaries. Cleanr uses rustls through reqwest for update checks
+and plugin/language downloads. Already installed binaries need an upgrade to
+receive this dependency fix; the exact release workflow remains the audit record.
+
+## 0.17.0 的 TLS 依赖修复
+
+0.17.0 锁文件将 `rustls` 从 0.23.40 升级到 0.23.45，修复 2026-09-14 公布的
+[RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285)：TLS 1.3 握手
+消息可能在错误的加密层被接受。Cleanr 的更新检查、插件和语言下载通过 reqwest 使用
+rustls。已安装的二进制需要升级才能获得该修复，具体审计结果以对应发布工作流为准。
+
 ## Dependency audit snapshot — 2026-09-04
 
 The current source lockfile was audited against RustSec database commit

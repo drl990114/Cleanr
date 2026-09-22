@@ -28,6 +28,10 @@ later source or CI fixes.
   partial and failed outcomes, recorded item counts, rescan and restore actions.
 - Add English and Simplified Chinese rule explanations and coverage guidance,
   and clarify partial scans, permissions and execution troubleshooting.
+- Update the locked rustls dependency to 0.23.45 to fix
+  [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285), a TLS 1.3
+  handshake validation issue. Existing Ratatui dependency warnings remain
+  documented in SECURITY.md.
 
 ### 简体中文
 
@@ -45,6 +49,9 @@ later source or CI fixes.
 - 清理结果持续保留至下次扫描，区分完成、部分成功与失败，显示已记录的条目数，
   并提供重新扫描和恢复入口。
 - 补充中英文规则解释与覆盖说明，完善部分扫描、权限和执行问题排查文档。
+- 将锁定的 rustls 升级到 0.23.45，修复 TLS 1.3 握手校验问题
+  [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285)。已有 Ratatui
+  依赖告警继续记录在 SECURITY.md 中。
 
 ## 0.16.0
 
