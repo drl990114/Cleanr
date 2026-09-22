@@ -46,6 +46,25 @@ explicitly:
 Use absolute paths that exist on your operating system. Paths entered in the
 TUI do not expand `~` or environment variables.
 
+## The agent asks for macOS Full Disk Access after a partial scan
+
+Full Disk Access is not required to use the Cleanr skill. Unreadable Safari,
+CloudKit, or temporary locations can remain outside the review. Check
+`scan.issues` for the cause: a `partial` report alone does not prove that a
+privacy permission is missing.
+
+The skill can summarize the available evidence and, for cleanup planning, try
+one narrower scan within the approved scope. It records the skipped locations
+and uses a fresh complete scan for automatic selections. Keep the same roots,
+configuration, and inactivity policy when preparing that narrower plan. A
+complete subset does not establish complete coverage of the original scope.
+
+`plan` and `dry-run` are read-only; permission-related partial evidence does not
+by itself prohibit inspecting a plan, although default selection may be empty.
+If `scan.budget_exceeded` is nonempty, that result cannot produce a plan. Use a
+smaller scope instead of changing permissions. Cleanup still requires review
+and confirmation of the exact plan.
+
 ## Cleanr reports a configuration parse error
 
 Print the active default path:

@@ -121,7 +121,11 @@ computer has no junk.
 ## Preserve the execution boundary
 
 Only Cleanr candidates can enter a plan. Never select a named location or scan
-root merely because it appears in the coverage ledger. Keep `partial`,
-`no-known-location`, and `os-managed` rows out of plans. Preserve the main
+root merely because it appears in the coverage ledger. Keep unverified
+locations in `partial` rows, `no-known-location`, and `os-managed` rows out of
+execution plans. A `partial` row does not require extra OS permissions: follow
+[`partial-scans.md`](partial-scans.md) to review available evidence and, when
+useful, prepare a plan from a fresh complete scan of a smaller approved scope.
+Keep the original coverage gaps visible in its summary. Preserve the main
 skill's exact plan path, SHA-256, fresh re-scan, system-trash, manifest, and
 current-user authorization requirements.

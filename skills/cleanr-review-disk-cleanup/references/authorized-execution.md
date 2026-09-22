@@ -15,7 +15,9 @@ that choice, and never overwrite an existing file:
 cleanr plan --output /local/path/cleanr-plan.json /approved/scope
 ```
 
-Reuse the approved `--config` and `--global-kind` arguments. If analysis used
+Use the latest reviewed scope, including any reduction made under
+[`partial-scans.md`](partial-scans.md); do not restore skipped roots or global
+categories. Reuse its `--config` and `--global-kind` arguments. If analysis used
 `--inactive-days <DAYS>`, pass the same override to `plan`; do not substitute
 the current configuration value. Do not edit the plan. Record the `sha256=`
 value printed by Cleanr.

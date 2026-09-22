@@ -85,7 +85,7 @@ When the request relies on a one-run inactivity override, also verify that
 `cleanr analyze --help` lists `--inactive-days`; if it does not, do not silently
 substitute a persistent configuration change.
 
-## Stage 3 — Analyze once
+## Stage 3 — Analyze the approved scope
 
 Only when the user explicitly asks to persist a new shared age policy, set it
 before analysis:
@@ -98,9 +98,10 @@ Allow `0` or `1..=3650`. Zero removes the plan's age filter and disables the
 preselection age gate; it does not bypass incomplete evidence, trust, conflicts,
 overlap handling, or protected paths.
 
-Run the narrowest approved read-only analysis exactly once. Use the first form
-for the configured threshold, or the second for a one-run override that leaves
-the configuration unchanged:
+Run the narrowest approved read-only analysis. Avoid repeating an unchanged
+scan; a bounded retry with a smaller scope is allowed for incomplete evidence.
+Use the first form for the configured threshold, or the second for a one-run
+override that leaves the configuration unchanged:
 
 ```bash
 cleanr analyze /approved/local/root
@@ -122,8 +123,12 @@ In this order:
    automatic preselection. Do not describe a v1 report as age-filtered, and
    explain that the newer projection requires a user-approved CLI upgrade.
 3. Confirm that the reported roots and, when present, `requested_kinds` equal
-   the approved scope.
-4. Read `scan.integrity`; `partial` evidence stays read-only.
+   the requested scan scope. A fallback may narrow the approved scope; disclose
+   the omitted locations and never expand it.
+4. Read `scan.integrity`, `scan.issues`, and, when present,
+   `scan.budget_exceeded`. For incomplete evidence, follow
+   [`references/partial-scans.md`](references/partial-scans.md). Missing OS
+   permissions do not block read-only review or require Full Disk Access.
 5. Read `policy.preselect_after_days`.
 6. For global analysis, require `scan.global` and build the coverage ledger from
    its `locations` and path-free `os_managed` entries. Never infer category
@@ -166,9 +171,9 @@ post-evidence confirmation. Never infer extra path choices.
 Read
 [`references/authorized-execution.md`](references/authorized-execution.md) and
 follow its plan-preparation and human-summary sections. Use the identical roots,
-config, global categories, and one-run inactivity override from the reviewed
-analysis. Never select a `review` or `available` item on the agent's own
-judgment.
+config, global categories, and one-run inactivity override from the latest
+reviewed analysis, including any disclosed scope reduction. Never select a
+`review` or `available` item on the agent's own judgment.
 
 The JSON plan is the machine-verifiable contract, not the user interface. Do
 not ask the user to open or interpret it. Present the selected items as a
