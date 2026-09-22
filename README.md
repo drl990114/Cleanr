@@ -33,7 +33,7 @@ Choose the folders or known cleanup locations you want to review. Coverage varie
 by platform; see [scanning options](https://drl990114.github.io/Cleanr/docs/using-cleanr)
 and the [support and verification matrix](https://drl990114.github.io/Cleanr/docs/support-matrix).
 
-**Unreleased source coverage:** browser automation downloads, compiler caches,
+**New in v0.17.0:** browser automation downloads, compiler caches,
 JetBrains indexes/logs, Conda archives and Xet download chunks now have dedicated
 review rules. uv and retained application data have read-only protection.
 [Coverage and limits](docs/docs/rules/cache-expansion.md).

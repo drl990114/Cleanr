@@ -18,6 +18,6 @@ Subtree inspectors must be path-only. `exclude_path_globs` refines direct matche
 `parent_marker` requires a regular file observed in the same scan snapshot.
 
 See [cache coverage and sources](../../docs/docs/rules/cache-expansion.md) for the
-unreleased developer/AI cache rules and retained-data boundaries. Location
+v0.17.0 developer/AI cache rules and retained-data boundaries. Location
 expansion supports bounded child discovery and native current-user ownership;
 all new cleanup rules remain review-only with runtime guards.

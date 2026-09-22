@@ -2,8 +2,8 @@
 title: Developer and AI cache coverage
 ---
 
-This page describes **unreleased source changes**, not the capabilities of an
-already installed release. These rules use standard user locations, leave new
+This page describes cache coverage added in **Cleanr v0.17.0**. Older releases do
+not include these rules or protections. The rules use standard user locations, leave new
 candidates unselected for review, and never invoke a tool's native cleanup command.
 The shared inactivity filter still applies; modification age does not prove that
 a runtime, model or environment is unused.

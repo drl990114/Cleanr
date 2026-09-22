@@ -83,7 +83,7 @@ Composer, Bun, Pub, CoreSimulator, and other named Xcode caches. DeviceSupport
 and XCTest devices require review; Xcode archives are low-confidence because
 retained builds and dSYMs may be irreplaceable.
 
-In the unreleased source, uv is inspection-only and cannot enter cleanup plans;
+Since v0.17.0, uv is inspection-only and cannot enter cleanup plans;
 see [cache coverage and retention](rules/cache-expansion.md).
 
 Python `.venv` directories are intentionally not covered: they may contain
@@ -265,7 +265,7 @@ A directory carrying a valid standard `CACHEDIR.TAG` can be matched with
 not proof of low recreation cost: use a medium-confidence, unselected fallback
 rule and never combine it with another path matcher.
 
-### Inspection and constrained cache discovery (unreleased)
+### Inspection and constrained cache discovery (v0.17.0)
 
 See [developer and AI cache coverage](rules/cache-expansion.md) for the built-in
 paths, sources, review requirements and retained-data boundaries.
@@ -300,5 +300,5 @@ These fields are additive in analysis/plan evidence; old records default to no
 inspection or ownership requirement, and absent optional fields stay omitted.
 Inspection uses the existing `excluded` state so older analysis readers remain
 closed to selection. Rule/location schemas reject unknown fields. Do not publish
-a plugin using these fields with a legacy compatibility minimum: require the
-first Cleanr release that actually includes them. No such release is claimed here.
+a plugin using these fields with a legacy compatibility minimum: set
+`cleanr_version = ">=0.17.0"` or a later minimum that includes every field it uses.

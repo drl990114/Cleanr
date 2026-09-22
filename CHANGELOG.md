@@ -7,6 +7,8 @@ later source or CI fixes.
 
 ## Unreleased
 
+## 0.17.0
+
 - Add 27 review-required cache rules and 32 discovery locations for browser
   automation downloads, compiler caches, JetBrains indexes and logs, Conda
   package archives, and Hugging Face Xet chunks. All new cleanup rules start

@@ -5,7 +5,7 @@ description: Published versions, actual platform evidence, compatibility, and re
 # Release readiness
 
 This is a verification record and release checklist, not a claim that every
-supported target has been tested on a user's machine. Last reviewed: 2026-09-04.
+supported target has been tested on a user's machine. Last reviewed: 2026-09-22.
 
 ## Version scope and release verification
 
@@ -14,10 +14,14 @@ selection apply to **0.15.0 and later**. The compatibility notes below describe
 the restore-record changes in 0.15.0. See the
 [changelog](https://github.com/drl990114/Cleanr/blob/main/CHANGELOG.md) for details.
 
-Consult the [v0.15.0 release](https://github.com/drl990114/Cleanr/releases/tag/v0.15.0)
+Developer and AI cache coverage, inspection protection, and constrained discovery
+apply to **0.17.0 and later**. See [cache coverage](./rules/cache-expansion.md) for
+the standard locations, retained data, and fixture-based verification limits.
+
+Consult the [v0.17.0 release](https://github.com/drl990114/Cleanr/releases/tag/v0.17.0)
 for publication status and its per-platform `release-evidence.json`. The table
 below records historical source checks and remaining Trash acceptance; it does
-not replace installation checks on 0.15.0 assets. The [recorded walkthrough](./demo.md) retains its
+not replace installation checks on 0.17.0 assets. The [recorded walkthrough](./demo.md) retains its
 v0.14.0 version label. A passing check on a later commit does not retroactively
 validate an earlier release asset.
 

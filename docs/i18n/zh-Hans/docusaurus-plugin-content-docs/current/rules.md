@@ -71,7 +71,7 @@ Deno、Cypress、Composer、Bun、Pub、CoreSimulator 和其他明确命名的 X
 DeviceSupport 与 XCTest devices 需要人工审阅；Xcode archives 是低置信候选项，因为
 保留的构建和 dSYM 可能无法重建。
 
-尚未发布的源码中，uv 仅供只读识别，不能进入清理计划；详见
+从 v0.17.0 起，uv 仅供只读识别，不能进入清理计划；详见
 [缓存覆盖与保留边界](rules/cache-expansion.md)。
 
 Python `.venv` 目录被有意排除，因为其中可能包含重建成本很高、甚至无法精确重现的
@@ -221,7 +221,7 @@ runtime_guard = { process_names = ["Example Tool", "example-tool"] }
 `match = { kind = "directory", cache_tagged = true }` 匹配。它只是提示，不能证明重建
 代价低；应使用中置信度、默认不选中的 fallback 规则，并且不能再组合其他路径 matcher。
 
-### 只读识别与受限缓存发现（尚未发布）
+### 只读识别与受限缓存发现（v0.17.0）
 
 `cleanup.enabled_rule_packs` 控制清理规则；禁用内置清理包仍保留它的只读保护，避免
 宽泛规则重新把保留数据变成候选。
@@ -250,5 +250,5 @@ runtime_guard = { process_names = ["Example Tool", "example-tool"] }
 
 分析和计划证据字段是增量扩展，旧记录默认没有只读或归属要求，未使用的可选字段
 保持省略。只读条目沿用 `excluded` 状态，避免旧分析读取器将其作为可选候选。
-规则和位置 schema 会拒绝未知字段。发布使用这些字段的插件时，必须要求实际首次
-包含该能力的 Cleanr 版本，不能沿用旧的兼容性下限；本页不宣称已经发布。
+规则和位置 schema 会拒绝未知字段。发布使用这些字段的插件时，须设置
+`cleanr_version = ">=0.17.0"`，或包含所用全部字段的更高版本下限。

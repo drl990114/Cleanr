@@ -30,7 +30,7 @@ Agent 委托执行时，还会将已审阅计划与重新扫描的结果核对�
 [扫描方式](https://drl990114.github.io/Cleanr/zh-Hans/docs/using-cleanr)与
 [支持与验证矩阵](https://drl990114.github.io/Cleanr/zh-Hans/docs/support-matrix)。
 
-**尚未发布的源码覆盖：** 浏览器自动化下载、编译缓存、JetBrains 索引与日志、Conda
+**v0.17.0 新增覆盖：** 浏览器自动化下载、编译缓存、JetBrains 索引与日志、Conda
 归档和 Xet 下载分块新增专属复核规则；uv 与应用保留数据新增只读保护。
 [覆盖范围与限制](../../docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/rules/cache-expansion.md)。
 
