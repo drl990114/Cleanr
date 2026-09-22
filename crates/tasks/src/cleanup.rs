@@ -437,6 +437,9 @@ pub(crate) fn validate_recoverable_plan(plan: &CleanupPlan) -> Result<()> {
     for item in plan.items.iter().filter(|item| item.selected) {
         if let Some(evidence) = &item.evidence {
             for rule in &evidence.matched_rules {
+                if rule.read_only_scope.is_some() {
+                    anyhow::bail!("selected cleanup item contains a read-only inspection rule");
+                }
                 if rule
                     .runtime_guard
                     .as_ref()

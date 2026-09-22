@@ -74,7 +74,7 @@ Project-aware coverage includes:
 - Turborepo, Terraform, and CocoaPods.
 
 The pack also retains rules for caches such as Cargo registries and Git
-dependencies, npm, pnpm, Yarn, pip, uv, Go modules, Corepack, language-version
+dependencies, npm, pnpm, Yarn, pip, Go modules, Corepack, language-version
 manager downloads, rustup downloads, Xcode `DerivedData`, and Next.js and
 Python tool caches. Generated coverage, deployment output, managed hook
 environments, and other potentially retained artifacts stay review-only. On
@@ -82,6 +82,9 @@ macOS it also discovers Homebrew, CocoaPods, SwiftPM, Go build, Deno, Cypress,
 Composer, Bun, Pub, CoreSimulator, and other named Xcode caches. DeviceSupport
 and XCTest devices require review; Xcode archives are low-confidence because
 retained builds and dSYMs may be irreplaceable.
+
+In the unreleased source, uv is inspection-only and cannot enter cleanup plans;
+see [cache coverage and retention](rules/cache-expansion.md).
 
 Python `.venv` directories are intentionally not covered: they may contain
 local environments that are costly or impossible to reproduce exactly. Other
@@ -183,7 +186,8 @@ behavior.
 
 ## Enable or disable packs
 
-Only IDs in `cleanup.enabled_rule_packs` are loaded:
+Only IDs in `cleanup.enabled_rule_packs` enable cleanup rules. Built-in inspection
+protections remain active even when their cleanup pack is disabled:
 
 ```toml
 [cleanup]
@@ -260,3 +264,41 @@ A directory carrying a valid standard `CACHEDIR.TAG` can be matched with
 `match = { kind = "directory", cache_tagged = true }`. Treat this as a hint,
 not proof of low recreation cost: use a medium-confidence, unselected fallback
 rule and never combine it with another path matcher.
+
+### Inspection and constrained cache discovery (unreleased)
+
+See [developer and AI cache coverage](rules/cache-expansion.md) for the built-in
+paths, sources, review requirements and retained-data boundaries.
+
+Use `action = "inspect"` and `default_selected = false` to explain retained data.
+Its default `inspection_scope = "subtree"` protects the path and every descendant,
+including matches inside an explicitly scanned subtree; covering ancestors are
+also excluded. Subtree inspectors require a path-only matcher and cannot depend
+on size, age, project markers or cache tags. `inspection_scope = "entry"` protects
+a mixed container and its ancestors while allowing separately reviewed children.
+Inspection is independent of rule trust/priority and can never be shadowed away
+by a trash rule.
+
+`match.exclude_path_globs` excludes direct path matches using the same segment-aware
+glob syntax. It is not a general protected-path facility: an inspection still
+retains descendants of any ancestor it matches. For a mixed container, use an
+entry inspector plus subtree inspectors for retained children. `match.parent_marker`
+requires a fixed, regular direct-child filename in the candidate's parent, seen
+in the same scan; symlinks and absent markers do not qualify. This supports Conda
+archives without reading or executing configuration.
+
+Bounded location expansion can declare `include_child = true` instead of suffixes,
+and `current_user_only = true` to restrict discovered children to the effective
+user's native ownership. Runtime guards accept the same ownership requirement
+and recheck it before execution. Unsupported hosts and unavailable metadata fail
+closed. Process names remain case-insensitive exact names, with `.exe` removed;
+Python numeric version suffixes (for example `python3.13t`) normalize to `python`.
+Executable names supplement process names; these checks do not prove that every
+possible cache user is absent.
+
+These fields are additive in analysis/plan evidence; old records default to no
+inspection or ownership requirement, and absent optional fields stay omitted.
+Inspection uses the existing `excluded` state so older analysis readers remain
+closed to selection. Rule/location schemas reject unknown fields. Do not publish
+a plugin using these fields with a legacy compatibility minimum: require the
+first Cleanr release that actually includes them. No such release is claimed here.

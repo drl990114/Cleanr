@@ -88,6 +88,7 @@ mod tests {
                 match_role: cleanr_core::RuleMatchRole::Primary,
                 sources: Vec::new(),
                 runtime_guard: None,
+                read_only_scope: None,
             }],
         }
     }
@@ -141,6 +142,7 @@ mod tests {
                 match_role: cleanr_core::RuleMatchRole::Primary,
                 sources: Vec::new(),
                 runtime_guard: None,
+                read_only_scope: None,
             }],
         };
         let plan = build_cleanup_plan(vec![temp.path().to_path_buf()], vec![], &[entry]);
@@ -279,6 +281,7 @@ mod tests {
             .ok()
             .map(DateTime::<Utc>::from);
         entry.rule_hits[0].runtime_guard = Some(RuntimeGuardEvidence {
+            current_user_only: false,
             rule: RuleKey {
                 rule_pack_id: entry.rule_hits[0].rule_pack_id.clone(),
                 rule_id: entry.rule_hits[0].rule_id.clone(),
@@ -609,6 +612,7 @@ mod tests {
                 match_role: cleanr_core::RuleMatchRole::Primary,
                 sources: Vec::new(),
                 runtime_guard: None,
+                read_only_scope: None,
             }],
         };
         let policy = cleanr_core::SafetyPolicy::new(vec![], false);
@@ -904,3 +908,6 @@ mod tests {
         assert_eq!(restored_run_ids(&manifests), HashSet::from(["complete"]));
     }
 }
+
+#[cfg(test)]
+mod cache_expansion_tests;

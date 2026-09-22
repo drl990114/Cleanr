@@ -488,14 +488,20 @@ pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
             detail_section(
                 &mut lines,
                 app.i18n.t("detail_risk"),
-                preview_rule_text(item, |rule| &rule.risk_note, &item.risk_note),
+                preview_rule_text(
+                    item,
+                    &app.i18n,
+                    "risk_note",
+                    |rule| &rule.risk_note,
+                    &item.risk_note,
+                ),
                 app.theme.warn,
                 app.theme,
             );
             detail_section(
                 &mut lines,
                 app.i18n.t("detail_reason"),
-                preview_rule_text(item, |rule| &rule.reason, &item.reason),
+                preview_rule_text(item, &app.i18n, "reason", |rule| &rule.reason, &item.reason),
                 app.theme.fg,
                 app.theme,
             );
@@ -512,7 +518,7 @@ pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
             ));
             more.push(detail_line(
                 &app.i18n.t("detail_rule"),
-                preview_rule_text(item, |rule| &rule.label, &item.rule_id),
+                preview_rule_text(item, &app.i18n, "label", |rule| &rule.label, &item.rule_id),
                 app.theme.fg_dim,
                 app.theme,
             ));
@@ -537,7 +543,10 @@ pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
             let labels = entry
                 .rule_hits
                 .iter()
-                .map(|hit| hit.label.as_str())
+                .map(|hit| {
+                    app.i18n
+                        .rule_text(&hit.rule_pack_id, &hit.rule_id, "label", &hit.label)
+                })
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>()
@@ -548,6 +557,37 @@ pub(crate) fn render_preview(frame: &mut Frame<'_>, area: Rect, app: &mut Workbe
                 app.theme.fg_dim,
                 app.theme,
             ));
+            for (field, heading) in [("reason", "detail_reason"), ("risk_note", "detail_risk")] {
+                let text = entry
+                    .rule_hits
+                    .iter()
+                    .filter(|hit| hit.read_only_scope.is_some())
+                    .map(|hit| {
+                        app.i18n.rule_text(
+                            &hit.rule_pack_id,
+                            &hit.rule_id,
+                            field,
+                            if field == "reason" {
+                                &hit.reason
+                            } else {
+                                &hit.risk_note
+                            },
+                        )
+                    })
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                if !text.is_empty() {
+                    detail_section(
+                        &mut lines,
+                        app.i18n.t(heading),
+                        text,
+                        app.theme.warn,
+                        app.theme,
+                    );
+                }
+            }
         }
         more.push(detail_line(
             &app.i18n.t("home_detail_scope"),
@@ -740,6 +780,8 @@ pub(crate) fn render_category_filter(frame: &mut Frame<'_>, area: Rect, app: &mu
 
 fn preview_rule_text(
     item: &CleanupItem,
+    i18n: &cleanr_i18n::I18n,
+    field_name: &str,
     field: impl for<'a> Fn(&'a cleanr_core::RuleEvidence) -> &'a str,
     fallback: &str,
 ) -> String {
@@ -748,7 +790,12 @@ fn preview_rule_text(
     };
     let mut values = Vec::new();
     for rule in &evidence.matched_rules {
-        let value = field(rule);
+        let value = i18n.rule_text(
+            &rule.key.rule_pack_id,
+            &rule.key.rule_id,
+            field_name,
+            field(rule),
+        );
         if !values.contains(&value) {
             values.push(value);
         }

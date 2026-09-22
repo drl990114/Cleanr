@@ -130,10 +130,20 @@ impl RuleRegistry {
                 ));
             }
         }
+        for pack in &mut registry.packs {
+            if pack.trust == TrustLevel::Builtin
+                && !enabled_rule_packs.contains(&pack.definition.id)
+            {
+                // Disabling developer cleanup must not let a broad system/plugin fallback
+                // turn uv or retained application data back into an executable candidate.
+                pack.retain_inspections();
+            }
+        }
         registry.packs.retain(|pack| {
             enabled_rule_packs
                 .iter()
                 .any(|enabled| enabled == &pack.definition.id)
+                || (pack.trust == TrustLevel::Builtin && !pack.definition.rules.is_empty())
         });
         registry.rebuild_indexes()?;
         Ok(registry)

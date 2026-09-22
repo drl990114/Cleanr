@@ -128,3 +128,262 @@ kind = "developer-caches"
 platforms = ["macos"]
 base = "home"
 relative_path = ".cache/pre-commit"
+
+[[locations]]
+id = "macos-playwright-cache"
+label = "Playwright download cache"
+kind = "developer-caches"
+platforms = ["macos"]
+base = "cache"
+relative_path = "ms-playwright"
+
+[[locations]]
+id = "macos-electron-cache"
+label = "Electron download cache"
+kind = "developer-caches"
+platforms = ["macos"]
+base = "cache"
+relative_path = "electron"
+
+[[locations]]
+id = "macos-cypress-cache"
+label = "Cypress download cache"
+kind = "developer-caches"
+platforms = ["macos"]
+base = "cache"
+relative_path = "Cypress"
+
+[[locations]]
+id = "linux-playwright-cache"
+label = "Playwright download cache"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "ms-playwright"
+
+[[locations]]
+id = "linux-electron-cache"
+label = "Electron download cache"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "electron"
+
+[[locations]]
+id = "linux-cypress-cache"
+label = "Cypress download cache"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "Cypress"
+
+[[locations]]
+id = "windows-playwright-cache"
+label = "Playwright download cache"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "ms-playwright"
+
+[[locations]]
+id = "windows-electron-cache"
+label = "Electron download cache"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "electron/Cache"
+
+[[locations]]
+id = "windows-cypress-cache"
+label = "Cypress download cache"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "Cypress/Cache"
+
+[[locations]]
+id = "puppeteer-browser-cache"
+label = "Puppeteer browser downloads"
+kind = "developer-caches"
+platforms = ["macos", "linux", "windows"]
+base = "home"
+relative_path = ".cache/puppeteer"
+
+[[locations]]
+id = "windows-go-build-cache"
+label = "Go build cache"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "go-build"
+
+[[locations]]
+id = "windows-pip-download-cache"
+label = "pip download cache"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "pip/Cache"
+
+[[locations]]
+id = "linux-sccache"
+label = "sccache compiler cache"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "sccache"
+
+[[locations]]
+id = "macos-sccache"
+label = "sccache compiler cache"
+kind = "developer-caches"
+platforms = ["macos"]
+base = "cache"
+relative_path = "Mozilla.sccache"
+
+[[locations]]
+id = "windows-sccache"
+label = "sccache compiler cache"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "Mozilla/sccache"
+
+[[locations]]
+id = "macos-uv-managed-cache"
+label = "uv cache (tool managed)"
+kind = "developer-caches"
+platforms = ["macos"]
+base = "home"
+relative_path = ".cache/uv"
+
+[[locations]]
+id = "windows-uv-managed-cache"
+label = "uv cache (tool managed)"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "uv"
+
+[[locations]]
+id = "linux-torchinductor-cache"
+label = "TorchInductor compiled kernels"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "temp"
+relative_path = ""
+expansion = { child_globs = ["torchinductor_?*"], include_child = true, current_user_only = true, max_matches = 64 }
+
+[[locations]]
+id = "macos-jetbrains-data"
+label = "JetBrains caches and retained data"
+kind = "developer-caches"
+platforms = ["macos"]
+base = "cache"
+relative_path = "JetBrains"
+
+[[locations]]
+id = "macos-jetbrains-logs"
+label = "JetBrains diagnostic logs"
+kind = "logs"
+platforms = ["macos"]
+base = "home"
+relative_path = "Library/Logs/JetBrains"
+
+[[locations]]
+id = "linux-jetbrains-data"
+label = "JetBrains caches and retained data"
+kind = "developer-caches"
+platforms = ["linux"]
+base = "cache"
+relative_path = "JetBrains"
+
+[[locations]]
+id = "windows-jetbrains-data"
+label = "JetBrains caches and retained data"
+kind = "developer-caches"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "JetBrains"
+
+[[locations]]
+id = "conda-conda"
+label = "Conda package downloads"
+kind = "developer-caches"
+platforms = ["macos", "linux", "windows"]
+base = "home"
+relative_path = ".conda/pkgs"
+
+[[locations]]
+id = "conda-miniconda3"
+label = "Conda package downloads"
+kind = "developer-caches"
+platforms = ["macos", "linux", "windows"]
+base = "home"
+relative_path = "miniconda3/pkgs"
+
+[[locations]]
+id = "conda-anaconda3"
+label = "Conda package downloads"
+kind = "developer-caches"
+platforms = ["macos", "linux", "windows"]
+base = "home"
+relative_path = "anaconda3/pkgs"
+
+[[locations]]
+id = "conda-miniforge3"
+label = "Conda package downloads"
+kind = "developer-caches"
+platforms = ["macos", "linux", "windows"]
+base = "home"
+relative_path = "miniforge3/pkgs"
+
+[[locations]]
+id = "conda-miniconda3-capitalized"
+label = "Conda package downloads"
+kind = "developer-caches"
+platforms = ["macos", "linux", "windows"]
+base = "home"
+relative_path = "Miniconda3/pkgs"
+
+[[locations]]
+id = "conda-anaconda3-capitalized"
+label = "Conda package downloads"
+kind = "developer-caches"
+platforms = ["macos", "linux", "windows"]
+base = "home"
+relative_path = "Anaconda3/pkgs"
+
+[[locations]]
+id = "conda-miniforge3-capitalized"
+label = "Conda package downloads"
+kind = "developer-caches"
+platforms = ["macos", "linux", "windows"]
+base = "home"
+relative_path = "Miniforge3/pkgs"
+
+[[locations]]
+id = "huggingface-xet-cache"
+label = "Hugging Face Xet download chunks"
+kind = "developer-caches"
+platforms = ["macos", "linux", "windows"]
+base = "home"
+relative_path = ".cache/huggingface/xet"
+
+[[locations]]
+id = "linux-jetbrains-logs"
+label = "JetBrains diagnostic logs"
+kind = "logs"
+platforms = ["linux"]
+base = "cache"
+relative_path = "JetBrains"
+expansion = { child_globs = ["IntelliJIdea[0-9]*", "IdeaIC[0-9]*", "PyCharm[0-9]*", "PyCharmCE[0-9]*", "WebStorm[0-9]*"], suffixes = ["log"], max_matches = 64 }
+
+[[locations]]
+id = "windows-jetbrains-logs"
+label = "JetBrains diagnostic logs"
+kind = "logs"
+platforms = ["windows"]
+base = "data-local"
+relative_path = "JetBrains"
+expansion = { child_globs = ["IntelliJIdea[0-9]*", "IdeaIC[0-9]*", "PyCharm[0-9]*", "PyCharmCE[0-9]*", "WebStorm[0-9]*"], suffixes = ["log"], max_matches = 64 }

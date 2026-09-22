@@ -533,6 +533,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let mut config = Config::default();
         config.recommendations.preselect_after_days = 180;
@@ -674,6 +675,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let entries = vec![
             ScanEntry {
@@ -891,6 +893,7 @@ mod tests {
                         match_role: RuleMatchRole::Primary,
                         sources: Vec::new(),
                         runtime_guard: None,
+                        read_only_scope: None,
                     }],
                 }],
                 ..ScanReport::default()
@@ -1315,6 +1318,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let entries = vec![
             ScanEntry {

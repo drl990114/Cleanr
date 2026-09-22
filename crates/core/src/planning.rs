@@ -12,7 +12,7 @@ use crate::{
     RecommendationState, RuleHit, RuleTrust, RulesetVersion, SafetyPolicy, ScanEntry,
     UserSelection,
     evidence::resolve_rules,
-    safety::{normalize_path, normalize_protected_paths},
+    safety::{RuleProtectionIndex, normalize_path, normalize_protected_paths},
 };
 
 /// Legacy entry-only builder for callers that already proved their scan is complete.
@@ -54,6 +54,7 @@ pub fn build_cleanup_plan_with_policy(
     policy: &SafetyPolicy,
 ) -> CleanupPlan {
     let normalized_scan_roots = normalize_protected_paths(scan_roots.clone());
+    let rule_protection = RuleProtectionIndex::from_entries(entries);
     let tree_fingerprints = tree_fingerprints(entries);
     let items = entries
         .iter()
@@ -64,6 +65,7 @@ pub fn build_cleanup_plan_with_policy(
                 .iter()
                 .any(|root| root == &normalized_path)
                 || !policy.allows_candidate(&entry.path)
+                || rule_protection.excludes(&entry.path)
             {
                 return None;
             }
@@ -146,11 +148,23 @@ pub fn build_cleanup_plan_from_analysis_cancellable(
     if !analysis.scan.budget_exceeded.is_empty() {
         return Err(WorkError::Failed(CleanupPlanBuildError::ScanBudgetExceeded));
     }
+    let mut rule_protection = RuleProtectionIndex::from_entries(entries);
+    for candidate in &analysis.candidates {
+        for scope in candidate
+            .rules
+            .matched
+            .iter()
+            .filter_map(|rule| rule.read_only_scope)
+        {
+            rule_protection.insert(&candidate.local_path, scope);
+        }
+    }
     let mut selected_candidates = analysis
         .candidates
         .iter()
         .filter(|candidate| {
             selection.candidate_ids.contains(&candidate.id)
+                && !rule_protection.excludes(&candidate.local_path)
                 && !matches!(
                     candidate.recommendation.state,
                     RecommendationState::Suppressed | RecommendationState::Excluded
@@ -204,6 +218,9 @@ pub fn build_cleanup_plan_from_analysis_cancellable(
                 candidate.recommendation.state,
                 RecommendationState::Suppressed | RecommendationState::Excluded
             ) {
+                return None;
+            }
+            if rule_protection.excludes(&candidate.local_path) {
                 return None;
             }
             let selected = selection.candidate_ids.contains(&candidate.id);

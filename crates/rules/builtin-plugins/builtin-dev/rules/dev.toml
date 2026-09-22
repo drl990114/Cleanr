@@ -691,7 +691,7 @@ risk_note = "Future npm installs may need network access."
 id = "tool-download-cache"
 label = "Developer package download cache"
 category = "package-cache"
-match = { path_glob = "**/.cache/{pnpm,yarn,pip,uv}", min_size = 1048576 }
+match = { path_glob = "**/.cache/{pnpm,yarn,pip}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
 action = "trash"
@@ -702,7 +702,7 @@ risk_note = "Future dependency installs may need network access and take longer.
 id = "macos-tool-download-cache"
 label = "macOS developer package cache"
 category = "package-cache"
-match = { path_glob = "**/Library/Caches/{Yarn,pip,uv}", min_size = 1048576 }
+match = { path_glob = "**/Library/Caches/{Yarn,pip}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
 platforms = ["macos"]
@@ -883,7 +883,7 @@ runtime_guard = { process_names = ["Xcode", "xcodebuild"] }
 id = "macos-package-manager-cache"
 label = "macOS developer tool cache"
 category = "package-cache"
-match = { kind = "directory", path_glob = "**/Library/Caches/{Homebrew,CocoaPods,org.swift.swiftpm,deno,Cypress,composer}", min_size = 1048576 }
+match = { kind = "directory", path_glob = "**/Library/Caches/{Homebrew,CocoaPods,org.swift.swiftpm,deno,composer}", min_size = 1048576 }
 confidence = "high"
 default_selected = true
 platforms = ["macos"]
@@ -1001,3 +1001,628 @@ action = "trash"
 reason = "An Xcode archive contains a retained application build and can consume substantial disk space."
 risk_note = "Archives may contain irreplaceable builds and dSYMs needed to redistribute or symbolicate released applications; inspect individual archives before cleaning."
 runtime_guard = { process_names = ["Xcode", "xcodebuild"] }
+
+# Standard cache paths verified against upstream documentation in September 2026.
+# See docs/docs/rules/cache-expansion.md for sources and retained-data boundaries.
+
+[[rules]]
+id = "macos-playwright-cache"
+label = "Playwright download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/ms-playwright", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "trash"
+reason = "Playwright stores downloaded runtime binaries in this standard user cache."
+risk_note = "Review the retained versions and quit dependent tools first; binaries may be shared by projects and require a large download before offline work can resume."
+runtime_guard = { process_names = ["node", "bun", "deno", "python", "java", "dotnet", "chrome", "chromium", "headless_shell", "firefox", "webkit", "MiniBrowser", "Playwright", "ffmpeg", "chrome-headless-shell", "WebKitWebProcess"] }
+[[rules]]
+id = "macos-electron-cache"
+label = "Electron download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/electron", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "trash"
+reason = "Electron stores downloaded runtime binaries in this standard user cache."
+risk_note = "Review the retained versions and quit dependent tools first; binaries may be shared by projects and require a large download before offline work can resume."
+runtime_guard = { process_names = ["node", "bun", "npm", "electron"] }
+[[rules]]
+id = "macos-cypress-cache"
+label = "Cypress download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/Cypress", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "trash"
+reason = "Cypress stores downloaded runtime binaries in this standard user cache."
+risk_note = "Review the retained versions and quit dependent tools first; binaries may be shared by projects and require a large download before offline work can resume."
+runtime_guard = { process_names = ["node", "Cypress"] }
+[[rules]]
+id = "linux-playwright-cache"
+label = "Playwright download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/ms-playwright", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "Playwright stores downloaded runtime binaries in this standard user cache."
+risk_note = "Review the retained versions and quit dependent tools first; binaries may be shared by projects and require a large download before offline work can resume."
+runtime_guard = { process_names = ["node", "bun", "deno", "python", "java", "dotnet", "chrome", "chromium", "headless_shell", "firefox", "webkit", "MiniBrowser", "Playwright", "ffmpeg", "chrome-headless-shell", "WebKitWebProcess"] }
+[[rules]]
+id = "linux-electron-cache"
+label = "Electron download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/electron", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "Electron stores downloaded runtime binaries in this standard user cache."
+risk_note = "Review the retained versions and quit dependent tools first; binaries may be shared by projects and require a large download before offline work can resume."
+runtime_guard = { process_names = ["node", "bun", "npm", "electron"] }
+[[rules]]
+id = "linux-cypress-cache"
+label = "Cypress download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/Cypress", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "Cypress stores downloaded runtime binaries in this standard user cache."
+risk_note = "Review the retained versions and quit dependent tools first; binaries may be shared by projects and require a large download before offline work can resume."
+runtime_guard = { process_names = ["node", "Cypress"] }
+[[rules]]
+id = "windows-playwright-cache"
+label = "Playwright download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/ms-playwright", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "trash"
+reason = "Playwright stores downloaded runtime binaries in this standard user cache."
+risk_note = "Review the retained versions and quit dependent tools first; binaries may be shared by projects and require a large download before offline work can resume."
+runtime_guard = { process_names = ["node", "bun", "deno", "python", "java", "dotnet", "chrome", "chromium", "headless_shell", "firefox", "webkit", "MiniBrowser", "Playwright", "ffmpeg", "chrome-headless-shell", "WebKitWebProcess"] }
+[[rules]]
+id = "windows-electron-cache"
+label = "Electron download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/electron/Cache", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "trash"
+reason = "Electron stores downloaded runtime binaries in this standard user cache."
+risk_note = "Review the retained versions and quit dependent tools first; binaries may be shared by projects and require a large download before offline work can resume."
+runtime_guard = { process_names = ["node", "bun", "npm", "electron"] }
+[[rules]]
+id = "windows-cypress-cache"
+label = "Cypress download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/Cypress/Cache", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "trash"
+reason = "Cypress stores downloaded runtime binaries in this standard user cache."
+risk_note = "Review the retained versions and quit dependent tools first; binaries may be shared by projects and require a large download before offline work can resume."
+runtime_guard = { process_names = ["node", "Cypress"] }
+[[rules]]
+id = "puppeteer-browser-cache"
+label = "Puppeteer browser downloads"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/puppeteer", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "trash"
+reason = "Puppeteer downloads managed browser versions into its default user cache."
+risk_note = "Quit browser automation and review retained versions; projects may need to download browsers again before they can run."
+runtime_guard = { process_names = ["node", "bun", "deno", "python", "java", "dotnet", "chrome", "chromium", "headless_shell", "firefox", "webkit", "MiniBrowser", "Playwright", "ffmpeg", "chrome-headless-shell", "WebKitWebProcess"] }
+[[rules]]
+id = "linux-go-build-cache"
+label = "Go build cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/go-build", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "Go stores generated compiler and test results in this user cache."
+risk_note = "Stop Go builds and tests first; the next invocation must rebuild missing cache entries."
+runtime_guard = { process_names = ["go", "compile", "link"] }
+[[rules]]
+id = "windows-go-build-cache"
+label = "Go build cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/go-build", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "trash"
+reason = "Go stores generated compiler and test results in this user cache."
+risk_note = "Stop Go builds and tests first; the next invocation must rebuild missing cache entries."
+runtime_guard = { process_names = ["go", "compile", "link"] }
+[[rules]]
+id = "windows-pip-download-cache"
+label = "pip download cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/pip/Cache", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "trash"
+reason = "pip stores downloaded HTTP responses and locally built wheels in this cache."
+risk_note = "Stop pip and Python package installation first; future installs may require network access and wheel compilation."
+runtime_guard = { process_names = ["pip", "python"] }
+[[rules]]
+id = "linux-sccache"
+label = "sccache compiler cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/sccache", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "sccache retains generated compiler outputs in its local disk cache."
+risk_note = "Stop the sccache server and builds before review; later compilation may be slower."
+runtime_guard = { process_names = ["sccache"] }
+[[rules]]
+id = "macos-sccache"
+label = "sccache compiler cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/Mozilla.sccache", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "trash"
+reason = "sccache retains generated compiler outputs in its local disk cache."
+risk_note = "Stop the sccache server and builds before review; later compilation may be slower."
+runtime_guard = { process_names = ["sccache"] }
+[[rules]]
+id = "windows-sccache"
+label = "sccache compiler cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/Mozilla/sccache", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "trash"
+reason = "sccache retains generated compiler outputs in its local disk cache."
+risk_note = "Stop the sccache server and builds before review; later compilation may be slower."
+runtime_guard = { process_names = ["sccache"] }
+[[rules]]
+id = "uv-managed-cache"
+label = "uv cache (tool managed)"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/uv" }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "inspect"
+reason = "uv requires its own cache-management operations and locking; direct filesystem removal is unsafe."
+risk_note = "Read-only: use uv cache management after reviewing its separate deletion and recovery behavior. Cleanr does not run it."
+[[rules]]
+id = "macos-uv-managed-cache"
+label = "uv cache (tool managed)"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/uv" }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "inspect"
+reason = "uv requires its own cache-management operations and locking; direct filesystem removal is unsafe."
+risk_note = "Read-only: use uv cache management after reviewing its separate deletion and recovery behavior. Cleanr does not run it."
+[[rules]]
+id = "windows-uv-managed-cache"
+label = "uv cache (tool managed)"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/uv" }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "inspect"
+reason = "uv requires its own cache-management operations and locking; direct filesystem removal is unsafe."
+risk_note = "Read-only: use uv cache management after reviewing its separate deletion and recovery behavior. Cleanr does not run it."
+[[rules]]
+id = "linux-torchinductor-cache"
+label = "TorchInductor compiled kernels"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/tmp/torchinductor_?*", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "TorchInductor stores generated kernels and graph compilation results in a per-user temporary directory."
+risk_note = "Only current-user-owned data is eligible. Stop Python, training and inference tasks; cleaning can trigger expensive recompilation and GPU autotuning."
+runtime_guard = { process_names = ["python", "torchrun", "pt_main_thread", "g++", "clang++", "nvcc"], current_user_only = true }
+[[rules]]
+id = "linux-torchinductor-triton-cache"
+label = "TorchInductor Triton kernels"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/tmp/torchinductor_?*/triton", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "Triton kernels are nested inside the default TorchInductor cache."
+risk_note = "Stop Python, training and inference tasks; kernels must be compiled and tuned again. Overlapping parent and child selections are counted once."
+runtime_guard = { process_names = ["python", "torchrun", "pt_main_thread", "g++", "clang++", "nvcc"], current_user_only = true }
+[[rules]]
+id = "macos-jetbrains-container"
+label = "JetBrains retained data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/JetBrains" }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "inspect"
+reason = "JetBrains system directories mix generated caches with Local History and other retained data."
+risk_note = "Read-only container: only explicitly identified index and log leaves may be reviewed."
+inspection_scope = "entry"
+[[rules]]
+id = "macos-jetbrains-unreviewed-products"
+label = "Unreviewed JetBrains product data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/JetBrains/*", exclude_path_globs = ["**/Library/Caches/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*"] }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "inspect"
+reason = "This product layout has not been approved for cache-only cleanup."
+risk_note = "Read-only: preserve this product directory and all descendants."
+[[rules]]
+id = "macos-jetbrains-product-container"
+label = "JetBrains version data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*" }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "inspect"
+reason = "This version directory includes Local History and other state that must be retained."
+risk_note = "Read-only container: inspect individual index and log leaves instead."
+inspection_scope = "entry"
+[[rules]]
+id = "macos-jetbrains-retained-data"
+label = "JetBrains history and retained state"
+category = "developer-cache"
+match = { path_glob = "**/Library/Caches/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/*", exclude_path_globs = ["**/Library/Caches/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/index"] }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "inspect"
+reason = "Local History and all unreviewed IDE state are retained, including unknown future directories."
+risk_note = "Read-only: this data and any parent directory containing it cannot be selected for cleanup."
+[[rules]]
+id = "macos-jetbrains-index"
+label = "JetBrains generated index"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Caches/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/index", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "trash"
+reason = "The IDE stores generated file indexes in the documented system index directory."
+risk_note = "Quit the IDE first; indexing will run again and can take significant time. Local History is kept."
+runtime_guard = { process_names = ["idea", "idea64", "IntelliJ IDEA", "pycharm", "pycharm64", "webstorm", "webstorm64", "java", "fsnotifier"] }
+[[rules]]
+id = "macos-jetbrains-logs"
+label = "JetBrains diagnostic logs"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/Library/Logs/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos"]
+action = "trash"
+reason = "These are IDE diagnostic logs in the product-specific log location."
+risk_note = "Quit the IDE and review any diagnostics you need before cleaning; historical troubleshooting logs cannot be regenerated."
+runtime_guard = { process_names = ["idea", "idea64", "IntelliJ IDEA", "pycharm", "pycharm64", "webstorm", "webstorm64", "java", "fsnotifier"] }
+[[rules]]
+id = "linux-jetbrains-container"
+label = "JetBrains retained data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/JetBrains" }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "inspect"
+reason = "JetBrains system directories mix generated caches with Local History and other retained data."
+risk_note = "Read-only container: only explicitly identified index and log leaves may be reviewed."
+inspection_scope = "entry"
+[[rules]]
+id = "linux-jetbrains-unreviewed-products"
+label = "Unreviewed JetBrains product data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/JetBrains/*", exclude_path_globs = ["**/.cache/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*"] }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "inspect"
+reason = "This product layout has not been approved for cache-only cleanup."
+risk_note = "Read-only: preserve this product directory and all descendants."
+[[rules]]
+id = "linux-jetbrains-product-container"
+label = "JetBrains version data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*" }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "inspect"
+reason = "This version directory includes Local History and other state that must be retained."
+risk_note = "Read-only container: inspect individual index and log leaves instead."
+inspection_scope = "entry"
+[[rules]]
+id = "linux-jetbrains-retained-data"
+label = "JetBrains history and retained state"
+category = "developer-cache"
+match = { path_glob = "**/.cache/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/*", exclude_path_globs = ["**/.cache/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/index", "**/.cache/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/log"] }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "inspect"
+reason = "Local History and all unreviewed IDE state are retained, including unknown future directories."
+risk_note = "Read-only: this data and any parent directory containing it cannot be selected for cleanup."
+[[rules]]
+id = "linux-jetbrains-index"
+label = "JetBrains generated index"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/index", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "The IDE stores generated file indexes in the documented system index directory."
+risk_note = "Quit the IDE first; indexing will run again and can take significant time. Local History is kept."
+runtime_guard = { process_names = ["idea", "idea64", "IntelliJ IDEA", "pycharm", "pycharm64", "webstorm", "webstorm64", "java", "fsnotifier"] }
+[[rules]]
+id = "linux-jetbrains-logs"
+label = "JetBrains diagnostic logs"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/log", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["linux"]
+action = "trash"
+reason = "These are IDE diagnostic logs in the product-specific log location."
+risk_note = "Quit the IDE and review any diagnostics you need before cleaning; historical troubleshooting logs cannot be regenerated."
+runtime_guard = { process_names = ["idea", "idea64", "IntelliJ IDEA", "pycharm", "pycharm64", "webstorm", "webstorm64", "java", "fsnotifier"] }
+[[rules]]
+id = "windows-jetbrains-container"
+label = "JetBrains retained data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/JetBrains" }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "inspect"
+reason = "JetBrains system directories mix generated caches with Local History and other retained data."
+risk_note = "Read-only container: only explicitly identified index and log leaves may be reviewed."
+inspection_scope = "entry"
+[[rules]]
+id = "windows-jetbrains-unreviewed-products"
+label = "Unreviewed JetBrains product data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/JetBrains/*", exclude_path_globs = ["**/AppData/Local/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*"] }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "inspect"
+reason = "This product layout has not been approved for cache-only cleanup."
+risk_note = "Read-only: preserve this product directory and all descendants."
+[[rules]]
+id = "windows-jetbrains-product-container"
+label = "JetBrains version data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*" }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "inspect"
+reason = "This version directory includes Local History and other state that must be retained."
+risk_note = "Read-only container: inspect individual index and log leaves instead."
+inspection_scope = "entry"
+[[rules]]
+id = "windows-jetbrains-retained-data"
+label = "JetBrains history and retained state"
+category = "developer-cache"
+match = { path_glob = "**/AppData/Local/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/*", exclude_path_globs = ["**/AppData/Local/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/index", "**/AppData/Local/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/log"] }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "inspect"
+reason = "Local History and all unreviewed IDE state are retained, including unknown future directories."
+risk_note = "Read-only: this data and any parent directory containing it cannot be selected for cleanup."
+[[rules]]
+id = "windows-jetbrains-index"
+label = "JetBrains generated index"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/index", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "trash"
+reason = "The IDE stores generated file indexes in the documented system index directory."
+risk_note = "Quit the IDE first; indexing will run again and can take significant time. Local History is kept."
+runtime_guard = { process_names = ["idea", "idea64", "IntelliJ IDEA", "pycharm", "pycharm64", "webstorm", "webstorm64", "java", "fsnotifier"] }
+[[rules]]
+id = "windows-jetbrains-logs"
+label = "JetBrains diagnostic logs"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/AppData/Local/JetBrains/{IntelliJIdea,IdeaIC,PyCharm,PyCharmCE,WebStorm}[0-9]*/log", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["windows"]
+action = "trash"
+reason = "These are IDE diagnostic logs in the product-specific log location."
+risk_note = "Quit the IDE and review any diagnostics you need before cleaning; historical troubleshooting logs cannot be regenerated."
+runtime_guard = { process_names = ["idea", "idea64", "IntelliJ IDEA", "pycharm", "pycharm64", "webstorm", "webstorm64", "java", "fsnotifier"] }
+[[rules]]
+id = "conda-package-archives"
+label = "Conda package download archive"
+category = "developer-cache"
+match = { kind = "file", path_glob = "**/{.conda,miniconda3,anaconda3,miniforge3,Miniconda3,Anaconda3,Miniforge3}/pkgs/*.{conda,tar.bz2}", min_size = 1048576, parent_marker = "urls.txt" }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "trash"
+reason = "This compressed package download is inside a standard Conda package cache with a urls.txt marker."
+risk_note = "Stop Conda and Mamba transactions; preserve offline packages you still need. Extracted packages and environments are retained."
+runtime_guard = { process_names = ["conda", "mamba", "micromamba", "python"] }
+[[rules]]
+id = "conda-package-cache-container"
+label = "Conda retained package cache"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/{.conda,miniconda3,anaconda3,miniforge3,Miniconda3,Anaconda3,Miniforge3}/pkgs" }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "inspect"
+reason = "Conda package caches include extracted packages that may be linked by installed environments."
+risk_note = "Read-only container: only compressed downloads with cache evidence may be reviewed."
+inspection_scope = "entry"
+[[rules]]
+id = "conda-retained-packages"
+label = "Conda extracted packages and metadata"
+category = "developer-cache"
+match = { path_glob = "**/{.conda,miniconda3,anaconda3,miniforge3,Miniconda3,Anaconda3,Miniforge3}/pkgs/*", exclude_path_globs = ["**/{.conda,miniconda3,anaconda3,miniforge3,Miniconda3,Anaconda3,Miniforge3}/pkgs/*.{conda,tar.bz2}"] }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "inspect"
+reason = "Extracted packages, metadata and unknown cache contents may be needed by Conda environments."
+risk_note = "Read-only: environments and extracted package directories are not download archives."
+[[rules]]
+id = "huggingface-container"
+label = "Hugging Face retained data"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/huggingface" }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "inspect"
+reason = "Hugging Face caches can contain model weights, datasets, references and credentials."
+risk_note = "Read-only container: only the separate Xet download chunk cache is eligible for review."
+inspection_scope = "entry"
+[[rules]]
+id = "huggingface-retained-data"
+label = "Hugging Face models and retained data"
+category = "developer-cache"
+match = { path_glob = "**/.cache/huggingface/*", exclude_path_globs = ["**/.cache/huggingface/xet"] }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "inspect"
+reason = "Models, datasets, tokens and unknown cache contents are retained."
+risk_note = "Read-only: model blobs, shared references and download remnants are outside these rules."
+[[rules]]
+id = "huggingface-xet-container"
+label = "Hugging Face Xet retained container"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/huggingface/xet" }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "inspect"
+reason = "Xet containers mix download chunks, upload shards and resumable staging."
+risk_note = "Read-only container: only a chunk_cache directory may be reviewed."
+inspection_scope = "entry"
+[[rules]]
+id = "huggingface-xet-environment"
+label = "Hugging Face Xet retained container"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/huggingface/xet/*", exclude_path_globs = ["**/.cache/huggingface/xet/chunk_cache"] }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "inspect"
+reason = "Xet containers mix download chunks, upload shards and resumable staging."
+risk_note = "Read-only container: only a chunk_cache directory may be reviewed."
+inspection_scope = "entry"
+[[rules]]
+id = "huggingface-xet-retained-data"
+label = "Hugging Face Xet upload state"
+category = "developer-cache"
+match = { path_glob = "**/.cache/huggingface/xet/*/*", exclude_path_globs = ["**/.cache/huggingface/xet/*/chunk_cache", "**/.cache/huggingface/xet/chunk_cache/*"] }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "inspect"
+reason = "Xet upload shards, resumable staging and unknown environment contents are retained."
+risk_note = "Read-only: uploads and staging are not disposable download chunks."
+[[rules]]
+id = "huggingface-xet-legacy-retained-data"
+label = "Hugging Face Xet legacy upload state"
+category = "developer-cache"
+match = { path_glob = "**/.cache/huggingface/xet/{shard_cache,staging,logs}" }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "inspect"
+reason = "Xet upload state and diagnostics are retained."
+risk_note = "Read-only: this location is not the download chunk cache."
+[[rules]]
+id = "huggingface-xet-legacy-chunks"
+label = "Hugging Face Xet download chunks"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/huggingface/xet/chunk_cache", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "trash"
+reason = "This optional Xet cache stores reusable downloaded chunks separately from models and upload state."
+risk_note = "Stop Hugging Face downloads and Python jobs first; removed chunks may need downloading again. Upload staging and model files are kept."
+runtime_guard = { process_names = ["python", "hf", "huggingface-cli", "git-xet", "xet"] }
+[[rules]]
+id = "huggingface-xet-chunks"
+label = "Hugging Face Xet download chunks"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/.cache/huggingface/xet/*/chunk_cache", min_size = 1048576 }
+confidence = "medium"
+default_selected = false
+platforms = ["macos", "linux", "windows"]
+action = "trash"
+reason = "This optional Xet cache stores reusable downloaded chunks separately from models and upload state."
+risk_note = "Stop Hugging Face downloads and Python jobs first; removed chunks may need downloading again. Upload staging and model files are kept."
+runtime_guard = { process_names = ["python", "hf", "huggingface-cli", "git-xet", "xet"] }
+
+[[rules]]
+id = "conda-installation-container"
+label = "Conda installation and environments"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/{.conda,miniconda3,anaconda3,miniforge3,Miniconda3,Anaconda3,Miniforge3}" }
+confidence = "medium"
+default_selected = false
+action = "inspect"
+inspection_scope = "entry"
+reason = "Conda installations and user state include environments and retained package data."
+risk_note = "Read-only container: only verified compressed package downloads may be reviewed."
+
+[[rules]]
+id = "conda-retained-environments"
+label = "Conda environments and installation data"
+category = "developer-cache"
+match = { path_glob = "**/{.conda,miniconda3,anaconda3,miniforge3,Miniconda3,Anaconda3,Miniforge3}/*", exclude_path_globs = ["**/{.conda,miniconda3,anaconda3,miniforge3,Miniconda3,Anaconda3,Miniforge3}/pkgs"] }
+confidence = "medium"
+default_selected = false
+action = "inspect"
+reason = "Conda environments, configuration and installed tools are retained."
+risk_note = "Read-only: installed environments and their dependencies cannot be selected for cleanup."
+
+[[rules]]
+id = "conda-extracted-package-directories"
+label = "Conda extracted package directories"
+category = "developer-cache"
+match = { kind = "directory", path_glob = "**/{.conda,miniconda3,anaconda3,miniforge3,Miniconda3,Anaconda3,Miniforge3}/pkgs/*" }
+confidence = "medium"
+default_selected = false
+action = "inspect"
+reason = "Extracted package directories can be linked by installed environments, regardless of their filename suffix."
+risk_note = "Read-only: only regular compressed archive files with a package-cache marker may be reviewed."

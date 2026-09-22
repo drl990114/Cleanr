@@ -421,6 +421,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         }
     }
 

@@ -1,8 +1,8 @@
-use std::{collections::BTreeSet, ffi::OsStr};
+use std::{collections::BTreeSet, ffi::OsStr, path::Path};
 
 use anyhow::{Result, bail};
 use cleanr_core::{CleanupItem, RuntimeGuardEvidence, RuntimeGuardState, ScanEntry};
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 /// A point-in-time, path-free view of running process names.
 ///
@@ -23,7 +23,7 @@ impl ProcessSnapshot {
         let refreshed = system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            ProcessRefreshKind::nothing(),
+            ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
         );
         if refreshed == 0 || system.processes().is_empty() {
             return Self { names: None };
@@ -82,16 +82,37 @@ fn insert_normalized_name(names: &mut BTreeSet<String>, name: &OsStr) {
 fn normalize_process_name(name: &str) -> Option<String> {
     let normalized = name.trim().to_lowercase();
     let normalized = normalized.strip_suffix(".exe").unwrap_or(&normalized);
+    if normalized == "pythonw" {
+        return Some("python".into());
+    }
+    // Python executable names carry version suffixes (including free-threaded builds).
+    // Match those without treating arbitrary application prefixes as Python processes.
+    if let Some(version) = normalized.strip_prefix("python")
+        && !version.is_empty()
+        && version.starts_with(|c: char| c.is_ascii_digit())
+        && version
+            .chars()
+            .all(|c| c.is_ascii_digit() || matches!(c, '.' | 't' | 'w'))
+    {
+        return Some("python".into());
+    }
     (!normalized.is_empty()).then(|| normalized.to_string())
 }
 
 pub(crate) fn resolve_runtime_guards(entries: &mut [ScanEntry], snapshot: &ProcessSnapshot) {
-    for guard in entries
-        .iter_mut()
-        .flat_map(|entry| &mut entry.rule_hits)
-        .filter_map(|hit| hit.runtime_guard.as_mut())
-    {
-        guard.state = snapshot.guard_state(&guard.process_names);
+    for entry in entries {
+        for guard in entry
+            .rule_hits
+            .iter_mut()
+            .filter_map(|hit| hit.runtime_guard.as_mut())
+        {
+            guard.state =
+                if guard.current_user_only && !cleanr_fs::is_current_user_owned(&entry.path) {
+                    RuntimeGuardState::Unknown
+                } else {
+                    snapshot.guard_state(&guard.process_names)
+                };
+        }
     }
 }
 
@@ -109,7 +130,7 @@ pub(crate) fn validate_current_runtime_guards(item: &CleanupItem) -> Result<()> 
     validate_runtime_guards(
         &evidence.runtime_guards,
         &ProcessSnapshot::capture(),
-        &item.path.display().to_string(),
+        &item.path,
     )
 }
 
@@ -135,7 +156,7 @@ pub(crate) fn validate_plan_current_runtime_guards<'a>(
             .as_ref()
             .expect("filtered evidence")
             .runtime_guards;
-        validate_runtime_guards(guards, &snapshot, &item.path.display().to_string())?;
+        validate_runtime_guards(guards, &snapshot, &item.path)?;
     }
     Ok(())
 }
@@ -143,16 +164,28 @@ pub(crate) fn validate_plan_current_runtime_guards<'a>(
 fn validate_runtime_guards(
     guards: &[RuntimeGuardEvidence],
     snapshot: &ProcessSnapshot,
-    target: &str,
+    target: &Path,
 ) -> Result<()> {
     for guard in guards {
+        if guard.current_user_only && !cleanr_fs::is_current_user_owned(target) {
+            bail!(
+                "refusing to clean {}: current-user ownership could not be verified",
+                target.display()
+            );
+        }
         match snapshot.guard_state(&guard.process_names) {
             RuntimeGuardState::Idle => {}
             RuntimeGuardState::Active => {
-                bail!("refusing to clean {target}: an owning application or tool is running")
+                bail!(
+                    "refusing to clean {}: an owning application or tool is running",
+                    target.display()
+                )
             }
             RuntimeGuardState::Unknown => {
-                bail!("refusing to clean {target}: owning process state could not be verified")
+                bail!(
+                    "refusing to clean {}: owning process state could not be verified",
+                    target.display()
+                )
             }
         }
     }
@@ -185,7 +218,9 @@ mod tests {
                 trust: RuleTrust::Builtin,
                 match_role: RuleMatchRole::Primary,
                 sources: Vec::new(),
+                read_only_scope: None,
                 runtime_guard: Some(RuntimeGuardEvidence {
+                    current_user_only: false,
                     rule: RuleKey {
                         rule_pack_id: "builtin-system".into(),
                         rule_id: "browser-cache".into(),
@@ -194,6 +229,71 @@ mod tests {
                     state: RuntimeGuardState::Unknown,
                 }),
             }],
+        }
+    }
+
+    #[test]
+    fn cache_expansion_python_versions_and_ownership_fail_closed() {
+        for name in [
+            "python",
+            "python3",
+            "Python3.13t.EXE",
+            "python3.14",
+            "pythonw.exe",
+        ] {
+            assert_eq!(
+                ProcessSnapshot::from_names(&[name]).guard_state(&["python".into()]),
+                RuntimeGuardState::Active
+            );
+        }
+        assert_eq!(
+            ProcessSnapshot::from_names(&["python-editor"]).guard_state(&["python".into()]),
+            RuntimeGuardState::Idle
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let mut entry = guarded_entry();
+        entry.path = temp.path().join("missing");
+        entry.rule_hits[0]
+            .runtime_guard
+            .as_mut()
+            .unwrap()
+            .current_user_only = true;
+        resolve_runtime_guards(
+            std::slice::from_mut(&mut entry),
+            &ProcessSnapshot::from_names(&[]),
+        );
+        let guard = entry.rule_hits[0].runtime_guard.as_ref().unwrap();
+        assert_eq!(guard.state, RuntimeGuardState::Unknown);
+        assert!(
+            validate_runtime_guards(
+                std::slice::from_ref(guard),
+                &ProcessSnapshot::from_names(&[]),
+                &entry.path
+            )
+            .is_err()
+        );
+        #[cfg(unix)]
+        {
+            std::fs::create_dir(&entry.path).unwrap();
+            resolve_runtime_guards(
+                std::slice::from_mut(&mut entry),
+                &ProcessSnapshot::from_names(&[]),
+            );
+            assert_eq!(
+                entry.rule_hits[0].runtime_guard.as_ref().unwrap().state,
+                RuntimeGuardState::Idle
+            );
+            let link = temp.path().join("link");
+            std::os::unix::fs::symlink(&entry.path, &link).unwrap();
+            let guard = entry.rule_hits[0].runtime_guard.as_ref().unwrap();
+            assert!(
+                validate_runtime_guards(
+                    std::slice::from_ref(guard),
+                    &ProcessSnapshot::from_names(&[]),
+                    &link
+                )
+                .is_err()
+            );
         }
     }
 

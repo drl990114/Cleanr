@@ -48,6 +48,9 @@ pub struct RuleDefinition {
     pub source_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_guard: Option<RuntimeGuardDefinition>,
+    /// Only valid for `action = "inspect"`; omission retains the whole subtree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspection_scope: Option<cleanr_core::ReadOnlyScope>,
 }
 
 /// A fail-closed runtime condition for data owned by a running application or tool.
@@ -55,6 +58,8 @@ pub struct RuleDefinition {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeGuardDefinition {
     pub process_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub current_user_only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq)]
@@ -63,8 +68,12 @@ pub struct RuleMatcher {
     pub kind: Option<EntryKind>,
     pub dir_name: Option<String>,
     pub path_glob: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_path_globs: Vec<String>,
     pub file_name: Option<String>,
     pub extension: Option<String>,
+    /// Require a regular direct-child marker in the same scan snapshot as the candidate.
+    pub parent_marker: Option<String>,
     pub project: Option<ProjectMatcher>,
     pub max_age_days: Option<i64>,
     pub min_size: Option<u64>,
@@ -91,6 +100,16 @@ pub struct ProjectMatcher {
 #[serde(rename_all = "kebab-case")]
 pub enum RuleAction {
     Trash,
+    Inspect,
+}
+
+impl RuleDefinition {
+    pub fn read_only_scope(&self) -> Option<cleanr_core::ReadOnlyScope> {
+        (self.action == RuleAction::Inspect).then_some(
+            self.inspection_scope
+                .unwrap_or(cleanr_core::ReadOnlyScope::Subtree),
+        )
+    }
 }
 
 impl RulePack {
@@ -133,6 +152,65 @@ impl RulePack {
         for rule in &self.rules {
             if rule.id.trim().is_empty() {
                 bail!("rule pack {} contains a rule with an empty id", self.id);
+            }
+            if rule.action == RuleAction::Inspect && rule.default_selected {
+                bail!(
+                    "inspection rule {}:{} cannot be default_selected",
+                    self.id,
+                    rule.id
+                );
+            }
+            if rule.action != RuleAction::Inspect && rule.inspection_scope.is_some() {
+                bail!(
+                    "rule {}:{} inspection_scope requires action = inspect",
+                    self.id,
+                    rule.id
+                );
+            }
+            // Subtree retention is inherited even when the protected root is outside an explicit
+            // scan. Require path-only conditions so its meaning cannot depend on synthetic age,
+            // size, project markers, or a cache tag that was not observed in that scan.
+            if rule.read_only_scope() == Some(cleanr_core::ReadOnlyScope::Subtree)
+                && (rule.matcher.path_glob.is_none()
+                    || rule.matcher.dir_name.is_some()
+                    || rule.matcher.file_name.is_some()
+                    || rule.matcher.extension.is_some()
+                    || rule.matcher.parent_marker.is_some()
+                    || rule.matcher.project.is_some()
+                    || rule.matcher.max_age_days.is_some()
+                    || rule.matcher.min_size.is_some()
+                    || rule.matcher.cache_tagged)
+            {
+                bail!(
+                    "rule {}:{} subtree inspection requires a path-only matcher",
+                    self.id,
+                    rule.id
+                );
+            }
+            if !rule.matcher.exclude_path_globs.is_empty() && rule.matcher.path_glob.is_none() {
+                bail!(
+                    "rule {}:{} exclude_path_globs requires path_glob",
+                    self.id,
+                    rule.id
+                );
+            }
+            for pattern in &rule.matcher.exclude_path_globs {
+                compile_path_glob(pattern).with_context(|| {
+                    format!(
+                        "rule {}:{} has an invalid exclude_path_globs pattern",
+                        self.id, rule.id
+                    )
+                })?;
+            }
+            if let Some(marker) = &rule.matcher.parent_marker {
+                validate_portable_relative_path(marker, &rule.id, "parent_marker")?;
+                if Path::new(marker).components().count() != 1 || rule.matcher.path_glob.is_none() {
+                    bail!(
+                        "rule {}:{} parent_marker requires one filename and path_glob",
+                        self.id,
+                        rule.id
+                    );
+                }
             }
             if rule.default_selected && rule.confidence != Confidence::High {
                 bail!(
@@ -416,9 +494,11 @@ fn validate_scan_location_pack(pack: &ScanLocationPack) -> Result<()> {
                     location.id
                 );
             }
-            if expansion.child_globs.is_empty() || expansion.suffixes.is_empty() {
+            if expansion.child_globs.is_empty()
+                || (expansion.suffixes.is_empty() && !expansion.include_child)
+            {
                 bail!(
-                    "scan location {} expansion requires child_globs and suffixes",
+                    "scan location {} expansion requires child_globs and suffixes or include_child",
                     location.id
                 );
             }

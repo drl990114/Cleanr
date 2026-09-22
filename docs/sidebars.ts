@@ -12,7 +12,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Customize',
       collapsed: false,
-      items: ['configuration', 'rules', 'plugins'],
+      items: ['configuration', 'rules', 'rules/cache-expansion', 'plugins'],
     },
     {
       type: 'category',

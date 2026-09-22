@@ -7,6 +7,43 @@ later source or CI fixes.
 
 ## Unreleased
 
+- Add 27 review-required cache rules and 32 discovery locations for browser
+  automation downloads, compiler caches, JetBrains indexes and logs, Conda
+  package archives, and Hugging Face Xet chunks. All new cleanup rules start
+  unselected; custom cache layouts are outside this coverage.
+- Add 26 inspection rules that retain uv caches, IDE history and configuration,
+  installed environments, model data, and other application state. Protection
+  applies to covering directories and explicit subtree scans, survives disabling
+  a built-in cleanup pack, and cannot be overridden by manual selection.
+- Constrain Conda cleanup to regular archives with a same-scan package-cache
+  marker. Limit TorchInductor discovery to directories owned by the current
+  effective user, recheck ownership before cleanup, and improve known Python
+  process detection. Process checks do not prove that every cache user has exited.
+- Extend rule and location schemas with inspection scopes, path exclusions,
+  parent markers, bounded child discovery, and current-user ownership checks.
+  Plugins using these fields require Cleanr 0.17.0 or later.
+- Keep cleanup results visible until the next scan, with distinct completed,
+  partial and failed outcomes, recorded item counts, rescan and restore actions.
+- Add English and Simplified Chinese rule explanations and coverage guidance,
+  and clarify partial scans, permissions and execution troubleshooting.
+
+### 简体中文
+
+- 新增 27 条需人工复核的缓存清理规则和 32 个发现位置，覆盖浏览器自动化下载、
+  编译缓存、JetBrains 索引与日志、Conda 包归档和 Hugging Face Xet 分块。新增清理
+  规则默认均不选中，自定义缓存布局不在本次覆盖范围内。
+- 新增 26 条只读识别规则，保护 uv 缓存、IDE 历史与配置、已安装环境、模型数据和
+  其他应用状态。保护覆盖父目录和单独扫描的子树，禁用内置清理包后仍然有效，
+  手动选择也不能绕过。
+- Conda 只允许清理同次扫描确认缓存标记的普通归档文件；TorchInductor 仅发现
+  当前有效用户拥有的目录，执行前再次检查归属，并补充常见 Python 进程识别。
+  进程检查不代表所有可能使用缓存的程序均已退出。
+- 规则与位置 schema 新增只读范围、路径排除、父目录标记、受限子目录发现和
+  当前用户归属检查。使用这些字段的插件要求 Cleanr 0.17.0 或更高版本。
+- 清理结果持续保留至下次扫描，区分完成、部分成功与失败，显示已记录的条目数，
+  并提供重新扫描和恢复入口。
+- 补充中英文规则解释与覆盖说明，完善部分扫描、权限和执行问题排查文档。
+
 ## 0.16.0
 
 - Refresh the terminal interface with aligned columns, responsive spacing, and

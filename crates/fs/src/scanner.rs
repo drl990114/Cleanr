@@ -2421,6 +2421,8 @@ mod tests {
             relative_path: "browser".to_string(),
             mode: ScanLocationMode::Scan,
             expansion: Some(ScanLocationExpansion {
+                include_child: false,
+                current_user_only: false,
                 child_globs: vec!["Default".to_string(), "Profile *".to_string()],
                 suffixes: vec!["Cache".to_string(), "Code Cache".to_string()],
                 max_matches: 64,
@@ -2479,6 +2481,8 @@ mod tests {
             relative_path: "browser".to_string(),
             mode: ScanLocationMode::Scan,
             expansion: Some(ScanLocationExpansion {
+                include_child: false,
+                current_user_only: false,
                 child_globs: vec!["Profile *".to_string()],
                 suffixes: vec!["Cache".to_string()],
                 max_matches: 1,
@@ -2526,6 +2530,8 @@ mod tests {
             relative_path: "browser".to_string(),
             mode: ScanLocationMode::Scan,
             expansion: Some(ScanLocationExpansion {
+                include_child: false,
+                current_user_only: false,
                 child_globs: vec!["Default".to_string(), "Profile *".to_string()],
                 suffixes: vec!["Cache".to_string()],
                 max_matches: 64,

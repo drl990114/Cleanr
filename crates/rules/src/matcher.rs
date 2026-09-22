@@ -15,6 +15,7 @@ use crate::schema::{ProjectMatcher, RuleDefinition};
 #[derive(Debug, Clone)]
 pub(super) struct CompiledRule {
     pub(super) path_glob: Option<GlobMatcher>,
+    pub(super) excluded_paths: GlobSet,
     pub(super) project: Option<CompiledProjectMatcher>,
 }
 
@@ -182,12 +183,28 @@ pub(super) fn matches_rule(
         if !matcher.is_match(path) {
             return false;
         }
+        if compiled.excluded_paths.is_match(path) {
+            return false;
+        }
     }
     if let Some(project) = &compiled.project {
         let Some(context) = context else {
             return false;
         };
         if !project.matches(entry, context) {
+            return false;
+        }
+    }
+    if let Some(marker) = &matcher.parent_marker {
+        let Some(children) = context.and_then(|context| {
+            entry
+                .path
+                .parent()
+                .and_then(|parent| context.children_by_dir.get(parent))
+        }) else {
+            return false;
+        };
+        if !children.files.contains(marker) {
             return false;
         }
     }

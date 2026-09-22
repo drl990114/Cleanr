@@ -20,10 +20,10 @@ pub use model::{
     CLEANUP_PLAN_SCHEMA_VERSION, CleanupItem, CleanupItemEvidence, CleanupItemFingerprint,
     CleanupPlan, CleanupPlanBuildError, CleanupPlanScanScope, CleanupPlanSourceScan, Confidence,
     EXECUTION_SCHEMA_VERSION, EntryKind, GlobalScanKind, PlanSafety, PlanSummary, PlannedAction,
-    RESTORE_SCHEMA_VERSION, RuleHit, RuleMatchRole, RulePlatform, RuleSource, RuleSourceRelation,
-    RuleTrust, RulesetVersion, ScanEntry, ScanLocationBase, ScanLocationDefinition,
-    ScanLocationExpansion, ScanLocationMode, ScanLocationPack, ScanRequest, ScanSummary,
-    default_global_scan_kinds,
+    RESTORE_SCHEMA_VERSION, ReadOnlyScope, RuleHit, RuleMatchRole, RulePlatform, RuleSource,
+    RuleSourceRelation, RuleTrust, RulesetVersion, ScanEntry, ScanLocationBase,
+    ScanLocationDefinition, ScanLocationExpansion, ScanLocationMode, ScanLocationPack, ScanRequest,
+    ScanSummary, default_global_scan_kinds,
 };
 
 pub use evidence::{
@@ -83,6 +83,7 @@ mod tests {
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
                     runtime_guard: None,
+                    read_only_scope: None,
                 }],
             },
             ScanEntry {
@@ -103,6 +104,7 @@ mod tests {
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
                     runtime_guard: None,
+                    read_only_scope: None,
                 }],
             },
         ];
@@ -130,6 +132,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let entries = [89_i64, 90, 91, 1]
             .into_iter()
@@ -222,6 +225,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let entries = [1_i64, 100]
             .into_iter()
@@ -289,6 +293,7 @@ mod tests {
                 match_role: RuleMatchRole::Primary,
                 sources: Vec::new(),
                 runtime_guard: None,
+                read_only_scope: None,
             }],
         }];
         let safety = SafetyPolicy::default();
@@ -351,6 +356,7 @@ mod tests {
                 match_role: RuleMatchRole::Primary,
                 sources: Vec::new(),
                 runtime_guard: None,
+                read_only_scope: None,
             }],
         }];
         let safety = SafetyPolicy::default();
@@ -416,6 +422,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let entries = vec![
             ScanEntry {
@@ -487,6 +494,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let make_entry = |rule_hits| ScanEntry {
             path: PathBuf::from("/repo/cache"),
@@ -538,6 +546,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let entries = vec![
             ScanEntry {
@@ -577,6 +586,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let modified_at = Utc::now();
         let newer_modified_at = modified_at + chrono::Duration::seconds(1);
@@ -756,6 +766,7 @@ mod tests {
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
                     runtime_guard: None,
+                    read_only_scope: None,
                 }],
             },
             ScanEntry {
@@ -776,6 +787,7 @@ mod tests {
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
                     runtime_guard: None,
+                    read_only_scope: None,
                 }],
             },
         ];
@@ -820,6 +832,7 @@ mod tests {
                     match_role: RuleMatchRole::Primary,
                     sources: Vec::new(),
                     runtime_guard: None,
+                    read_only_scope: None,
                 }],
             };
 
@@ -851,6 +864,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         };
         let entry = ScanEntry {
             path: PathBuf::from("/repo/cache"),

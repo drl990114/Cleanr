@@ -390,6 +390,12 @@ fn push_definition_locations(
         let Some(child) = contained_directory(&anchor, &child, issues) else {
             continue;
         };
+        if expansion.current_user_only && !is_current_user_owned(&child) {
+            continue;
+        }
+        if expansion.include_child {
+            leaves.push(child.clone());
+        }
         for suffix in &expansion.suffixes {
             let leaf = child.join(suffix);
             if !leaf.exists() {
@@ -414,6 +420,25 @@ fn push_definition_locations(
         push_global_root(roots, &leaf, definition.kind, definition.label.clone());
     }
     Ok(())
+}
+
+/// Check native ownership without trusting USER/LOGNAME or following a target symlink.
+/// Unsupported platforms and unavailable metadata deliberately return false.
+#[must_use]
+pub fn is_current_user_owned(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        path.symlink_metadata().is_ok_and(|metadata| {
+            !metadata.file_type().is_symlink()
+                && metadata.uid() == rustix::process::geteuid().as_raw()
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
 }
 
 fn contained_directory(base: &Path, path: &Path, issues: &mut Vec<ScanIssue>) -> Option<PathBuf> {

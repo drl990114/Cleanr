@@ -8,8 +8,8 @@ mod scanner;
 pub use roots::{
     GlobalScanEnvironment, GlobalScanRoot, ResolvedScanRoots, developer_cache_roots,
     discover_global_scan_locations, discover_global_scan_roots, global_scan_evidence,
-    resolve_scan_roots, resolve_scan_roots_with_env, resolve_scan_roots_with_env_and_locations,
-    resolve_scan_roots_with_locations,
+    is_current_user_owned, resolve_scan_roots, resolve_scan_roots_with_env,
+    resolve_scan_roots_with_env_and_locations, resolve_scan_roots_with_locations,
 };
 
 pub use scanner::{

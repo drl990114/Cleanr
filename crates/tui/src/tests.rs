@@ -199,6 +199,7 @@ fn test_rule_hit(rule_id: &str) -> RuleHit {
         match_role: cleanr_core::RuleMatchRole::Primary,
         sources: Vec::new(),
         runtime_guard: None,
+        read_only_scope: None,
     }
 }
 

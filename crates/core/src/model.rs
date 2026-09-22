@@ -124,7 +124,13 @@ pub enum ScanLocationMode {
 #[serde(deny_unknown_fields)]
 pub struct ScanLocationExpansion {
     pub child_globs: Vec<String>,
+    #[serde(default)]
     pub suffixes: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_child: bool,
+    /// Only discover directories owned by the effective user; unsupported hosts fail closed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub current_user_only: bool,
     #[serde(default = "default_scan_location_max_matches")]
     pub max_matches: u16,
 }
@@ -268,6 +274,16 @@ impl fmt::Display for RuleMatchRole {
     }
 }
 
+/// An inspection rule is evidence, never permission to remove its target.
+/// Entry protection also prevents removing an ancestor, while allowing independently matched
+/// cache leaves below a mixed-data container. Subtree protection additionally retains children.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReadOnlyScope {
+    Entry,
+    Subtree,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuleHit {
     pub rule_pack_id: String,
@@ -286,6 +302,8 @@ pub struct RuleHit {
     pub sources: Vec<RuleSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_guard: Option<crate::evidence::RuntimeGuardEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only_scope: Option<ReadOnlyScope>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

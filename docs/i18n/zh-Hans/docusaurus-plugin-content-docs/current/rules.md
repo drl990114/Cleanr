@@ -63,13 +63,16 @@ marker 文件识别项目根，并可用项目根的直接子目录进一步约�
   以及 .NET；
 - Turborepo、Terraform 和 CocoaPods。
 
-规则包仍然覆盖 Cargo registry 与 Git 依赖缓存、npm、pnpm、Yarn、pip、uv、Go
+规则包仍然覆盖 Cargo registry 与 Git 依赖缓存、npm、pnpm、Yarn、pip、Go
 module、Corepack、语言版本管理器下载、rustup 下载、Xcode `DerivedData`、Next.js 和
 Python 工具缓存等内容。生成的覆盖率报告、部署输出、hook 环境等可能需要留存的产物
 保持为仅供审阅。在 macOS 上，还会发现 Homebrew、CocoaPods、SwiftPM、Go build、
 Deno、Cypress、Composer、Bun、Pub、CoreSimulator 和其他明确命名的 Xcode 缓存。
 DeviceSupport 与 XCTest devices 需要人工审阅；Xcode archives 是低置信候选项，因为
 保留的构建和 dSYM 可能无法重建。
+
+尚未发布的源码中，uv 仅供只读识别，不能进入清理计划；详见
+[缓存覆盖与保留边界](rules/cache-expansion.md)。
 
 Python `.venv` 目录被有意排除，因为其中可能包含重建成本很高、甚至无法精确重现的
 本地环境。其他风险较高或可能包含本地状态的目录只供审阅，绝不会被预选；加入清理
@@ -149,7 +152,8 @@ Windows 路径参考了
 
 ## 启用或禁用规则包
 
-只有 `cleanup.enabled_rule_packs` 中的 ID 会被加载：
+只有 `cleanup.enabled_rule_packs` 中的 ID 会启用清理规则；内置只读保护在其清理包
+被禁用后仍会保留：
 
 ```toml
 [cleanup]
@@ -216,3 +220,35 @@ runtime_guard = { process_names = ["Example Tool", "example-tool"] }
 带有效标准 `CACHEDIR.TAG` 的目录可以用
 `match = { kind = "directory", cache_tagged = true }` 匹配。它只是提示，不能证明重建
 代价低；应使用中置信度、默认不选中的 fallback 规则，并且不能再组合其他路径 matcher。
+
+### 只读识别与受限缓存发现（尚未发布）
+
+`cleanup.enabled_rule_packs` 控制清理规则；禁用内置清理包仍保留它的只读保护，避免
+宽泛规则重新把保留数据变成候选。
+
+[开发与 AI 缓存覆盖](rules/cache-expansion.md)列出了内置路径、来源、人工复核要求与
+保留数据边界。
+
+通过 `action = "inspect"` 和 `default_selected = false` 解释保留数据。默认
+`inspection_scope = "subtree"` 保护当前路径和全部后代，单独扫描子树内部也会生效；
+覆盖它们的父目录同样不可选。子树保护只能依赖路径，不能依赖大小、年龄、项目标记
+或缓存标签。`inspection_scope = "entry"` 保护混合容器与祖先，同时允许单独审核子项。
+只读保护独立于规则信任和优先级，不能被可清理规则覆盖。
+
+`match.exclude_path_globs` 使用相同的分段 glob 语义排除当前路径匹配；它不是通用
+路径保护机制。如果祖先被子树规则命中，后代仍会保留。混合目录应使用容器的 entry
+保护，加上保留子项的 subtree 保护。`match.parent_marker` 要求同次扫描在候选的父
+目录中看到指定名称的普通文件；符号链接或缺失标记不能通过。Conda 归档使用此方式
+确认包缓存，不读取或执行配置。
+
+有限位置展开可以通过 `include_child = true` 返回匹配的子目录本身，也可以通过
+`current_user_only = true` 限制为系统确认属于当前有效用户的子目录。运行时 guard
+支持相同的归属要求，并在执行前复核。不支持的系统或不可用的元数据会失败关闭。
+进程名按大小写不敏感的完整名称匹配并去掉 `.exe`；Python 数字版本后缀（如
+`python3.13t`）归一化为 `python`。可执行文件名补充进程名检查，但不代表证明所有
+可能访问缓存的程序都已经退出。
+
+分析和计划证据字段是增量扩展，旧记录默认没有只读或归属要求，未使用的可选字段
+保持省略。只读条目沿用 `excluded` 状态，避免旧分析读取器将其作为可选候选。
+规则和位置 schema 会拒绝未知字段。发布使用这些字段的插件时，必须要求实际首次
+包含该能力的 Cleanr 版本，不能沿用旧的兼容性下限；本页不宣称已经发布。

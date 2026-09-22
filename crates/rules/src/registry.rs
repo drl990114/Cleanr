@@ -37,6 +37,20 @@ pub struct LoadedRulePack {
     compiled_rules: Vec<CompiledRule>,
 }
 
+impl LoadedRulePack {
+    pub(super) fn retain_inspections(&mut self) {
+        let (rules, compiled) = self
+            .definition
+            .rules
+            .drain(..)
+            .zip(self.compiled_rules.drain(..))
+            .filter(|(rule, _)| rule.read_only_scope().is_some())
+            .unzip();
+        self.definition.rules = rules;
+        self.compiled_rules = compiled;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RuleRegistry {
     pub(super) packs: Vec<LoadedRulePack>,
@@ -46,6 +60,7 @@ pub struct RuleRegistry {
     file_name_index: BTreeMap<String, Vec<(usize, usize)>>,
     extension_index: BTreeMap<String, Vec<(usize, usize)>>,
     generic_rules: Vec<(usize, usize)>,
+    parent_marker_rules: Vec<(usize, usize)>,
     project_marker_filter: GlobSet,
     project_root_dir_filter: GlobSet,
 }
@@ -197,7 +212,7 @@ impl RuleRegistry {
             })
             .then_some(entry.path.as_path());
 
-        candidates
+        let hits = candidates
             .into_iter()
             .filter_map(|(pack_index, rule_index)| {
                 let pack = self.packs.get(pack_index)?;
@@ -208,7 +223,7 @@ impl RuleRegistry {
                 {
                     return None;
                 }
-                matches_rule(
+                let direct_match = matches_rule(
                     entry,
                     rule,
                     compiled,
@@ -216,52 +231,83 @@ impl RuleRegistry {
                     path_for_glob,
                     context,
                     as_of,
-                )
-                .then(|| RuleHit {
-                    rule_pack_id: pack.definition.id.clone(),
-                    rule_id: rule.id.clone(),
-                    label: rule.label.clone(),
-                    category: rule.category.clone(),
-                    confidence: rule.confidence,
-                    reason: rule.reason.clone(),
-                    risk_note: rule.risk_note.clone(),
-                    default_selected: rule.default_selected,
-                    match_role: rule.match_role,
-                    sources: rule
-                        .source_refs
-                        .iter()
-                        .filter_map(|source_ref| {
-                            pack.definition
-                                .sources
-                                .iter()
-                                .find(|source| source.id == *source_ref)
-                                .cloned()
+                );
+                let inherited_inspection = rule.read_only_scope()
+                    == Some(cleanr_core::ReadOnlyScope::Subtree)
+                    && compiled.path_glob.as_ref().is_some_and(|matcher| {
+                        entry.path.ancestors().skip(1).any(|ancestor| {
+                            matcher.is_match(ancestor)
+                                && !compiled.excluded_paths.is_match(ancestor)
                         })
-                        .collect(),
-                    trust: match pack.trust {
-                        TrustLevel::Builtin => RuleTrust::Builtin,
-                        TrustLevel::Trusted => RuleTrust::Trusted,
-                        TrustLevel::Untrusted => RuleTrust::Untrusted,
-                    },
-                    runtime_guard: rule
-                        .runtime_guard
-                        .as_ref()
-                        .map(|guard| RuntimeGuardEvidence {
-                            rule: RuleKey {
-                                rule_pack_id: pack.definition.id.clone(),
-                                rule_id: rule.id.clone(),
+                    });
+                (direct_match || inherited_inspection).then(|| {
+                    (
+                        RuleHit {
+                            rule_pack_id: pack.definition.id.clone(),
+                            rule_id: rule.id.clone(),
+                            label: rule.label.clone(),
+                            category: rule.category.clone(),
+                            confidence: rule.confidence,
+                            reason: rule.reason.clone(),
+                            risk_note: rule.risk_note.clone(),
+                            default_selected: rule.default_selected,
+                            match_role: rule.match_role,
+                            read_only_scope: rule.read_only_scope(),
+                            sources: rule
+                                .source_refs
+                                .iter()
+                                .filter_map(|source_ref| {
+                                    pack.definition
+                                        .sources
+                                        .iter()
+                                        .find(|source| source.id == *source_ref)
+                                        .cloned()
+                                })
+                                .collect(),
+                            trust: match pack.trust {
+                                TrustLevel::Builtin => RuleTrust::Builtin,
+                                TrustLevel::Trusted => RuleTrust::Trusted,
+                                TrustLevel::Untrusted => RuleTrust::Untrusted,
                             },
-                            process_names: guard.process_names.clone(),
-                            state: RuntimeGuardState::Unknown,
-                        }),
+                            runtime_guard: rule.runtime_guard.as_ref().map(|guard| {
+                                RuntimeGuardEvidence {
+                                    current_user_only: guard.current_user_only,
+                                    rule: RuleKey {
+                                        rule_pack_id: pack.definition.id.clone(),
+                                        rule_id: rule.id.clone(),
+                                    },
+                                    process_names: guard.process_names.clone(),
+                                    state: RuntimeGuardState::Unknown,
+                                }
+                            }),
+                        },
+                        direct_match,
+                    )
                 })
             })
-            .collect()
+            .collect::<Vec<_>>();
+        // A retained subtree need not turn every ordinary file into another displayed candidate.
+        // Still attach its protection to any directly matched candidate, including one produced
+        // by a plugin or an explicit scan starting below the retained root.
+        if !hits.iter().any(|(_, direct)| *direct) {
+            return Vec::new();
+        }
+        hits.into_iter().map(|(hit, _)| hit).collect()
     }
 
     fn project_roots(&self, entries: &[ScanEntry]) -> HashSet<PathBuf> {
         let mut roots = HashSet::new();
         for entry in entries {
+            for (pack_index, rule_index) in &self.parent_marker_rules {
+                if self.packs[*pack_index].compiled_rules[*rule_index]
+                    .path_glob
+                    .as_ref()
+                    .is_some_and(|matcher| matcher.is_match(&entry.path))
+                    && let Some(parent) = entry.path.parent()
+                {
+                    roots.insert(parent.to_path_buf());
+                }
+            }
             if entry.kind != EntryKind::Directory {
                 continue;
             }
@@ -298,6 +344,7 @@ impl RuleRegistry {
             file_name_index: BTreeMap::new(),
             extension_index: BTreeMap::new(),
             generic_rules: Vec::new(),
+            parent_marker_rules: Vec::new(),
             project_marker_filter: GlobSet::empty(),
             project_root_dir_filter: GlobSet::empty(),
         }
@@ -334,7 +381,15 @@ impl RuleRegistry {
                     .as_ref()
                     .map(CompiledProjectMatcher::compile)
                     .transpose()?;
-                Ok(CompiledRule { path_glob, project })
+                let mut excluded_paths = GlobSetBuilder::new();
+                for pattern in &rule.matcher.exclude_path_globs {
+                    excluded_paths.add(compile_path_glob(pattern)?);
+                }
+                Ok(CompiledRule {
+                    path_glob,
+                    excluded_paths: excluded_paths.build()?,
+                    project,
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         if trust == TrustLevel::Untrusted && pack.rules.iter().any(|rule| rule.default_selected) {
@@ -368,11 +423,16 @@ impl RuleRegistry {
         self.file_name_index.clear();
         self.extension_index.clear();
         self.generic_rules.clear();
+        self.parent_marker_rules.clear();
         let mut project_marker_filter = GlobSetBuilder::new();
         let mut project_root_dir_filter = GlobSetBuilder::new();
         for (pack_index, pack) in self.packs.iter().enumerate() {
             for (rule_index, rule) in pack.definition.rules.iter().enumerate() {
                 let key = (pack_index, rule_index);
+                if let Some(marker) = &rule.matcher.parent_marker {
+                    self.parent_marker_rules.push(key);
+                    project_marker_filter.add(Glob::new(marker)?);
+                }
                 if let Some(name) = &rule.matcher.dir_name {
                     self.dir_name_index
                         .entry(name.clone())
@@ -1882,3 +1942,7 @@ risk_note = "rebuild"
         )
     }
 }
+
+#[cfg(test)]
+#[path = "cache_expansion_tests.rs"]
+mod cache_expansion_tests;

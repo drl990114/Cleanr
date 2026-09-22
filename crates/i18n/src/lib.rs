@@ -205,6 +205,18 @@ impl I18n {
             .unwrap_or_else(|| builtin_t(&self.locale, key))
     }
 
+    /// Translate presentation only; canonical rule evidence remains unchanged in reports/plans.
+    #[must_use]
+    pub fn rule_text(&self, pack: &str, rule: &str, field: &str, fallback: &str) -> String {
+        let key = format!("rules.{pack}.{rule}.{field}");
+        let translated = self.t(&key);
+        if translated == key {
+            fallback.to_string()
+        } else {
+            translated
+        }
+    }
+
     #[must_use]
     pub fn format(&self, key: &str, args: &[(&str, String)]) -> String {
         let mut text = self.t(key);

@@ -140,6 +140,7 @@ fn synthetic_entries(
                 match_role: RuleMatchRole::Primary,
                 sources: Vec::new(),
                 runtime_guard: None,
+                read_only_scope: None,
             }],
         });
         for file_idx in 0..files_per_candidate {

@@ -323,6 +323,8 @@ pub enum RuntimeGuardState {
 /// Process-state evidence attached to one effective cleanup rule.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeGuardEvidence {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub current_user_only: bool,
     pub rule: RuleKey,
     pub process_names: Vec<String>,
     pub state: RuntimeGuardState,
@@ -344,6 +346,8 @@ pub struct RuleEvidence {
     pub sources: Vec<RuleSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_guard: Option<RuntimeGuardEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only_scope: Option<crate::ReadOnlyScope>,
 }
 
 /// How matching rules were resolved for recommendation purposes.
@@ -805,6 +809,7 @@ pub fn build_analysis_report_with_scan_context_cancellable(
     };
     let issue_scopes = IssueScopes::new(issues, !context.budget_exceeded.is_empty());
     let activity_by_path = activity_by_path(entries, as_of, &issue_scopes);
+    let rule_protection = crate::safety::RuleProtectionIndex::from_entries(entries);
     check_work(cancelled)?;
     let mut candidates = entries
         .iter()
@@ -838,6 +843,24 @@ pub fn build_analysis_report_with_scan_context_cancellable(
                 known_global_location,
                 &recommendation_context,
             );
+            if rule_protection.excludes(&entry.path) {
+                recommendation.state = RecommendationState::Excluded;
+                recommendation.initial_selected = false;
+                recommendation
+                    .codes
+                    .push(DecisionCode::SafetyPolicyExcluded);
+                if !entry
+                    .rule_hits
+                    .iter()
+                    .any(|hit| hit.read_only_scope.is_some())
+                {
+                    recommendation
+                        .codes
+                        .push(DecisionCode::CoveredDescendantHasBlocker);
+                }
+                recommendation.codes.sort();
+                recommendation.codes.dedup();
+            }
             // Keep budget-limited evidence readable, but encode the read-only boundary with an
             // existing fail-closed state as well as the additive budget ledger. Older v1 readers
             // that ignore `budget_exceeded` already understand `Excluded` and therefore cannot
@@ -1135,6 +1158,7 @@ fn rule_evidence(hit: &RuleHit) -> RuleEvidence {
         risk_note: hit.risk_note.clone(),
         sources: hit.sources.clone(),
         runtime_guard: hit.runtime_guard.clone(),
+        read_only_scope: hit.read_only_scope,
     }
 }
 
@@ -1146,6 +1170,7 @@ fn same_safety_semantics(left: &RuleEvidence, right: &RuleEvidence) -> bool {
         && left.match_role == right.match_role
         && left.reason == right.reason
         && left.risk_note == right.risk_note
+        && left.read_only_scope == right.read_only_scope
         && same_runtime_guard_semantics(left.runtime_guard.as_ref(), right.runtime_guard.as_ref())
 }
 
@@ -1156,7 +1181,9 @@ fn same_runtime_guard_semantics(
     match (left, right) {
         (None, None) => true,
         (Some(left), Some(right)) => {
-            left.process_names == right.process_names && left.state == right.state
+            left.process_names == right.process_names
+                && left.state == right.state
+                && left.current_user_only == right.current_user_only
         }
         (None, Some(_)) | (Some(_), None) => false,
     }
@@ -1679,6 +1706,7 @@ mod tests {
             match_role: RuleMatchRole::Primary,
             sources: Vec::new(),
             runtime_guard: None,
+            read_only_scope: None,
         }
     }
 
@@ -2043,6 +2071,7 @@ mod tests {
         ] {
             let mut guarded_hit = hit(Confidence::High, true, RuleTrust::Builtin);
             guarded_hit.runtime_guard = Some(RuntimeGuardEvidence {
+                current_user_only: false,
                 rule: RuleKey {
                     rule_pack_id: guarded_hit.rule_pack_id.clone(),
                     rule_id: guarded_hit.rule_id.clone(),
@@ -2080,6 +2109,7 @@ mod tests {
         let mut guarded_hit = hit(Confidence::High, true, RuleTrust::Builtin);
         guarded_hit.rule_id = "guarded-child".to_string();
         guarded_hit.runtime_guard = Some(RuntimeGuardEvidence {
+            current_user_only: false,
             rule: RuleKey {
                 rule_pack_id: guarded_hit.rule_pack_id.clone(),
                 rule_id: guarded_hit.rule_id.clone(),
